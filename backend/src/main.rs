@@ -3,6 +3,7 @@ mod api;
 mod db;
 mod events;
 mod state;
+mod installation;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
@@ -17,6 +18,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
     tokio::fs::create_dir_all("/data").await?;
     tokio::fs::create_dir_all("/workspaces").await?;
+    tokio::fs::create_dir_all(installation::runtime::NODE_ROOT).await?;
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data/agentweb.db".into());
     let pool = SqlitePoolOptions::new().max_connections(5).connect(&db_url).await?;
     db::init(&pool).await?;
@@ -25,6 +27,8 @@ async fn main() -> Result<()> {
         .route("/api/health", get(api::health))
         .route("/api/agents", get(api::list_agents).post(api::create_agent))
         .route("/api/agent-catalog", get(api::catalog))
+        .route("/api/node/versions", get(api::node_versions))
+        .route("/api/node/install", axum::routing::post(api::install_node))
         .route("/api/agents/{id}/status", get(api::agent_status))
         .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
         .route("/api/sessions", get(api::list_sessions).post(api::create_session))
