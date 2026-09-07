@@ -20,12 +20,13 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    tokio::fs::create_dir_all("/data").await?;
-    tokio::fs::create_dir_all("/workspaces").await?;
-    tokio::fs::create_dir_all(installation::runtime::NODE_ROOT).await?;
+    let workspace_dir = std::env::var("AGENTWEB_WORKSPACE_DIR")
+        .unwrap_or_else(|_| "./workspaces".into());
+    tokio::fs::create_dir_all(&workspace_dir).await?;
+    tokio::fs::create_dir_all(installation::runtime::runtime_root()).await?;
 
     let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data/agentweb.db".into());
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://./agentweb.db".into());
     let db_options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
