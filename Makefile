@@ -6,7 +6,7 @@ APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 
-.PHONY: help dev frontend backend build release check test fmt lint clean \
+.PHONY: help dev frontend backend backend-run backend-release build release check test fmt lint clean \
         docker-build docker-up docker-down docker-restart docker-logs docker-shell \
         docker-pull docker-clean install
 
@@ -14,7 +14,7 @@ help: ## Show available commands
 	@echo "Agent Web"
 	@echo ""
 	@echo "Local development:"
-	@grep -E '^(dev|frontend|backend|build|release|check|test|fmt|lint|clean|install):.*##' $(MAKEFILE_LIST) | \
+	@grep -E '^(dev|frontend|backend|backend-run|backend-release|build|release|check|test|fmt|lint|clean|install):.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Docker:"
@@ -32,6 +32,12 @@ frontend: ## Build frontend
 
 backend: ## Build Rust backend in debug mode
 	cd backend && cargo build
+
+backend-run: ## Start Rust backend in development mode
+	cd backend && cargo run
+
+backend-release: ## Build and start optimized Rust backend
+	cd backend && cargo run --release
 
 build: ## Build frontend and Rust backend
 	$(MAKE) frontend
@@ -66,7 +72,6 @@ docker-up: ## Build and start Docker services
 
 docker-down: ## Stop Docker services
 	$(COMPOSE) down
-
 docker-restart: ## Restart Docker services
 	$(COMPOSE) restart
 
