@@ -3,18 +3,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    process::{Child, Command},
-    sync::Mutex,
-};
+use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, Command}, sync::Mutex};
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
-    pub id: String,
-    pub command: String,
-    pub working_directory: Option<String>,
-}
+pub struct AgentConfig { pub id: String, pub command: String, pub working_directory: Option<String> }
 
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
@@ -24,9 +16,7 @@ pub trait AgentAdapter: Send + Sync {
 }
 
 #[derive(Default)]
-pub struct ProcessAgent {
-    processes: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
-}
+pub struct ProcessAgent { processes: Mutex<HashMap<String, Arc<Mutex<Child>>>> }
 
 impl ProcessAgent {
     fn command_parts(command: &str) -> Result<(String, Vec<String>)> {
@@ -44,13 +34,11 @@ impl AgentAdapter for ProcessAgent {
         if self.processes.lock().await.contains_key(session_id) {
             return Err(anyhow!("session already has a running agent process"));
         }
-
         let (program, args) = Self::command_parts(&config.command)?;
         let mut command = Command::new(program);
         command.args(args).arg(message);
         if let Some(dir) = &config.working_directory { command.current_dir(dir); }
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-
         let mut child = command.spawn()?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -58,42 +46,33 @@ impl AgentAdapter for ProcessAgent {
         self.processes.lock().await.insert(session_id.to_string(), child.clone());
         events.publish(AgentEvent::MessageStarted { session_id: session_id.to_string() });
 
-        let sid = session_id.to_string();
+        let sid_out = session_id.to_string();
+        let events_out = events.clone();
         let stdout_task = tokio::spawn(async move {
-            let mut output = String::new();
             if let Some(stdout) = stdout {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Some(line) = lines.next_line().await? {
-                    let text = format!("{line}\n");
-                    output.push_str(&text);
+                    events_out.publish(AgentEvent::MessageDelta { session_id: sid_out.clone(), text: format!("{line}\n") });
                 }
             }
-            Ok::<String, anyhow::Error>(output)
+            Ok::<(), anyhow::Error>(())
         });
 
         let sid_err = session_id.to_string();
+        let events_err = events.clone();
         let stderr_task = tokio::spawn(async move {
-            let mut errors = Vec::new();
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Some(line) = lines.next_line().await? {
-                    errors.push(line);
+                    events_err.publish(AgentEvent::Error { session_id: sid_err.clone(), message: line });
                 }
             }
-            Ok::<Vec<String>, anyhow::Error>(errors)
+            Ok::<(), anyhow::Error>(())
         });
 
         let status = child.lock().await.wait().await?;
-        let stdout_result = stdout_task.await??;
-        let stderr_result = stderr_task.await??;
-
-        for line in stdout_result.lines() {
-            events.publish(AgentEvent::MessageDelta { session_id: sid.clone(), text: format!("{line}\n") });
-        }
-        for line in stderr_result {
-            events.publish(AgentEvent::Error { session_id: sid_err.clone(), message: line });
-        }
-
+        stdout_task.await??;
+        stderr_task.await??;
         self.processes.lock().await.remove(session_id);
         if status.success() {
             events.publish(AgentEvent::MessageCompleted { session_id: session_id.to_string() });
@@ -105,21 +84,15 @@ impl AgentAdapter for ProcessAgent {
     }
 
     async fn interrupt(&self, session_id: &str) -> Result<()> {
-        if let Some(child) = self.processes.lock().await.remove(session_id) {
-            child.lock().await.kill().await?;
-        }
+        if let Some(child) = self.processes.lock().await.remove(session_id) { child.lock().await.kill().await?; }
         Ok(())
     }
 }
 
 #[derive(Default)]
-pub struct AgentManager {
-    adapters: Mutex<HashMap<String, Arc<ProcessAgent>>>,
-}
-
+pub struct AgentManager { adapters: Mutex<HashMap<String, Arc<ProcessAgent>>> }
 impl AgentManager {
     pub fn new() -> Self { Self::default() }
-
     pub async fn adapter(&self, kind: &str) -> Arc<ProcessAgent> {
         let mut map = self.adapters.lock().await;
         map.entry(kind.to_string()).or_insert_with(|| Arc::new(ProcessAgent::default())).clone()
