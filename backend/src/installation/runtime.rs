@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::{fs, process::Command};
 
@@ -9,12 +9,81 @@ pub fn runtime_root() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("./runtimes/node"))
 }
 
-pub fn supported_node_versions() -> Vec<&'static str> {
-    vec!["22.19.0", "22.18.0", "22.17.0", "20.19.4", "20.19.3"]
+#[derive(Debug, Deserialize)]
+struct NodeRelease {
+    version: String,
+    lts: serde_json::Value,
 }
 
-pub fn validate_node_version(version: &str) -> bool {
-    supported_node_versions().contains(&version)
+const NODE_INDEX_URLS: &[&str] = &[
+    "https://npmmirror.com/mirrors/node/index.json",
+    "https://nodejs.org/dist/index.json",
+];
+
+/// Return the newest three releases for every currently supported major line.
+/// Node's release index marks LTS releases with a string and Current releases
+/// with `false`; older EOL lines are therefore excluded from the selectable list.
+pub async fn available_node_versions() -> Result<Vec<String>> {
+    let client = reqwest::Client::builder()
+        .user_agent("agentweb/0.1")
+        .build()?;
+
+    let mut releases: Vec<NodeRelease> = Vec::new();
+    let mut last_error = None;
+    for url in NODE_INDEX_URLS {
+        match client.get(*url).send().await {
+            Ok(response) if response.status().is_success() => match response.json::<Vec<NodeRelease>>().await {
+                Ok(items) => {
+                    releases = items;
+                    break;
+                }
+                Err(err) => last_error = Some(err.to_string()),
+            },
+            Ok(response) => last_error = Some(format!("HTTP {}", response.status())),
+            Err(err) => last_error = Some(err.to_string()),
+        }
+    }
+
+    if releases.is_empty() {
+        return Err(anyhow!(
+            "failed to fetch Node.js release index{}",
+            last_error.map(|e| format!(": {e}")).unwrap_or_default()
+        ));
+    }
+
+    let mut by_major: std::collections::BTreeMap<u64, Vec<String>> = std::collections::BTreeMap::new();
+    for release in releases {
+        let version = release.version.trim_start_matches('v');
+        let mut parts = version.split('.');
+        let Some(major) = parts.next().and_then(|v| v.parse::<u64>().ok()) else {
+            continue;
+        };
+        let is_supported_line = !release.lts.is_null() && release.lts != serde_json::Value::Bool(false);
+        let is_current_line = release.lts == serde_json::Value::Bool(false) && major >= 26;
+        if is_supported_line || is_current_line {
+            by_major.entry(major).or_default().push(version.to_owned());
+        }
+    }
+
+    let mut versions = Vec::new();
+    for (_, mut releases) in by_major.into_iter().rev() {
+        releases.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
+        releases.dedup();
+        versions.extend(releases.into_iter().take(3));
+    }
+    Ok(versions)
+}
+
+fn version_key(version: &str) -> (u64, u64, u64) {
+    let mut parts = version.split('.').map(|part| part.parse::<u64>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
+pub async fn validate_node_version(version: &str) -> bool {
+    available_node_versions()
+        .await
+        .map(|versions| versions.iter().any(|item| item == version))
+        .unwrap_or(false)
 }
 
 fn platform_arch() -> Result<&'static str> {
@@ -42,13 +111,12 @@ pub async fn installed_versions() -> Result<Vec<String>> {
     while let Some(entry) = rd.next_entry().await? {
         if entry.file_type().await?.is_dir() {
             let name = entry.file_name().to_string_lossy().trim_start_matches('v').to_owned();
-            if validate_node_version(&name) && entry.path().join("bin/node").exists() {
+            if entry.path().join("bin/node").is_file() {
                 out.push(name);
             }
         }
     }
-    out.sort();
-    out.reverse();
+    out.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
     Ok(out)
 }
 
@@ -114,7 +182,7 @@ pub async fn detect_system_nodes() -> Result<Vec<DetectedNode>> {
             out.push(node);
         }
     }
-    out.sort_by(|a, b| b.version.cmp(&a.version));
+    out.sort_by(|a, b| version_key(&b.version).cmp(&version_key(&a.version)));
     Ok(out)
 }
 
@@ -132,7 +200,7 @@ pub async fn detect_nodes() -> Result<Vec<DetectedNode>> {
 }
 
 pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'static) -> Result<()> {
-    if !validate_node_version(version) {
+    if !validate_node_version(version).await {
         return Err(anyhow!("unsupported Node.js version: {version}"));
     }
     let arch = platform_arch()?;
@@ -143,15 +211,25 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
     }
     fs::create_dir_all(&root).await?;
     let archive = root.join(format!("node-v{version}-linux-{arch}.tar.xz"));
-    let url = format!("https://nodejs.org/dist/v{version}/node-v{version}-linux-{arch}.tar.xz");
+    let urls = [
+        format!("https://npmmirror.com/mirrors/node/v{version}/node-v{version}-linux-{arch}.tar.xz"),
+        format!("https://nodejs.org/dist/v{version}/node-v{version}-linux-{arch}.tar.xz"),
+    ];
     events(format!("Downloading Node.js {version} ({arch})..."));
-    let status = Command::new("curl")
-        .args(["-fL", "--retry", "3", "-o"])
-        .arg(&archive)
-        .arg(&url)
-        .status()
-        .await?;
-    if !status.success() {
+    let mut downloaded = false;
+    for url in urls {
+        let status = Command::new("curl")
+            .args(["-fL", "--retry", "3", "-o"])
+            .arg(&archive)
+            .arg(&url)
+            .status()
+            .await?;
+        if status.success() {
+            downloaded = true;
+            break;
+        }
+    }
+    if !downloaded {
         return Err(anyhow!("failed to download Node.js {version}"));
     }
     let extract_dir = root.join(format!("extract-{version}"));
@@ -177,7 +255,7 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
 }
 
 pub async fn node_command(version: &str, command: &str) -> Result<Command> {
-    if !validate_node_version(version) || !node_bin(version).join("node").exists() {
+    if !node_bin(version).join("node").exists() {
         return Err(anyhow!("Node.js {version} is not installed"));
     }
     let mut cmd = Command::new(node_bin(version).join(command));
