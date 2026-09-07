@@ -9,6 +9,7 @@ pub struct AgentConfig {
     pub command: String,
     pub working_directory: Option<String>,
     pub native_session_id: Option<String>,
+    pub runtime_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
