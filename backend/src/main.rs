@@ -1,5 +1,6 @@
 mod agents;
 mod api;
+mod api_node;
 mod db;
 mod events;
 mod installation;
@@ -33,7 +34,7 @@ async fn main() -> Result<()> {
         .route("/api/agents", get(api::list_agents).post(api::create_agent))
         .route("/api/agent-catalog", get(api::catalog))
         .route("/api/runtime/settings", get(api::get_runtime_settings).put(api::update_runtime_settings))
-        .route("/api/node/versions", get(api::node_versions))
+        .route("/api/node/versions", get(api_node::node_versions))
         .route("/api/node/install", axum::routing::post(api::install_node))
         .route("/api/agents/{id}/status", get(api::agent_status))
         .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
