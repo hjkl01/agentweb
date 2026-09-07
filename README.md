@@ -50,6 +50,8 @@ http://localhost:8080
 - Node.js 22+
 - npm
 
+本地开发模式默认使用**当前项目目录下的相对路径**，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
+
 ### 1. 启动后端
 
 ```bash
@@ -65,25 +67,17 @@ http://localhost:8080
 
 首次启动时，如果 SQLite 中还没有用户，会自动创建 `admin` 用户，并在终端输出一次随机生成的密码，请保存该密码。
 
-后端本地运行时，SQLite 默认使用：
+默认数据文件为项目根目录下的：
 
 ```text
-/data/agentweb.db
+./agentweb.db
 ```
 
-因此建议提前创建本地目录：
+如果需要指定其他位置，可以通过 `DATABASE_URL` 覆盖：
 
 ```bash
-sudo mkdir -p /data /workspaces /opt/agent-runtimes/node
+DATABASE_URL="sqlite:///./custom.db" cargo run
 ```
-
-如果不希望使用系统目录，可以设置自己的环境变量，例如：
-
-```bash
-export DATABASE_URL="sqlite:///tmp/agentweb.db"
-```
-
-> 当前本地开发模式下，Rust 后端会直接从 `/app/frontend` 提供前端静态文件。因此如果需要通过 `http://localhost:8080` 查看最新前端代码，需要先执行前端构建。
 
 ### 2. 构建前端
 
@@ -101,26 +95,7 @@ npm run build
 frontend/dist/
 ```
 
-由于本地运行的 Rust 后端默认读取 `/app/frontend`，可以使用下面的方式创建软链接：
-
-```bash
-sudo mkdir -p /app
-sudo ln -sfn "$(pwd)/dist" /app/frontend
-```
-
-然后访问：
-
-```text
-http://localhost:8080
-```
-
-修改前端代码后重新执行：
-
-```bash
-npm run build
-```
-
-刷新浏览器即可看到最新版本。
+> 当前 Rust 后端通过 `/app/frontend` 提供前端静态文件。如果直接在宿主机运行后端，需要将前端构建目录链接到 `/app/frontend`，或者后续配置可自定义的前端目录。
 
 ### 3. 后端开发检查
 
@@ -156,15 +131,16 @@ npm run build
 
 ```text
 agentweb/
+├── agentweb.db              # SQLite 数据库
 ├── backend/
 ├── frontend/
-├── data/
-├── workspaces/
-├── runtimes/
+├── data/                    # 用户配置等数据
+├── workspaces/              # Agent 工作区
+├── runtimes/                # Node.js Runtime 和用户安装的 Agent
 └── docker/
 ```
 
-如果希望完全避免使用 `/data`、`/workspaces` 和 `/opt/agent-runtimes` 等系统目录，后续可以将后端的数据目录统一改为可通过环境变量配置；Docker 模式仍然使用当前的 `/data`、`/workspaces` 和 `/opt/agent-runtimes` 挂载方式。
+本地开发时默认使用项目目录下的这些路径。Docker 模式则通过 `docker-compose.yml` 将相同的数据目录挂载到容器内部。
 
 ## Docker 持久化
 
@@ -332,7 +308,7 @@ WS  /api/sessions/{id}/events
 
 ## 项目状态
 
-项目目前处于持续开发阶段，Agent Runtime 安装、不同 Agent 的独立 Runtime 绑定、Session 恢复和更多 Agent Adapter 仍在持续完善。
+项目目前处于持续开发阶段，Agent Runtime 安装、Session 恢复和更多 Agent Adapter 仍在持续完善。
 
 技术方案中的“目标设计”和“当前实现”会明确区分，避免文档与代码状态混淆。
 
