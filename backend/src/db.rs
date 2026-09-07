@@ -18,8 +18,6 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         .execute(pool)
         .await?;
-
-    ensure_default_admin(pool).await?;
     Ok(())
 }
 
