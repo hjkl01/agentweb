@@ -5,7 +5,7 @@ use sqlx::Row;
 
 #[derive(Serialize)]
 pub struct NodeVersions {
-    pub available: Vec<&'static str>,
+    pub available: Vec<String>,
     pub installed: Vec<String>,
     pub detected: Vec<runtime::DetectedNode>,
     pub active: Option<String>,
@@ -13,6 +13,7 @@ pub struct NodeVersions {
 }
 
 pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
+    let available = runtime::available_node_versions().await.unwrap_or_default();
     let installed = runtime::installed_versions().await.unwrap_or_default();
     let detected = runtime::detect_nodes().await.unwrap_or_default();
     let configured_path = sqlx::query("SELECT value FROM runtime_settings WHERE key=?")
@@ -36,7 +37,7 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
         .or_else(|| detected.first().map(|node| node.version.clone()));
 
     Json(NodeVersions {
-        available: runtime::supported_node_versions(),
+        available,
         installed,
         detected,
         active,
