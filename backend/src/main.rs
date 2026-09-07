@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
         .route("/api/sessions", get(api::list_sessions).post(api::create_session))
         .route("/api/sessions/{id}", get(api::get_session).delete(api::delete_session))
-        .route("/api/sessions/{id}/messages", axum::routing::post(api::send_message))
+        .route("/api/sessions/{id}/messages", get(api::list_messages).post(api::send_message))
         .route("/api/sessions/{id}/interrupt", axum::routing::post(api::interrupt))
         .route("/api/sessions/{id}/events", get(api::ws_events))
         .fallback_service(ServeDir::new("/app/frontend"))
