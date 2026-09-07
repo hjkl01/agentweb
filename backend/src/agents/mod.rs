@@ -5,7 +5,7 @@ pub mod opencode;
 pub mod pi;
 pub mod process;
 
-pub use adapter::{AgentAdapter, AgentConfig, AgentRunResult};
+pub use adapter::{AgentAdapter, AgentConfig};
 use codex::CodexAdapter;
 use generic::GenericAdapter;
 use opencode::OpenCodeAdapter;
