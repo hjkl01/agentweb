@@ -18,9 +18,6 @@ impl OpenCodeAdapter {
 }
 #[async_trait]
 impl AgentAdapter for OpenCodeAdapter {
-    async fn start(&self, config: &AgentConfig) -> Result<()> {
-        self.process.start(config).await
-    }
     async fn send_message(
         &self,
         config: &AgentConfig,
