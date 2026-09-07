@@ -31,6 +31,9 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}", get(api::get_session).delete(api::delete_session))
         .route("/api/sessions/{id}/messages", get(api::list_messages).post(api::send_message))
         .route("/api/sessions/{id}/interrupt", axum::routing::post(api::interrupt))
+        .route("/api/sessions/{id}/files", get(api::workspace_files))
+        .route("/api/sessions/{id}/file/{*path}", get(api::workspace_file))
+        .route("/api/sessions/{id}/diff", get(api::workspace_diff))
         .route("/api/sessions/{id}/events", get(api::ws_events))
         .fallback_service(ServeDir::new("/app/frontend"))
         .with_state(state);
