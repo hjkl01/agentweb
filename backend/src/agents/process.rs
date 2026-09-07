@@ -61,7 +61,12 @@ impl ProcessAdapter {
                 };
             }
             ProcessKind::OpenCode => {
-                args.extend(["run".into(), message.into(), "--format".into(), "json".into()]);
+                args.extend([
+                    "run".into(),
+                    message.into(),
+                    "--format".into(),
+                    "json".into(),
+                ]);
                 if let Some(id) = &config.native_session_id {
                     args.extend(["--session".into(), id.clone()]);
                 }
@@ -102,48 +107,34 @@ impl ProcessAdapter {
 
     fn parsed(v: &Value) -> (String, Option<String>, Option<String>, Option<String>) {
         let typ = Self::string(v, &["type", "event", "method"]).unwrap_or_default();
-        let sid = Self::string(
-            v,
-            &["thread_id", "session_id", "sessionId", "sessionID"],
-        )
-        .or_else(|| {
-            Self::nested_string(
-                v,
-                &["properties", "session", "context"],
-                &["sessionID", "sessionId", "id"],
-            )
-        });
-        let text = Self::string(
-            v,
-            &["delta", "text", "message", "output", "content"],
-        )
-        .or_else(|| {
-            Self::nested_string(
-                v,
-                &["item", "part", "message", "content"],
-                &["delta", "text", "output"],
-            )
-        });
-        let name = Self::string(
-            v,
-            &["tool", "tool_name", "toolName", "name", "command"],
-        )
-        .or_else(|| {
-            Self::nested_string(
-                v,
-                &["tool", "item", "part"],
-                &["name", "toolName", "command"],
-            )
-        });
+        let sid =
+            Self::string(v, &["thread_id", "session_id", "sessionId", "sessionID"]).or_else(|| {
+                Self::nested_string(
+                    v,
+                    &["properties", "session", "context"],
+                    &["sessionID", "sessionId", "id"],
+                )
+            });
+        let text =
+            Self::string(v, &["delta", "text", "message", "output", "content"]).or_else(|| {
+                Self::nested_string(
+                    v,
+                    &["item", "part", "message", "content"],
+                    &["delta", "text", "output"],
+                )
+            });
+        let name =
+            Self::string(v, &["tool", "tool_name", "toolName", "name", "command"]).or_else(|| {
+                Self::nested_string(
+                    v,
+                    &["tool", "item", "part"],
+                    &["name", "toolName", "command"],
+                )
+            });
         (typ, sid, text, name)
     }
 
-    fn normalize(
-        session_id: &str,
-        v: &Value,
-        line: &str,
-        events: &EventBus,
-    ) -> Option<String> {
+    fn normalize(session_id: &str, v: &Value, line: &str, events: &EventBus) -> Option<String> {
         let (typ, _, text, name) = Self::parsed(v);
         let t = typ.to_ascii_lowercase();
         let start = t.contains("start") || t == "turn.started";

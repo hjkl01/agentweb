@@ -2,25 +2,31 @@ mod agents;
 mod api;
 mod db;
 mod events;
-mod state;
 mod installation;
+mod state;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
 use sqlx::sqlite::SqlitePoolOptions;
-use std::net::SocketAddr;
 use state::AppState;
+use std::net::SocketAddr;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     tokio::fs::create_dir_all("/data").await?;
     tokio::fs::create_dir_all("/workspaces").await?;
     tokio::fs::create_dir_all(installation::runtime::NODE_ROOT).await?;
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data/agentweb.db".into());
-    let pool = SqlitePoolOptions::new().max_connections(5).connect(&db_url).await?;
+    let db_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data/agentweb.db".into());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await?;
     db::init(&pool).await?;
     let state = AppState::new(pool);
     let app = Router::new()
@@ -30,11 +36,26 @@ async fn main() -> Result<()> {
         .route("/api/node/versions", get(api::node_versions))
         .route("/api/node/install", axum::routing::post(api::install_node))
         .route("/api/agents/{id}/status", get(api::agent_status))
-        .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
-        .route("/api/sessions", get(api::list_sessions).post(api::create_session))
-        .route("/api/sessions/{id}", get(api::get_session).delete(api::delete_session))
-        .route("/api/sessions/{id}/messages", get(api::list_messages).post(api::send_message))
-        .route("/api/sessions/{id}/interrupt", axum::routing::post(api::interrupt))
+        .route(
+            "/api/agents/{id}/install",
+            axum::routing::post(api::install_agent),
+        )
+        .route(
+            "/api/sessions",
+            get(api::list_sessions).post(api::create_session),
+        )
+        .route(
+            "/api/sessions/{id}",
+            get(api::get_session).delete(api::delete_session),
+        )
+        .route(
+            "/api/sessions/{id}/messages",
+            get(api::list_messages).post(api::send_message),
+        )
+        .route(
+            "/api/sessions/{id}/interrupt",
+            axum::routing::post(api::interrupt),
+        )
         .route("/api/sessions/{id}/files", get(api::workspace_files))
         .route("/api/sessions/{id}/file/{*path}", get(api::workspace_file))
         .route("/api/sessions/{id}/diff", get(api::workspace_diff))

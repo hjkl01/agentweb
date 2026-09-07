@@ -21,6 +21,12 @@ pub struct AgentRunResult {
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
     async fn start(&self, config: &AgentConfig) -> Result<()>;
-    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult>;
+    async fn send_message(
+        &self,
+        config: &AgentConfig,
+        session_id: &str,
+        message: &str,
+        events: &EventBus,
+    ) -> Result<AgentRunResult>;
     async fn interrupt(&self, session_id: &str) -> Result<()>;
 }
