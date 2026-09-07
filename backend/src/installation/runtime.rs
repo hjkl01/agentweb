@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tokio::{fs, process::Command};
 
@@ -40,11 +41,7 @@ pub async fn installed_versions() -> Result<Vec<String>> {
     };
     while let Some(entry) = rd.next_entry().await? {
         if entry.file_type().await?.is_dir() {
-            let name = entry
-                .file_name()
-                .to_string_lossy()
-                .trim_start_matches('v')
-                .to_owned();
+            let name = entry.file_name().to_string_lossy().trim_start_matches('v').to_owned();
             if validate_node_version(&name) && entry.path().join("bin/node").exists() {
                 out.push(name);
             }
@@ -52,6 +49,85 @@ pub async fn installed_versions() -> Result<Vec<String>> {
     }
     out.sort();
     out.reverse();
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeSource {
+    Managed,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectedNode {
+    pub version: String,
+    pub path: String,
+    pub source: NodeSource,
+}
+
+async fn probe_node(path: &Path, source: NodeSource) -> Option<DetectedNode> {
+    if !path.is_file() {
+        return None;
+    }
+    let output = Command::new(path).arg("--version").output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().trim_start_matches('v').to_owned();
+    if version.is_empty() {
+        return None;
+    }
+    Some(DetectedNode { version, path: path.to_string_lossy().into_owned(), source })
+}
+
+pub async fn detect_system_nodes() -> Result<Vec<DetectedNode>> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("node"));
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let nvm_root = PathBuf::from(home).join(".nvm/versions/node");
+        if let Ok(mut rd) = fs::read_dir(nvm_root).await {
+            while let Some(entry) = rd.next_entry().await? {
+                if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+                    candidates.push(entry.path().join("bin/node"));
+                }
+            }
+        }
+    }
+    candidates.push(PathBuf::from("/usr/local/bin/node"));
+    candidates.push(PathBuf::from("/usr/bin/node"));
+
+    let mut out = Vec::new();
+    for path in candidates {
+        let canonical = match fs::canonicalize(&path).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if out.iter().any(|item: &DetectedNode| item.path == canonical.to_string_lossy()) {
+            continue;
+        }
+        if let Some(node) = probe_node(&canonical, NodeSource::System).await {
+            out.push(node);
+        }
+    }
+    out.sort_by(|a, b| b.version.cmp(&a.version));
+    Ok(out)
+}
+
+pub async fn detect_nodes() -> Result<Vec<DetectedNode>> {
+    let mut out = Vec::new();
+    for version in installed_versions().await? {
+        out.push(DetectedNode {
+            version: version.clone(),
+            path: node_bin(&version).join("node").to_string_lossy().into_owned(),
+            source: NodeSource::Managed,
+        });
+    }
+    out.extend(detect_system_nodes().await?);
     Ok(out)
 }
 
@@ -105,13 +181,8 @@ pub async fn node_command(version: &str, command: &str) -> Result<Command> {
         return Err(anyhow!("Node.js {version} is not installed"));
     }
     let mut cmd = Command::new(node_bin(version).join(command));
-    let path = format!(
-        "{}:{}",
-        node_bin(version).display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    cmd.env("PATH", path)
-        .env("NPM_CONFIG_PREFIX", node_home(version));
+    let path = format!("{}:{}", node_bin(version).display(), std::env::var("PATH").unwrap_or_default());
+    cmd.env("PATH", path).env("NPM_CONFIG_PREFIX", node_home(version));
     Ok(cmd)
 }
 
@@ -120,10 +191,7 @@ pub async fn detect_installed_node() -> Result<Option<(String, String)>> {
         let mut cmd = node_command(&version, "node").await?;
         let out = cmd.arg("--version").output().await?;
         if out.status.success() {
-            return Ok(Some((
-                version,
-                String::from_utf8_lossy(&out.stdout).trim().to_owned(),
-            )));
+            return Ok(Some((version, String::from_utf8_lossy(&out.stdout).trim().to_owned())));
         }
     }
     Ok(None)
