@@ -7,9 +7,10 @@ mod state;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use state::AppState;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
@@ -18,16 +19,20 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+
     tokio::fs::create_dir_all("/data").await?;
     tokio::fs::create_dir_all("/workspaces").await?;
     tokio::fs::create_dir_all(installation::runtime::NODE_ROOT).await?;
+
     let db_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data/agentweb.db".into());
+    let db_options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&db_url)
+        .connect_with(db_options)
         .await?;
     db::init(&pool).await?;
+
     let state = AppState::new(pool);
     let app = Router::new()
         .route("/api/health", get(api::health))
@@ -62,6 +67,7 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}/events", get(api::ws_events))
         .fallback_service(ServeDir::new("/app/frontend"))
         .with_state(state);
+
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     tracing::info!(%addr, "agentweb listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
