@@ -7,7 +7,6 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use futures::SinkExt;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::{
@@ -599,7 +598,7 @@ pub async fn workspace_files(
                 .strip_prefix(&root)
                 .unwrap_or(&path)
                 .to_string_lossy()
-                .replace('\\', '/');
+                .replace('\\', "/");
             if rel.starts_with(".git/") || rel == ".git" {
                 continue;
             }
