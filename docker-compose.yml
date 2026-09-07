@@ -9,3 +9,11 @@ services:
     volumes:
       - ./data:/data
       - ./workspaces:/workspaces
+      - ./runtimes:/opt/agent-runtimes
+    environment:
+      - HOME=/data/home
+      - XDG_CONFIG_HOME=/data/home/.config
+      - XDG_DATA_HOME=/data/home/.local/share
+      - XDG_CACHE_HOME=/data/home/.cache
+      - DATABASE_URL=sqlite:///data/agentweb.db
+      - RUST_LOG=info
