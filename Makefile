@@ -62,7 +62,7 @@ docker-build: ## Build Docker image
 	$(COMPOSE) build
 
 docker-up: ## Build and start Docker services
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d
 
 docker-down: ## Stop Docker services
 	$(COMPOSE) down
