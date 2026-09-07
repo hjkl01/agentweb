@@ -6,23 +6,30 @@ APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 
-.PHONY: help dev frontend backend backend-run backend-release build release check test fmt lint clean \
+.PHONY: help install install-frontend install-backend \
+        dev frontend frontend-install backend backend-install backend-run backend-release backend-release-run \
+        build release check test fmt lint clean \
         docker-build docker-up docker-down docker-restart docker-logs docker-shell \
-        docker-pull docker-clean install
+        docker-pull docker-clean up down logs shell
 
 help: ## Show available commands
 	@echo "Agent Web"
 	@echo ""
 	@echo "Local development:"
-	@grep -E '^(dev|frontend|backend|backend-run|backend-release|build|release|check|test|fmt|lint|clean|install):.*##' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@grep -E '^(install|install-frontend|install-backend|dev|frontend|frontend-install|backend|backend-install|backend-run|backend-release|backend-release-run|build|release|check|test|fmt|lint|clean):.*##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Docker:"
 	@grep -E '^(docker-build|docker-up|docker-down|docker-restart|docker-logs|docker-shell|docker-pull|docker-clean):.*##' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
-install: ## Install frontend dependencies
+install: install-frontend install-backend ## Install all local development dependencies
+
+install-frontend: ## Install frontend npm dependencies
 	cd frontend && npm install
+
+install-backend: ## Download Rust backend dependencies
+	cd backend && cargo fetch
 
 dev: ## Start frontend development server
 	cd frontend && npm run dev
@@ -30,13 +37,20 @@ dev: ## Start frontend development server
 frontend: ## Build frontend
 	cd frontend && npm run build
 
+frontend-install: install-frontend
+
 backend: ## Build Rust backend in debug mode
 	cd backend && cargo build
+
+backend-install: install-backend
 
 backend-run: ## Start Rust backend in development mode
 	cd backend && cargo run
 
-backend-release: ## Build and start optimized Rust backend
+backend-release: ## Build optimized Rust backend
+	cd backend && cargo build --release
+
+backend-release-run: ## Start optimized Rust backend
 	cd backend && cargo run --release
 
 build: ## Build frontend and Rust backend
@@ -72,6 +86,7 @@ docker-up: ## Build and start Docker services
 
 docker-down: ## Stop Docker services
 	$(COMPOSE) down
+
 docker-restart: ## Restart Docker services
 	$(COMPOSE) restart
 
