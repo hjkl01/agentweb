@@ -33,6 +33,14 @@ async fn main() -> Result<()> {
         .await?;
     db::init(&pool).await?;
 
+    if let Some(password) = db::ensure_default_admin(&pool).await? {
+        tracing::warn!(
+            username = "admin",
+            password = %password,
+            "Created default admin account. Save this password; it will only be shown once."
+        );
+    }
+
     let state = AppState::new(pool);
     let app = Router::new()
         .route("/api/health", get(api::health))
