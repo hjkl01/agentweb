@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
         tracing::warn!(username="admin", password=%password, "Created default admin account. Save this password; it will only be shown once.");
     }
     let state = AppState::new(pool);
+    let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| "./frontend/dist".into());
     let app = Router::new()
         .route("/api/health", get(api::health))
         .route("/api/agents", get(api::list_agents).post(api::create_agent))
@@ -46,7 +47,7 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}/file/{*path}", get(api::workspace_file))
         .route("/api/sessions/{id}/diff", get(api::workspace_diff))
         .route("/api/sessions/{id}/events", get(api::ws_events))
-        .fallback_service(ServeDir::new("/app/frontend"))
+        .fallback_service(ServeDir::new(frontend_dir))
         .with_state(state);
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
