@@ -1,177 +1,164 @@
 # Agent Web
 
-> A lightweight, Docker-first Web Console for AI Agents.
+> 一个轻量、Docker 优先的 AI Agent Web 控制台。
 
-Agent Web is designed as a unified Web interaction layer for existing Agent runtimes such as Codex, Claude Code, OpenCode and other compatible Agents.
+Agent Web 面向 Codex、Claude Code、OpenCode、Pi、OpenClaw 等现有 Agent，提供统一的 Web 交互、会话、工作区和运行管理能力。
 
-The project does **not** reimplement the Agent runtime. Agent capabilities, model selection, tool execution, MCP, Skills, code execution and task planning remain the responsibility of the selected Agent.
+**Agent Web 不是另一个 Agent Runtime。** Agent 本身的推理、模型调用、工具执行、Shell、文件修改、MCP、Skills、子 Agent 等能力，仍由用户选择的 Agent 负责。
 
-## 1. Project Positioning
+> English documentation: [README_en.md](README_en.md)
 
-Agent Web is an **Agent Web Console / Unified Agent Workspace**, not another Agent Runtime.
+## 1. 项目定位
+
+Agent Web 是 **Agent Web Console / Unified Agent Workspace**，而不是 Agent Runtime。
 
 ```text
-Browser
+浏览器
    |
    | HTTP / WebSocket
    v
-+---------------------------+
-|       Agent Web           |
-|                           |
-| React Frontend             |
-| Rust Backend               |
-| Agent Adapter              |
-| SQLite                     |
-+-------------+-------------+
-              |
-              v
-      Agent Runtime
-       /     |      \
-   Codex  Claude Code  OpenCode
-      |       |          |
-    Model   Model      Model
++-----------------------------+
+|          Agent Web          |
+|                             |
+| React 前端                  |
+| Rust 后端                   |
+| Agent Adapter               |
+| SQLite                      |
++--------------+--------------+
+               |
+               v
+        Agent Runtime
+    /      |       |      \
+  Codex  Claude   OpenCode  Pi ...
+    |      Code       |      |
+  Model   Model     Model  Model
 ```
 
-The key boundary is:
+核心边界：
 
-- **Agent Web**: UI, sessions, messages, real-time events, files/workspace display, configuration and Agent lifecycle management.
-- **Agent**: reasoning, model calls, tools, shell, file editing, MCP, Skills, sub-agents and actual task execution.
+- **Agent Web**：Web UI、会话、消息、实时事件、工作区、文件展示、Agent 配置与安装管理。
+- **Agent**：推理、模型调用、工具、Shell、文件编辑、MCP、Skills、子 Agent 以及实际任务执行。
 
-## 2. Core Principles
+## 2. 核心原则
 
 ### 2.1 Agent First
 
-The selected Agent is the source of execution capability. Agent Web does not contain its own generic Tool Runtime or Agent Loop.
+选中的 Agent 是真正的执行引擎。Agent Web 不重新实现 Agent Loop，也不实现一套通用 Tool Runtime。
 
 ### 2.2 Model Agnostic
 
-Agent Web does not directly call LLM providers for Agent execution. The selected Agent decides which model/provider to use.
+Agent Web 不直接负责 Agent 的 LLM 调用。使用哪个模型、哪个 Provider，由具体 Agent 自己决定。
 
-For example:
+例如：
 
 ```text
-Agent Web -> Codex -> Model
+Agent Web -> Codex       -> Model
 Agent Web -> Claude Code -> Model
-Agent Web -> OpenCode -> Model
+Agent Web -> OpenCode    -> Model
+Agent Web -> Pi          -> Model
 ```
 
-### 2.3 Unified Adapter
+### 2.3 统一 Adapter
 
-Different Agents expose different protocols and process interfaces. Agent Web uses an `AgentAdapter` abstraction to normalize them into a common event stream.
+不同 Agent 的启动方式、通信协议和事件格式不同。Agent Web 通过 `AgentAdapter` 将它们统一成 Web 层可以理解的事件流。
 
-ACP should be supported as a preferred standard integration path when available. Agent-specific adapters are used when an Agent does not expose ACP.
+如果 Agent 支持 ACP，优先考虑通过 ACP 集成；不支持时使用对应 Agent 的专用 Adapter。
 
-### 2.4 Lightweight Deployment
+### 2.4 轻量部署
 
-The default deployment is one Docker container containing the Web application and Agent runtimes.
+默认使用一个 Docker 容器，同时运行 Rust Web 服务和用户安装的 Agent。
 
-The initial image installs **Codex only**. Other Agent runtimes are displayed in the Web UI and can be installed by the user on demand.
+不依赖 Redis、PostgreSQL、Kafka、RabbitMQ、Celery 等外部基础设施。
 
-No Redis, PostgreSQL, Kafka, RabbitMQ, Celery or other external infrastructure is required.
+## 3. 技术栈
 
-## 3. Technology Stack
-
-| Layer | Technology |
+| 层 | 技术 |
 |---|---|
-| Frontend | React + TypeScript + Vite |
+| 前端 | React + TypeScript + Vite |
 | UI | Tailwind CSS |
-| State | Zustand |
+| 状态管理 | Zustand |
 | API | REST |
-| Realtime | WebSocket |
-| Backend | Rust |
+| 实时通信 | WebSocket |
+| 后端 | Rust |
 | Web Framework | Axum |
-| Async Runtime | Tokio |
-| Serialization | Serde |
-| Database | SQLite |
-| Database Access | SQLx |
-| Code Editor | Monaco Editor |
-| Terminal UI | xterm.js |
-| Deployment | Docker |
+| 异步运行时 | Tokio |
+| 序列化 | Serde |
+| 数据库 | SQLite |
+| 数据库访问 | SQLx |
+| 代码编辑器 | Monaco Editor |
+| 终端 UI | xterm.js |
+| 部署 | Docker |
 
-The backend intentionally does **not** use Python or Node.js.
+后端不使用 Python。
 
-Node.js is not part of the Agent Web backend. Agent runtimes that require Node.js are installed only when the user explicitly chooses to install that Agent.
+Node.js 也不是 Agent Web 后端的运行时依赖。需要 Node.js 的 Agent，由用户在 Web 界面中选择 Node.js 版本后安装。
 
-## 4. Container Architecture
+## 4. Docker 架构
 
-The normal deployment is:
+Agent Web、Agent 和 Web 前端位于同一个容器中。
 
-```text
-+------------------------------------------------------+
-|                  agentweb container                  |
-|                                                      |
-|  +----------------+       +----------------------+   |
-|  | Rust Server    |       | Frontend static      |   |
-|  | Axum/Tokio     |       | React/Vite           |   |
-|  +-------+--------+       +----------------------+   |
-|          |                                           |
-|          +-------------------+                       |
-|                              |                       |
-|              +---------------+---------------+       |
-|              |               |               |       |
-|           Codex        Claude Code       OpenCode    |
-|           installed       optional        optional   |
-|                                                      |
-|  /data/agentweb.db                                   |
-|  /workspaces/                                        |
-+------------------------------------------------------+
-```
-
-The container should mount persistent directories, for example:
+推荐持久化：
 
 ```yaml
 volumes:
   - ./data:/data
   - ./workspaces:/workspaces
+  - ./runtimes:/opt/agent-runtimes
 ```
 
-### Why one container?
+其中：
 
-The target is a simple personal/self-hosted deployment. The project does not need distributed workers or service orchestration in the first version.
+- `/data`：SQLite、用户配置、Agent 配置和缓存。
+- `/workspaces`：项目工作区。
+- `/opt/agent-runtimes`：Node.js Runtime 和用户安装的 Agent。
 
-The Agent and Web server live in the same container so that an Agent can work directly against configured workspace paths.
+## 5. Agent 安装模型
 
-## 5. Agent Installation Model
+**Docker 镜像默认不预装 Codex、Claude Code、OpenCode、Pi、OpenClaw 等 Agent。**
 
-The initial Docker image should contain only the lightweight/default Agent: **Codex**.
-
-The Web UI maintains a catalog of supported Agents:
-
-```text
-Installed
----------
-✓ Codex
-
-Available
----------
-○ Claude Code       [Install]
-○ OpenCode          [Install]
-○ OpenClaw          [Install]
-○ Other Agents      [Install]
-```
-
-When the user clicks `Install`, the Rust backend executes a controlled installation procedure for that Agent inside the same container.
-
-After installation:
+Agent Web 只提供 Agent Catalog，用户从 Web 界面选择并安装：
 
 ```text
 Agent Catalog
-     |
-     v
+
+Codex
+[Install]
+
+Claude Code
+Requires: Node.js
+[Install]
+
+OpenCode
+Requires: Node.js
+[Install]
+
+Pi
+Requires: Node.js
+[Install]
+
+OpenClaw
+[Install]
+```
+
+安装流程：
+
+```text
+Agent Catalog
+      |
+      v
 Installation Manager
-     |
-     v
-Agent executable / runtime
-     |
-     v
+      |
+      +---- Node.js Runtime
+      |
+      +---- Agent Runtime
+      |
+      v
 Agent Adapter
 ```
 
-The UI should display installation progress through WebSocket events rather than blocking the browser request.
+安装过程通过 WebSocket 向前端推送进度，而不是长时间阻塞浏览器请求。
 
-### Important design point
-
-Installing an Agent must not turn Agent Web into a general-purpose package manager. Each supported Agent has a declarative installation definition:
+Agent 安装不是通用包管理器。每个支持的 Agent 都由 Agent Web 内置的安装定义控制：
 
 ```text
 AgentDefinition
@@ -186,78 +173,94 @@ AgentDefinition
   adapter
 ```
 
-The backend executes only definitions explicitly shipped/configured by Agent Web.
+## 6. Node.js Runtime
 
-## 6. Handling Node.js-heavy Agents
+Node.js 不放入 Agent Web 默认运行镜像。
 
-A key requirement is avoiding a large default image caused by Node.js and multiple Node-based Agents.
+用户可以在 Web 界面中选择需要的 Node.js 版本。版本按照 Major 版本分组，每个 Major 默认展示最新的 3 个版本。
 
-Therefore:
-
-1. The base image does not install Node.js merely for the Web backend.
-2. Codex is installed in the base image.
-3. Agents requiring Node.js are optional.
-4. Installing such an Agent may install its required Node.js runtime as part of the Agent package/installation definition.
-5. The Web UI clearly shows the additional runtime requirements before installation.
-
-Example:
+不同 Agent 可以使用不同的 Node.js Runtime：
 
 ```text
-Claude Code
+Node.js 22.20.0
+    |
+    +-- OpenCode
 
-Requires:
-  Node.js
-  Claude Code
-
-[Install]
+Node.js 20.19.4
+    |
+    +-- Pi
 ```
 
-This keeps the default image small while preserving an easy one-click installation path.
+目录结构类似：
 
-## 7. Agent Adapter
+```text
+/opt/agent-runtimes/
+├── node/
+│   ├── v22.20.0/
+│   └── v20.19.4/
+│
+└── agents/
+    ├── opencode/
+    │   └── node-22.20.0/
+    └── pi/
+        └── node-20.19.4/
+```
 
-Rust defines a common interface:
+这样可以避免不同 Agent 之间的 Node.js 和 npm 全局包互相污染。
+
+## 7. 国内镜像
+
+Docker 构建和运行时下载尽量优先使用国内镜像。
+
+当前 Docker 构建阶段包括：
+
+```text
+npm      -> registry.npmmirror.com
+Cargo    -> rsproxy.cn
+Debian   -> mirrors.aliyun.com
+```
+
+Node.js Runtime 安装也应采用国内源优先、官方源作为 fallback 的方式。
+
+## 8. Agent Adapter
+
+Rust 定义统一的 Agent 接口：
 
 ```rust
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
-    async fn start(&self, config: AgentConfig) -> Result<AgentSession>;
+    async fn start(&self, config: AgentConfig) -> Result<()>;
 
     async fn send_message(
         &self,
-        session: &mut AgentSession,
-        message: String,
-    ) -> Result<()>;
+        config: &AgentConfig,
+        session_id: &str,
+        message: &str,
+        events: &EventBus,
+    ) -> Result<AgentRunResult>;
 
-    async fn interrupt(
-        &self,
-        session: &mut AgentSession,
-    ) -> Result<()>;
-
-    async fn close(
-        &self,
-        session: &mut AgentSession,
-    ) -> Result<()>;
+    async fn interrupt(&self, session_id: &str) -> Result<()>;
 }
 ```
 
-Potential implementations:
+Agent 适配器负责处理具体 Agent 的启动、参数、Session 恢复和事件解析。
+
+预期支持：
 
 ```text
 agents/
 ├── mod.rs
+├── adapter.rs
 ├── codex.rs
-├── claude_code.rs
 ├── opencode.rs
-├── openclaw.rs
-└── acp.rs
+├── pi.rs
+├── generic.rs
+└── ...
 ```
 
-The Adapter owns the details of starting and communicating with an Agent. The rest of the application should not depend on Agent-specific process details.
+## 9. 统一事件模型
 
-## 8. Unified Agent Events
-
-Agent output should be normalized into a common event model.
+Agent 的原始输出会被转换成统一事件：
 
 ```text
 session.started
@@ -280,119 +283,70 @@ agent.error
 session.completed
 ```
 
-Example:
+前端不需要知道事件来自 Codex、OpenCode、Pi 还是其他 Agent。
 
-```json
-{
-  "type": "tool.started",
-  "session_id": "session-123",
-  "tool": "shell",
-  "input": {
-    "command": "git diff"
-  }
-}
-```
+## 10. WebSocket
 
-The frontend renders these events without needing to know whether they came from Codex, Claude Code or OpenCode.
-
-## 9. WebSocket
-
-Realtime Agent interaction uses WebSocket:
+实时 Agent 交互使用：
 
 ```text
 WS /api/sessions/{session_id}/events
 ```
 
-Flow:
+前端可以实时显示：
+
+- 文本输出
+- Thinking
+- Tool 调用
+- Tool 输出
+- Shell/Command 输出
+- 文件修改
+- 错误
+- Agent 完成状态
+
+## 11. Session
+
+Session 由 Agent Web 管理，但真正的 Agent 会话状态由对应 Agent 负责。
 
 ```text
-Browser
-  |
-  | message
-  v
-Rust Backend
-  |
-  v
-Agent Adapter
-  |
-  v
-Agent
-  |
-  | Agent events
-  v
-Agent Adapter
-  |
-  v
-Rust Backend
-  |
-  | WebSocket
-  v
-Browser
+创建 Session
+    |
+    v
+选择 Agent
+    |
+    v
+选择 Workspace
+    |
+    v
+启动 Agent
+    |
+    v
+Running
+    |
+    +----> Waiting
+    |
+    v
+Completed
 ```
 
-This allows the UI to display streaming text, tool execution, command output, file changes and completion status in real time.
+浏览器刷新后，Web 层应尽量恢复已有 Session，而不是强制创建新的 Agent Session。
 
-## 10. Message Model
+## 12. Workspace
 
-Messages should be structured instead of storing only Markdown text.
+Agent Web 不实现另一套文件操作 Tool Runtime。实际文件操作仍由 Agent 完成。
 
-A message/event stream can contain:
+Agent Web 主要负责展示：
 
-```text
-Text
-Thinking
-ToolCall
-ToolResult
-FileChange
-Code
-Image
-Artifact
-```
+- 文件树
+- 文件预览
+- 代码编辑器
+- Git Diff
+- 文件下载
+- Artifact
 
-Example UI:
+## 13. Artifact
 
-```text
-Agent
-├── Thinking
-│   └── Analyzing project structure...
-├── Tool Call
-│   └── Read package.json
-├── Tool Result
-│   └── ...
-├── File Change
-│   └── src/main.ts
-└── Text
-    └── The problem has been fixed.
-```
-
-## 11. Workspace
-
-Agent Web does not provide a replacement Tool Runtime for filesystem operations. The Agent operates on its configured working directory.
-
-Agent Web primarily provides:
-
-- File tree
-- File preview
-- Code editor
-- Diff display
-- Download
-- Artifact display
-
-Example:
-
-```text
-/workspaces/
-└── project-a/
-    ├── src/
-    ├── package.json
-    └── README.md
-```
-
-The workspace directory should be mounted into the container so that Agent state and project files can persist independently of the container lifecycle.
-
-## 12. Artifact Support
-
-Agents may create artifacts such as:
+Agent 可以生成：
 
 ```text
 .docx
@@ -403,98 +357,45 @@ Agents may create artifacts such as:
 .zip
 ```
 
-Agent Web does not generate these artifacts. It detects and presents them.
+Agent Web 不负责生成这些文件，而是负责发现和展示它们。
 
-The UI can provide:
+## 14. SQLite
 
-```text
-Preview
-Download
-Open
-```
+Agent Web 使用 SQLite，适合单容器、自托管部署。
 
-## 13. SQLite
-
-SQLite is used because the target deployment is a single-container application.
-
-The database stores interaction-layer data only:
+数据库主要保存 Web 交互层数据：
 
 ```text
 agents
-agent_configs
+agent configurations
 sessions
 messages
-attachments
-workspaces
 settings
+runtime settings
+agent installations
 ```
 
-The database is persisted through `/data`.
-
-There is intentionally no PostgreSQL dependency.
-
-## 14. Database Entities
-
-### agents
+数据库持久化到：
 
 ```text
-id
-name
-type
-command
-working_directory
-enabled
-installed
-version
-created_at
-updated_at
+/data/agentweb.db
 ```
 
-### sessions
-
-```text
-id
-agent_id
-title
-workspace
-status
-created_at
-updated_at
-```
-
-### messages
-
-```text
-id
-session_id
-role
-content
-created_at
-```
-
-Structured Agent events can be stored separately or encoded as JSON parts where appropriate.
+项目没有 PostgreSQL 依赖。
 
 ## 15. REST API
 
-### Agents
+### Agent
 
 ```http
-GET    /api/agents
-POST   /api/agents
-GET    /api/agents/{id}
-PUT    /api/agents/{id}
-DELETE /api/agents/{id}
-```
-
-### Agent Catalog / Installation
-
-```http
+GET  /api/agents
+POST /api/agents
 GET  /api/agent-catalog
-POST /api/agents/{id}/install
 GET  /api/agents/{id}/status
+POST /api/agents/{id}/install
 ```
 
-### Sessions
+### Session
 
 ```http
 GET    /api/sessions
@@ -504,9 +405,10 @@ DELETE /api/sessions/{id}
 POST   /api/sessions/{id}/interrupt
 ```
 
-### Messages
+### Message
 
 ```http
+GET  /api/sessions/{id}/messages
 POST /api/sessions/{id}/messages
 ```
 
@@ -514,8 +416,16 @@ POST /api/sessions/{id}/messages
 
 ```http
 GET /api/sessions/{id}/files
-GET /api/sessions/{id}/files/{path}
+GET /api/sessions/{id}/file/{path}
 GET /api/sessions/{id}/diff
+```
+
+### Node.js
+
+```http
+GET  /api/node/versions
+POST /api/node/install
+POST /api/node/activate
 ```
 
 ### Realtime
@@ -524,9 +434,9 @@ GET /api/sessions/{id}/diff
 WS /api/sessions/{id}/events
 ```
 
-## 16. Frontend Layout
+## 16. 前端界面
 
-The primary interface follows the AionUi-style workspace concept:
+整体采用类似 AionUi 的工作区模式：
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
@@ -539,72 +449,23 @@ The primary interface follows the AionUi-style workspace concept:
 │ Codex        │ Agent output             │ src/          │
 │ Claude Code  │                          │ package.json  │
 │ OpenCode     │ Tool calls               │ README.md     │
-│              │ File changes             │               │
+│ Pi           │ File changes             │               │
 │              │                          │ Diff          │
 ├──────────────┴──────────────────────────┴───────────────┤
 │ Message input                                  Send    │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 17. Agent Settings
+Agent 管理界面同时显示：
 
-The Agent management page should show both installed and available Agents.
+- 已安装 Agent
+- 未安装 Agent
+- Agent 所需 Node.js
+- Agent 使用的 Node.js 版本
+- 安装状态
+- 版本信息
 
-Example:
-
-```text
-Agents
-
-Codex
-Status: Installed
-Version: ...
-Workspace: /workspaces/project
-
-Claude Code
-Status: Not Installed
-Requires: Node.js
-[Install]
-
-OpenCode
-Status: Not Installed
-Requires: Node.js
-[Install]
-```
-
-After installation the user can configure:
-
-```text
-Name
-Command
-Working Directory
-Environment Variables
-Default Arguments
-Enabled
-```
-
-## 18. Session Lifecycle
-
-```text
-Created
-  |
-  v
-Starting
-  |
-  v
-Running
-  |
-  +----> Waiting
-  |         |
-  |         v
-  +------ Running
-  |
-  v
-Completed
-```
-
-The backend should retain enough process/session state to reconnect the Web UI without forcing a new Agent session whenever the browser refreshes.
-
-## 19. Project Structure
+## 17. 项目结构
 
 ```text
 agentweb/
@@ -626,52 +487,81 @@ agentweb/
 ├── backend/
 │   ├── src/
 │   │   ├── main.rs
-│   │   ├── api/
-│   │   ├── websocket/
+│   │   ├── api.rs
 │   │   ├── agents/
 │   │   ├── sessions/
 │   │   ├── workspace/
-│   │   ├── database/
-│   │   ├── events/
 │   │   ├── installation/
-│   │   └── config/
+│   │   ├── events.rs
+│   │   ├── db.rs
+│   │   └── state.rs
 │   ├── migrations/
 │   └── Cargo.toml
 │
 ├── docker/
-│   └── ...
+│   └── Dockerfile
 │
 ├── docker-compose.yml
-└── README.md
+├── README.md
+└── README_en.md
 ```
 
-## 20. MVP
+## 18. Docker 持久化
 
-The first version should remain deliberately small.
+推荐：
 
-### Agent management
+```yaml
+services:
+  agentweb:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./workspaces:/workspaces
+      - ./runtimes:/opt/agent-runtimes
+```
 
-- Codex preinstalled
-- Agent catalog
-- Install optional Agents
-- Agent configuration
-- Agent status/version detection
+这样删除并重新创建容器后，以下内容仍然保留：
+
+```text
+SQLite
+用户配置
+Session 数据
+Workspace
+Node.js Runtime
+Agent 安装目录
+```
+
+## 19. MVP
+
+### Agent 管理
+
+- Agent Catalog
+- 用户手动安装 Agent
+- 用户选择 Node.js 版本
+- 不同 Agent 使用不同 Node.js Runtime
+- Agent 配置
+- Agent 状态和版本检测
 
 ### Session
 
-- Create session
-- Select Agent
-- Select workspace
-- Session list
-- Rename/delete session
-- Restore session
+- 创建 Session
+- 选择 Agent
+- 选择 Workspace
+- Session 列表
+- Session 恢复
+- Session 删除
 
 ### Chat
 
-- Send messages
-- Streaming output
-- Stop Agent
-- WebSocket reconnect
+- 发送消息
+- 流式输出
+- 停止 Agent
+- WebSocket 重连
 
 ### Events
 
@@ -680,16 +570,18 @@ The first version should remain deliberately small.
 - Tool Call
 - Tool Result
 - File Change
+- Command
 - Error
 - Completed
 
 ### Workspace
 
-- File tree
-- File preview
-- Code editor
+- 文件树
+- 文件预览
+- 代码编辑器
 - Diff
-- Download
+- Artifact
+- 下载
 
 ### Storage
 
@@ -698,16 +590,18 @@ The first version should remain deliberately small.
 ### Deployment
 
 - Docker
-- Persistent `/data`
-- Persistent `/workspaces`
+- 单容器
+- 持久化 `/data`
+- 持久化 `/workspaces`
+- 持久化 `/opt/agent-runtimes`
 
-## 21. Explicit Non-Goals
+## 20. 明确不做的事情
 
-The following are intentionally outside the Agent Web core:
+以下能力不属于 Agent Web Core：
 
 ```text
 Agent Loop
-LLM Provider SDK integration for Agent execution
+LLM Provider SDK
 Shell Tool
 Python Tool
 Browser Tool
@@ -724,21 +618,20 @@ RabbitMQ
 Celery
 ```
 
-If an Agent provides these capabilities, Agent Web exposes their events and results rather than implementing them again.
+如果这些能力由 Agent 本身提供，Agent Web 只负责展示对应事件和结果，不重复实现。
 
-## 22. Roadmap
+## 21. Roadmap
 
 ### V0.1
 
 ```text
-Rust server
+Rust Server
 React UI
 SQLite
-Codex
 Agent Adapter
 WebSocket
-Session management
-Workspace display
+Session
+Workspace
 Docker
 ```
 
@@ -746,24 +639,24 @@ Docker
 
 ```text
 ACP
-Agent catalog
-One-click Agent installation
+Agent Catalog
+One-click Agent Installation
+Node.js Runtime Manager
+Codex
 Claude Code
 OpenCode
-Improved file preview
-Diff viewer
-Terminal/event viewer
+Pi
 ```
 
 ### V0.3
 
 ```text
-More Agent adapters
-Remote Agent connections
-Artifact preview
-Multiple workspaces
+更多 Agent Adapter
+Remote Agent
+Artifact Preview
+Multiple Workspaces
 Authentication
-Permission controls
+Permission Controls
 ```
 
 ### V1.0
@@ -772,9 +665,9 @@ Permission controls
 Unified Agent Web Console
 ```
 
-## 23. Design Summary
+## 22. 设计总结
 
-The final architecture is intentionally simple:
+Agent Web 的核心架构保持简单：
 
 ```text
                      Agent Web
@@ -783,19 +676,19 @@ The final architecture is intentionally simple:
              |                       |
           React UI              Rust Backend
                                      |
-                         +-----------+-----------+
-                         |           |           |
-                       SQLite     Adapter     Installer
-                                     |
-                 +-------------------+-------------------+
-                 |                   |                   |
-               Codex          Claude Code           OpenCode
-                 |                   |                   |
-               Model               Model               Model
+             +-----------------------+----------------+
+             |                 |                       |
+           SQLite          Adapter                Installer
+                               |                       |
+                 +-------------+-------------+         |
+                 |             |             |         |
+               Codex       OpenCode        Pi      Node.js
+                 |             |             |         |
+               Model         Model         Model     Runtime
 ```
 
-The most important architectural rule is:
+最重要的架构原则：
 
-> **Rust is the unified Web gateway; the selected Agent is the actual brain and execution engine.**
+> **Rust 是统一的 Web 网关；用户选择的 Agent 才是真正的大脑和执行引擎。**
 
-This keeps Agent Web lightweight, avoids duplicating Agent functionality, minimizes infrastructure dependencies, and makes adding new Agents primarily an Adapter + installation definition problem.
+这样可以保持 Agent Web 轻量、避免重复实现 Agent 能力、减少基础设施依赖，并让增加新的 Agent 主要变成 Adapter + 安装定义的问题。
