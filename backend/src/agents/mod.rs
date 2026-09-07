@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod codex;
 pub mod generic;
+pub mod openclaw;
 pub mod opencode;
 pub mod pi;
 pub mod process;
@@ -8,6 +9,7 @@ pub mod process;
 pub use adapter::{AgentAdapter, AgentConfig};
 use codex::CodexAdapter;
 use generic::GenericAdapter;
+use openclaw::OpenClawAdapter;
 use opencode::OpenCodeAdapter;
 use pi::PiAdapter;
 use std::{collections::HashMap, sync::Arc};
@@ -36,6 +38,7 @@ impl AgentManager {
             "codex" => Arc::new(CodexAdapter::new()),
             "opencode" => Arc::new(OpenCodeAdapter::new()),
             "pi" => Arc::new(PiAdapter::new()),
+            "openclaw" => Arc::new(OpenClawAdapter::new()),
             _ => Arc::new(GenericAdapter::new()),
         };
         map.insert(kind.to_owned(), adapter.clone());
