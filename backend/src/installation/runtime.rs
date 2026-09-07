@@ -2,7 +2,11 @@ use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 use tokio::{fs, process::Command};
 
-pub const NODE_ROOT: &str = "/opt/agent-runtimes/node";
+pub fn runtime_root() -> PathBuf {
+    std::env::var("AGENTWEB_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./runtimes/node"))
+}
 
 pub fn supported_node_versions() -> Vec<&'static str> {
     vec!["22.19.0", "22.18.0", "22.17.0", "20.19.4", "20.19.3"]
@@ -21,15 +25,16 @@ fn platform_arch() -> Result<&'static str> {
 }
 
 pub fn node_home(version: &str) -> PathBuf {
-    Path::new(NODE_ROOT).join(format!("v{version}"))
+    runtime_root().join(format!("v{version}"))
 }
 pub fn node_bin(version: &str) -> PathBuf {
     node_home(version).join("bin")
 }
 
 pub async fn installed_versions() -> Result<Vec<String>> {
+    let root = runtime_root();
     let mut out = Vec::new();
-    let mut rd = match fs::read_dir(NODE_ROOT).await {
+    let mut rd = match fs::read_dir(&root).await {
         Ok(rd) => rd,
         Err(_) => return Ok(out),
     };
@@ -55,12 +60,13 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
         return Err(anyhow!("unsupported Node.js version: {version}"));
     }
     let arch = platform_arch()?;
+    let root = runtime_root();
     let home = node_home(version);
     if home.join("bin/node").exists() {
         return Ok(());
     }
-    fs::create_dir_all(NODE_ROOT).await?;
-    let archive = Path::new(NODE_ROOT).join(format!("node-v{version}-linux-{arch}.tar.xz"));
+    fs::create_dir_all(&root).await?;
+    let archive = root.join(format!("node-v{version}-linux-{arch}.tar.xz"));
     let url = format!("https://nodejs.org/dist/v{version}/node-v{version}-linux-{arch}.tar.xz");
     events(format!("Downloading Node.js {version} ({arch})..."));
     let status = Command::new("curl")
@@ -72,7 +78,7 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
     if !status.success() {
         return Err(anyhow!("failed to download Node.js {version}"));
     }
-    let extract_dir = Path::new(NODE_ROOT).join(format!("extract-{version}"));
+    let extract_dir = root.join(format!("extract-{version}"));
     let _ = fs::remove_dir_all(&extract_dir).await;
     fs::create_dir_all(&extract_dir).await?;
     events(format!("Extracting Node.js {version}..."));
