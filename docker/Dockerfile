@@ -12,10 +12,11 @@ COPY backend ./backend
 RUN cd backend && cargo build --release
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git procps && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
 RUN mkdir -p /data /workspaces
 ENV DATABASE_URL=sqlite:///data/agentweb.db
+ENV RUST_LOG=info
 EXPOSE 8080
 CMD ["/usr/local/bin/agentweb"]
