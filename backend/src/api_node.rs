@@ -1,6 +1,7 @@
 use crate::{installation::runtime, state::AppState};
 use axum::{extract::State, Json};
 use serde::Serialize;
+use sqlx::Row;
 
 #[derive(Serialize)]
 pub struct NodeVersions {
@@ -20,7 +21,7 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
         .await
         .ok()
         .flatten()
-        .map(|row| sqlx::Row::get::<String, _>(&row, 0))
+        .map(|row| row.get::<String, _>(0))
         .filter(|p| !p.trim().is_empty());
 
     let active = configured_path
