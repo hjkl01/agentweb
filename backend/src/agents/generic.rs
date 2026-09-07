@@ -18,9 +18,6 @@ impl GenericAdapter {
 }
 #[async_trait]
 impl AgentAdapter for GenericAdapter {
-    async fn start(&self, config: &AgentConfig) -> Result<()> {
-        self.process.start(config).await
-    }
     async fn send_message(
         &self,
         config: &AgentConfig,
