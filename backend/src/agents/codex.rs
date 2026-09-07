@@ -18,9 +18,6 @@ impl CodexAdapter {
 }
 #[async_trait]
 impl AgentAdapter for CodexAdapter {
-    async fn start(&self, config: &AgentConfig) -> Result<()> {
-        self.process.start(config).await
-    }
     async fn send_message(
         &self,
         config: &AgentConfig,
