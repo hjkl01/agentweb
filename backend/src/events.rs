@@ -15,6 +15,30 @@ pub enum AgentEvent {
     MessageDelta { session_id: String, text: String },
     #[serde(rename = "message.completed")]
     MessageCompleted { session_id: String },
+    #[serde(rename = "thinking.started")]
+    ThinkingStarted { session_id: String },
+    #[serde(rename = "thinking.delta")]
+    ThinkingDelta { session_id: String, text: String },
+    #[serde(rename = "thinking.completed")]
+    ThinkingCompleted { session_id: String },
+    #[serde(rename = "tool.started")]
+    ToolStarted { session_id: String, tool: String },
+    #[serde(rename = "tool.output")]
+    ToolOutput { session_id: String, tool: String, output: String },
+    #[serde(rename = "tool.completed")]
+    ToolCompleted { session_id: String, tool: String },
+    #[serde(rename = "file.created")]
+    FileCreated { session_id: String, path: String },
+    #[serde(rename = "file.modified")]
+    FileModified { session_id: String, path: String },
+    #[serde(rename = "file.deleted")]
+    FileDeleted { session_id: String, path: String },
+    #[serde(rename = "command.started")]
+    CommandStarted { session_id: String, command: String },
+    #[serde(rename = "command.output")]
+    CommandOutput { session_id: String, output: String },
+    #[serde(rename = "command.completed")]
+    CommandCompleted { session_id: String },
     #[serde(rename = "agent.error")]
     Error { session_id: String, message: String },
     #[serde(rename = "session.completed")]
