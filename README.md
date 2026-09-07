@@ -40,6 +40,132 @@ docker compose up -d --build
 http://localhost:8080
 ```
 
+## 本地开发
+
+如果需要修改 Rust 后端或 React 前端，可以直接在本地运行，不需要每次重新构建 Docker 镜像。
+
+### 环境要求
+
+- Rust stable / Cargo
+- Node.js 22+
+- npm
+
+### 1. 启动后端
+
+```bash
+cd backend
+cargo run
+```
+
+后端默认监听：
+
+```text
+http://localhost:8080
+```
+
+首次启动时，如果 SQLite 中还没有用户，会自动创建 `admin` 用户，并在终端输出一次随机生成的密码，请保存该密码。
+
+后端本地运行时，SQLite 默认使用：
+
+```text
+/data/agentweb.db
+```
+
+因此建议提前创建本地目录：
+
+```bash
+sudo mkdir -p /data /workspaces /opt/agent-runtimes/node
+```
+
+如果不希望使用系统目录，可以设置自己的环境变量，例如：
+
+```bash
+export DATABASE_URL="sqlite:///tmp/agentweb.db"
+```
+
+> 当前本地开发模式下，Rust 后端会直接从 `/app/frontend` 提供前端静态文件。因此如果需要通过 `http://localhost:8080` 查看最新前端代码，需要先执行前端构建。
+
+### 2. 构建前端
+
+另开一个终端：
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+构建完成后，将生成：
+
+```text
+frontend/dist/
+```
+
+由于本地运行的 Rust 后端默认读取 `/app/frontend`，可以使用下面的方式创建软链接：
+
+```bash
+sudo mkdir -p /app
+sudo ln -sfn "$(pwd)/dist" /app/frontend
+```
+
+然后访问：
+
+```text
+http://localhost:8080
+```
+
+修改前端代码后重新执行：
+
+```bash
+npm run build
+```
+
+刷新浏览器即可看到最新版本。
+
+### 3. 后端开发检查
+
+修改 Rust 代码后重新运行：
+
+```bash
+cd backend
+cargo run
+```
+
+检查编译：
+
+```bash
+cargo check
+```
+
+运行 Clippy：
+
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+### 4. 前端开发检查
+
+```bash
+cd frontend
+npm run build
+```
+
+### 本地开发目录
+
+推荐项目目录保持：
+
+```text
+agentweb/
+├── backend/
+├── frontend/
+├── data/
+├── workspaces/
+├── runtimes/
+└── docker/
+```
+
+如果希望完全避免使用 `/data`、`/workspaces` 和 `/opt/agent-runtimes` 等系统目录，后续可以将后端的数据目录统一改为可通过环境变量配置；Docker 模式仍然使用当前的 `/data`、`/workspaces` 和 `/opt/agent-runtimes` 挂载方式。
+
 ## Docker 持久化
 
 默认 `docker-compose.yml`：
