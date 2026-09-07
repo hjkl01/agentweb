@@ -16,4 +16,7 @@ services:
       - XDG_DATA_HOME=/data/home/.local/share
       - XDG_CACHE_HOME=/data/home/.cache
       - DATABASE_URL=sqlite:///data/agentweb.db
+      - AGENTWEB_WORKSPACE_DIR=/workspaces
+      - AGENTWEB_RUNTIME_DIR=/opt/agent-runtimes/node
+      - AGENTWEB_FRONTEND_DIR=/app/frontend
       - RUST_LOG=info
