@@ -4,6 +4,7 @@ pub struct AgentDefinition {
     #[allow(dead_code)]
     pub name: &'static str,
     pub kind: &'static str,
+    #[allow(dead_code)]
     pub command: &'static str,
 }
 
