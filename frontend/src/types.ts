@@ -32,6 +32,7 @@ export type ChatMessage = {
 
 export type ActivityItem = {
   id: string;
+  key: string;
   type: string;
   label: string;
   detail?: string;
