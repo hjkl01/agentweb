@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
     ports:
       - "8080:8080"
     volumes:
@@ -20,3 +22,9 @@ services:
       - AGENTWEB_RUNTIME_DIR=/opt/agent-runtimes/node
       - AGENTWEB_FRONTEND_DIR=/app/frontend
       - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
