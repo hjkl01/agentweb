@@ -70,10 +70,13 @@ pub async fn logout(State(state): State<AppState>, request: Request<Body>) -> Re
 }
 fn clear_cookie() -> Response { Response::builder().status(StatusCode::OK).header(header::SET_COOKIE,"agentweb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0").header(header::CONTENT_TYPE,"application/json").body(Body::from(r#"{"status":"logged_out"}"#)).unwrap() }
 
-async fn current_user(state: &AppState, request: &Request<Body>) -> Option<(String,String)> { valid_session(state,&cookie_token(request)?).await }
+async fn current_user(state: &AppState, token: Option<String>) -> Option<(String,String)> {
+    valid_session(state, &token?).await
+}
 
-pub async fn change_password(State(state): State<AppState>, request: Request<Body>, Json(value): Json<ChangePasswordRequest>) -> Response {
-    let Some((session_id,username))=current_user(&state,&request).await else { return unauthorized(); };
+pub async fn change_password(State(state): State<AppState>, Json(value): Json<ChangePasswordRequest>, request: Request<Body>) -> Response {
+    let token = cookie_token(&request);
+    let Some((session_id,username))=current_user(&state,token).await else { return unauthorized(); };
     if value.new_password.len() < 8 { return (StatusCode::BAD_REQUEST,"Password must contain at least 8 characters").into_response(); }
     if verify_password(&state,&username,&value.current_password).await.is_none() { return (StatusCode::BAD_REQUEST,"Current password is incorrect").into_response(); }
     if sqlx::query("UPDATE users SET password_hash=?,updated_at=? WHERE username=?").bind(hash(&value.new_password)).bind(Utc::now().to_rfc3339()).bind(&username).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to update password").into_response(); }
@@ -82,14 +85,16 @@ pub async fn change_password(State(state): State<AppState>, request: Request<Bod
 }
 
 pub async fn list_sessions(State(state): State<AppState>, request: Request<Body>) -> Response {
-    let Some((current_id,_))=current_user(&state,&request).await else { return unauthorized(); };
+    let token = cookie_token(&request);
+    let Some((current_id,_))=current_user(&state,token).await else { return unauthorized(); };
     let rows=sqlx::query("SELECT id,created_at,expires_at FROM auth_sessions WHERE user_id=(SELECT user_id FROM auth_sessions WHERE id=?) AND expires_at>? ORDER BY created_at DESC").bind(&current_id).bind(Utc::now().to_rfc3339()).fetch_all(&state.db).await.unwrap_or_default();
     let sessions=rows.into_iter().map(|r|AuthSession{id:r.get(0),created_at:r.get(1),expires_at:r.get(2),current:r.get::<String,_>(0)==current_id}).collect::<Vec<_>>();
     (StatusCode::OK,Json(sessions)).into_response()
 }
 
 pub async fn revoke_all_sessions(State(state): State<AppState>, request: Request<Body>) -> Response {
-    let Some((current_id,_))=current_user(&state,&request).await else { return unauthorized(); };
+    let token = cookie_token(&request);
+    let Some((current_id,_))=current_user(&state,token).await else { return unauthorized(); };
     let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&current_id).bind(&current_id).execute(&state.db).await;
     (StatusCode::OK,Json(serde_json::json!({"status":"revoked"}))).into_response()
 }
