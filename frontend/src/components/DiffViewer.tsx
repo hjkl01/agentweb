@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Minus, Plus } from 'lucide-react';
 import type { WorkspaceDiff } from '../types';
 
-type Props = { diff?: WorkspaceDiff; onOpenFile?: (path: string, line?: number) => void };
+type Props = { diff?: WorkspaceDiff };
 type DiffRow = { kind: 'hunk' | 'add' | 'remove' | 'context' | 'meta' | 'binary'; text: string; oldLine?: number; newLine?: number };
 type DiffFile = { name: string; newName?: string; rows: DiffRow[]; status: 'added' | 'deleted' | 'modified' | 'renamed' | 'binary' };
 
@@ -81,28 +81,24 @@ function parseFiles(text?: string): DiffFile[] {
   return files;
 }
 
-function Row({ row, onOpen }: { row: DiffRow; onOpen?: (line?: number) => void }) {
+function Row({ row }: { row: DiffRow }) {
   const marker = row.kind === 'add' ? <Plus size={12} /> : row.kind === 'remove' ? <Minus size={12} /> : null;
-  const clickable = row.kind === 'add' || row.kind === 'remove' || row.kind === 'context';
-  return <div className={`diff-row diff-${row.kind}${clickable ? ' diff-row-clickable' : ''}`} onClick={() => clickable && onOpen?.(row.newLine || row.oldLine)}><span className="diff-line-number">{row.oldLine || ''}</span><span className="diff-line-number">{row.newLine || ''}</span><span className="diff-marker">{marker}</span><code>{row.text || ' '}</code></div>;
+  return <div className={`diff-row diff-${row.kind}`}><span className="diff-line-number">{row.oldLine || ''}</span><span className="diff-line-number">{row.newLine || ''}</span><span className="diff-marker">{marker}</span><code>{row.text || ' '}</code></div>;
 }
 
-function DiffFileView({ file, onOpenFile }: { file: DiffFile; onOpenFile?: (path: string, line?: number) => void }) {
+function DiffFileView({ file }: { file: DiffFile }) {
   const [open, setOpen] = useState(true);
   const additions = file.rows.filter(row => row.kind === 'add').length;
   const removals = file.rows.filter(row => row.kind === 'remove').length;
   const badge = file.status === 'added' ? 'A' : file.status === 'deleted' ? 'D' : file.status === 'renamed' ? 'R' : file.status === 'binary' ? 'B' : 'M';
-  const target = file.status === 'deleted' ? file.name : file.newName || file.name;
-  const canOpen = file.status !== 'binary';
-  const openLine = (line?: number) => canOpen && onOpenFile?.(target, line);
   return <section className="diff-file">
     <button className="diff-file-head" onClick={() => setOpen(value => !value)}>{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className={`diff-status-badge diff-status-${file.status}`}>{badge}</span><strong>{file.name}</strong>{file.newName && file.newName !== file.name && <span className="diff-renamed">→ {file.newName}</span>}<span className="diff-count">{additions ? `+${additions}` : ''}{removals ? ` -${removals}` : ''}</span></button>
-    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => <Row key={`${index}-${row.text}`} row={row} onOpen={openLine} />)}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}{canOpen && <button className="diff-open-file" onClick={() => openLine()}>Open {target}</button>}</div>}
+    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => <Row key={`${index}-${row.text}`} row={row} />)}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}</div>}
   </section>;
 }
 
-export function DiffViewer({ diff, onOpenFile }: Props) {
+export function DiffViewer({ diff }: Props) {
   const files = useMemo(() => parseFiles(diff?.diff), [diff?.diff]);
   if (!files.length) return <div className="diff-empty">No git changes</div>;
-  return <div className="diff-viewer">{diff?.status && <div className="diff-status">{diff.status}</div>}{diff?.truncated && <div className="diff-truncated">Diff is truncated because it exceeded the size limit.</div>}{files.map(file => <DiffFileView key={`${file.name}:${file.newName || ''}`} file={file} onOpenFile={onOpenFile} />)}</div>;
+  return <div className="diff-viewer">{diff?.status && <div className="diff-status">{diff.status}</div>}{diff?.truncated && <div className="diff-truncated">Diff is truncated because it exceeded the size limit.</div>}{files.map(file => <DiffFileView key={`${file.name}:${file.newName || ''}`} file={file} />)}</div>;
 }
