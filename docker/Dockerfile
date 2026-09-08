@@ -1,8 +1,8 @@
 FROM node:22-bookworm AS frontend
 WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/package.json ./
 RUN npm config set registry https://registry.npmmirror.com \
-  && npm ci
+  && npm install --no-audit --no-fund
 COPY frontend ./
 RUN npm run build
 
@@ -29,6 +29,9 @@ ENV XDG_CONFIG_HOME=/data/home/.config
 ENV XDG_DATA_HOME=/data/home/.local/share
 ENV XDG_CACHE_HOME=/data/home/.cache
 ENV DATABASE_URL=sqlite:///data/agentweb.db
+ENV AGENTWEB_WORKSPACE_DIR=/workspaces
+ENV AGENTWEB_RUNTIME_DIR=/opt/agent-runtimes/node
+ENV AGENTWEB_FRONTEND_DIR=/app/frontend
 ENV RUST_LOG=info
 EXPOSE 8080
 CMD ["/usr/local/bin/agentweb"]
