@@ -1,4 +1,4 @@
-use super::{adapter::AgentRunError, definition, AgentManager};
+use super::{adapter::AgentRunError, AgentManager};
 use crate::{api::{build_agent_config, Session}, events::{AgentEvent, EventBus}};
 use chrono::Utc;
 use sqlx::Row;
