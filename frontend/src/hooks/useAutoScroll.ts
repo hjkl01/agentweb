@@ -26,8 +26,6 @@ export function useAutoScroll<T extends HTMLElement>(ref: RefObject<T | null>, {
   useEffect(() => {
     const element = ref.current;
     if (!element || !stickToBottom.current) return;
-    requestAnimationFrame(() => {
-      element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
-    });
+    requestAnimationFrame(() => { element.scrollTop = element.scrollHeight; });
   }, [contentVersion, ref]);
 }
