@@ -1,8 +1,22 @@
 use super::{adapter::AgentConfig, definition, AgentManager};
-use crate::{api::Session, events::{AgentEvent, EventBus}};
+use crate::{api::Session, events::{AgentEvent, EventBus}, installation::runtime};
 use chrono::Utc;
 use sqlx::Row;
 use std::sync::Arc;
+
+async fn runtime_path(db: &sqlx::SqlitePool) -> Option<String> {
+    if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
+        return Some(runtime::node_bin(&version).to_string_lossy().into_owned());
+    }
+    let configured = sqlx::query("SELECT value FROM runtime_settings WHERE key='node_path'")
+        .fetch_optional(db).await.ok().flatten().map(|row| row.get::<String, _>(0));
+    let path = configured?.trim().to_owned();
+    if path.is_empty() { return None; }
+    let path = std::path::PathBuf::from(path);
+    if path.is_file() { path.parent().map(|p| p.to_string_lossy().into_owned()) }
+    else if path.join("node").is_file() { Some(path.to_string_lossy().into_owned()) }
+    else { None }
+}
 
 pub async fn run_session(
     db: sqlx::SqlitePool,
@@ -12,11 +26,7 @@ pub async fn run_session(
     events: EventBus,
 ) {
     let row = sqlx::query("SELECT kind,command,working_directory,native_session_id,model FROM agents WHERE id=?")
-        .bind(&session.agent_id)
-        .fetch_optional(&db)
-        .await
-        .ok()
-        .flatten();
+        .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
 
     let (kind, command, working_directory, native_session_id, model) = if let Some(row) = row {
         (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
@@ -32,7 +42,7 @@ pub async fn run_session(
         command,
         working_directory: working_directory.or_else(|| Some(session.workspace.clone())),
         native_session_id: native_session_id.or(session.native_session_id.clone()),
-        runtime_path: None,
+        runtime_path: runtime_path(&db).await,
         model: model.or(session.model.clone()),
     };
 
