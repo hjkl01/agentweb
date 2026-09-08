@@ -19,7 +19,21 @@ RUN sed -i \
   -e 's@security.debian.org@mirrors.aliyun.com@g' \
   /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
   && apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git procps util-linux xz-utils \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    xz-utils \
+    tar \
+    git \
+    procps \
+    util-linux \
+    bash \
+    coreutils \
+    grep \
+    sed \
+    gawk \
+    findutils \
+    openssh-client \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
