@@ -4,6 +4,8 @@ use chrono::Utc;
 use futures::SinkExt;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::path::{Path as FsPath, PathBuf};
+use tokio::fs;
 use uuid::Uuid;
 
 #[derive(Serialize, Clone)]
@@ -30,18 +32,36 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
 }
 
 #[derive(Deserialize)]
-pub struct CreateSession { pub agent_id: String, pub title: Option<String>, pub workspace: String, pub model: Option<String> }
+pub struct CreateSession { pub agent_id: String, pub title: Option<String>, pub workspace: Option<String>, pub model: Option<String> }
+
+async fn create_workspace(session_id: &str, requested: Option<&str>) -> Result<String, StatusCode> {
+    let base_path = std::env::var("AGENTWEB_WORKSPACE_DIR").unwrap_or_else(|_| "./workspaces".into());
+    fs::create_dir_all(&base_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(&base_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let name = requested.unwrap_or("").trim();
+    let relative = if name.is_empty() || name == "." { session_id.to_owned() } else { name.to_owned() };
+    let relative_path = FsPath::new(&relative);
+    if relative_path.is_absolute() || relative_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let workspace = base.join(relative_path);
+    fs::create_dir_all(&workspace).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let canonical = fs::canonicalize(&workspace).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !canonical.starts_with(&base) { return Err(StatusCode::FORBIDDEN); }
+    Ok(canonical.to_string_lossy().into_owned())
+}
 
 pub async fn create_session(State(s): State<AppState>, Json(v): Json<CreateSession>) -> Result<Json<Session>, StatusCode> {
     let agent_exists = sqlx::query("SELECT 1 FROM agents WHERE id=?").bind(&v.agent_id).fetch_optional(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.is_some();
     if !agent_exists { return Err(StatusCode::NOT_FOUND); }
     let id = Uuid::new_v4().to_string();
+    let workspace = create_workspace(&id, v.workspace.as_deref()).await?;
     let now = Utc::now().to_rfc3339();
     let title = v.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "New Chat".into());
     sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
-        .bind(&id).bind(&v.agent_id).bind(&title).bind(&v.workspace).bind("idle")
+        .bind(&id).bind(&v.agent_id).bind(&title).bind(&workspace).bind("idle")
         .bind::<Option<String>>(None).bind(&v.model).bind(&now).bind(&now).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(Session { id, agent_id: v.agent_id, title, workspace: v.workspace, status: "idle".into(), native_session_id: None, model: v.model }))
+    Ok(Json(Session { id, agent_id: v.agent_id, title, workspace, status: "idle".into(), native_session_id: None, model: v.model }))
 }
 
 pub async fn get_session(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Session>, StatusCode> {
@@ -49,6 +69,7 @@ pub async fn get_session(Path(id): Path<String>, State(s): State<AppState>) -> R
 }
 
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
+    let _ = s.agents.interrupt(&id).await;
     match sqlx::query("DELETE FROM sessions WHERE id=?").bind(id).execute(&s.db).await { Ok(_) => StatusCode::NO_CONTENT, Err(_) => StatusCode::INTERNAL_SERVER_ERROR }
 }
 
@@ -56,6 +77,8 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
 pub struct SetModel { pub model: Option<String> }
 
 pub async fn set_session_model(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SetModel>) -> Result<Json<Session>, StatusCode> {
+    let session = load_session(&s.db, &id).await?;
+    if session.status == "running" { return Err(StatusCode::CONFLICT); }
     sqlx::query("UPDATE sessions SET model=?,updated_at=? WHERE id=?").bind(&v.model).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(load_session(&s.db, &id).await?))
 }
@@ -72,6 +95,7 @@ pub struct SendMessage { pub message: String }
 pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SendMessage>) -> Result<Json<serde_json::Value>, StatusCode> {
     if v.message.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let session = load_session(&s.db, &id).await?;
+    if session.status == "running" { return Err(StatusCode::CONFLICT); }
     sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)")
         .bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(Utc::now().to_rfc3339()).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let events = s.events.clone();
@@ -82,6 +106,8 @@ pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Jso
 }
 
 pub async fn interrupt(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let session = load_session(&s.db, &id).await?;
+    if session.status != "running" { return Ok(Json(serde_json::json!({"status":session.status}))); }
     s.agents.interrupt(&id).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(serde_json::json!({"status":"interrupted"})))
 }
