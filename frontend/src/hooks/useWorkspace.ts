@@ -35,8 +35,12 @@ export function useWorkspace(active?: string, revision = 0) {
   }, [active, refreshFiles]);
 
   useEffect(() => {
-    if (revision > 0) refresh().catch(console.error);
-  }, [revision, refresh]);
+    if (revision <= 0 || !active) return;
+    refresh().catch(console.error);
+    const path = selectedFile?.path;
+    if (!path) return;
+    api<WorkspaceFile>(fileUrl(active, path)).then(setSelectedFile).catch(() => setSelectedFile(undefined));
+  }, [active, revision, refresh, selectedFile?.path]);
 
   const openFile = useCallback(async (path: string) => {
     if (!active) return;
