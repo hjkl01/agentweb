@@ -49,6 +49,7 @@ export type FileItem = {
   path: string;
   kind: 'file' | 'directory' | string;
   size: number;
+  status?: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked';
 };
 
 export type WorkspaceFile = {
