@@ -1,5 +1,5 @@
 use crate::{installation::runtime, state::AppState};
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::process::Command;
@@ -17,12 +17,31 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
 }
 
 #[derive(Deserialize)] pub struct InstallNodeRequest { pub version: String }
-pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+
+pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let requested = v.version.trim();
-    let available = runtime::available_node_versions().await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    let version = available.iter().find(|item| *item == requested || item.starts_with(&format!("{requested}."))).cloned().ok_or(axum::http::StatusCode::BAD_REQUEST)?;
-    runtime::install_node(&version, |_| {}).await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    if requested.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_REQUIRED", "Node.js version is required"));
+    }
+
+    let available = runtime::available_node_versions().await.map_err(|error| {
+        error_response(StatusCode::BAD_GATEWAY, "NODE_VERSION_LIST_FAILED", format!("failed to fetch Node.js versions: {error:#}"))
+    })?;
+    let version = available
+        .iter()
+        .find(|item| *item == requested || item.starts_with(&format!("{requested}.")))
+        .cloned()
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_UNSUPPORTED", format!("unsupported Node.js version: {requested}")))?;
+
+    runtime::install_node(&version, |message| tracing::info!(message = %message, "Node.js installation")).await.map_err(|error| {
+        error_response(StatusCode::BAD_GATEWAY, "NODE_INSTALL_FAILED", format!("failed to install Node.js {version}: {error:#}"))
+    })?;
+
     Ok(Json(serde_json::json!({ "status": "installed", "version": version })))
+}
+
+fn error_response(status: StatusCode, code: &str, message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+    (status, Json(serde_json::json!({ "error": { "code": code, "message": message.into() } })))
 }
 
 #[derive(Serialize)] pub struct CatalogItem { pub id: &'static str, pub name: &'static str, pub description: &'static str, pub installed: bool, pub requirements: Vec<&'static str>, pub install_command: &'static str }
@@ -50,9 +69,9 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
 }
 
 #[derive(Deserialize)] pub struct CustomAgentInstall { pub command: String }
-pub async fn install_custom_agent(Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+pub async fn install_custom_agent(Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let command = v.command.trim().to_owned();
-    if command.is_empty() { return Err(axum::http::StatusCode::BAD_REQUEST); }
+    if command.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "INSTALL_COMMAND_REQUIRED", "install command is required")); }
     let mut process = Command::new("sh");
     process.args(["-lc", &command]);
     if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
@@ -60,8 +79,11 @@ pub async fn install_custom_agent(Json(v): Json<CustomAgentInstall>) -> Result<J
         let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
         process.env("PATH", path).env("NPM_CONFIG_PREFIX", runtime::node_home(&version));
     }
-    let output = process.output().await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    if !output.status.success() { return Err(axum::http::StatusCode::BAD_REQUEST); }
+    let output = process.output().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "AGENT_INSTALL_START_FAILED", format!("failed to start install command: {error:#}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().chars().take(3000).collect::<String>();
+        return Err(error_response(StatusCode::BAD_GATEWAY, "AGENT_INSTALL_FAILED", if stderr.is_empty() { format!("install command exited with status {}", output.status) } else { format!("install command failed: {stderr}") }));
+    }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().chars().take(1000).collect::<String>();
     Ok(Json(serde_json::json!({ "status": "installed", "command": command, "output": stdout })))
 }
