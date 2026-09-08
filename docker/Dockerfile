@@ -23,14 +23,14 @@ RUN sed -i \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
-RUN mkdir -p /data/home /workspaces /opt/agent-runtimes/node /opt/agent-runtimes/agents
+RUN mkdir -p /data/home /data/workspaces /data/runtimes/node /data/runtimes/agents
 ENV HOME=/data/home
 ENV XDG_CONFIG_HOME=/data/home/.config
 ENV XDG_DATA_HOME=/data/home/.local/share
 ENV XDG_CACHE_HOME=/data/home/.cache
 ENV DATABASE_URL=sqlite:///data/agentweb.db
-ENV AGENTWEB_WORKSPACE_DIR=/workspaces
-ENV AGENTWEB_RUNTIME_DIR=/opt/agent-runtimes/node
+ENV AGENTWEB_WORKSPACE_DIR=/data/workspaces
+ENV AGENTWEB_RUNTIME_DIR=/data/runtimes/node
 ENV AGENTWEB_FRONTEND_DIR=/app/frontend
 ENV RUST_LOG=info
 EXPOSE 8080
