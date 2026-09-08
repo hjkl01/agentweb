@@ -27,5 +27,5 @@ export function useSession(active?: string) {
     if (!active) { setMessages([]); setFiles([]); setStream(''); setActivity([]); setActivityOpen(false); setWorkspaceRevision(0); }
   }, [active]);
 
-  return { sessions, messages, files, stream, activity, activityOpen, workspaceRevision, error, setMessages, setFiles, setActivityOpen, refreshSessions, ...actions };
+  return { sessions, messages, stream, activity, activityOpen, workspaceRevision, error, setMessages, setFiles, setActivity, setActivityOpen, refreshSessions, ...actions };
 }
