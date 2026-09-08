@@ -13,7 +13,8 @@ async fn verify(state: &AppState, encoded: &str) -> bool {
     format!("{:x}", Sha256::digest(password.as_bytes())) == stored_hash
 }
 
-fn unauthorized() -> Response { (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, r#"Basic realm="Agent Web""#)], "Authentication required").into_response() }
+fn unauthorized() -> Response { (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, r#"Basic realm=\"Agent Web\""#)], "Authentication required").into_response() }
+
 fn credentials(request: &Request<Body>) -> Option<String> {
     if let Some(value) = request.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Basic ")) { return Some(value.to_owned()); }
     let cookie = request.headers().get(header::COOKIE).and_then(|v| v.to_str().ok())?;
@@ -24,6 +25,12 @@ pub async fn basic_auth(State(state): State<AppState>, request: Request<Body>, n
     let Some(encoded) = credentials(&request) else { return unauthorized(); };
     if !verify(&state, &encoded).await { return unauthorized(); }
     next.run(request).await
+}
+
+pub async fn me(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let Some(encoded) = credentials(&request) else { return unauthorized(); };
+    if !verify(&state, &encoded).await { return unauthorized(); }
+    (StatusCode::OK, Json(serde_json::json!({ "authenticated": true }))).into_response()
 }
 
 #[derive(Deserialize)]
