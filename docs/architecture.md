@@ -38,7 +38,9 @@ Agent Web Backend :8080
 
 Web Session ID 与 Agent native Session/Thread ID 分离。Session 保存 agent、model、workspace 和 native ID；Agent Adapter 负责恢复原生会话。
 
-Workspace 使用 session 独立目录，所有路径请求必须限制在 workspace root 内。Diff 和文件预览有大小限制，并忽略 `.git`、`node_modules`、构建目录等。
+默认 Workspace 使用 session 独立目录。删除 Session 时会同时删除这个默认的 session-owned workspace；如果创建 Session 时指定了自定义 workspace 名称，则删除 Session **不会删除自定义 workspace**，避免多个 Session 共享目录时发生误删。
+
+所有路径请求必须限制在 workspace root 内。Diff 和文件预览有大小限制，并忽略 `.git`、`node_modules`、构建目录等。
 
 ## 4. Streaming
 
@@ -48,11 +50,15 @@ Backend 通过 WebSocket 广播 session-scoped events。message/thinking/tool/co
 
 ### 5.1 Session Cookie
 
-登录成功后生成随机 opaque token。浏览器只保存 `HttpOnly` Cookie，数据库只保存 token SHA-256 Hash；默认有效期 30 天。API 仍兼容 HTTP Basic Authentication，方便 Swagger/脚本调用。
+登录成功后生成随机 opaque token。浏览器只保存 `HttpOnly` Cookie，数据库只保存 token SHA-256 Hash；默认有效期 30 天。
+
+浏览器登录统一使用 Agent Web 自己的 LoginPage，不再使用 HTTP Basic Authentication，因此未登录 API 不会触发浏览器原生用户名/密码弹窗。
 
 ### 5.2 登录失败锁定
 
 登录失败按客户端 IP 统计：连续错误达到 **3 次**后，该 IP **锁定 30 分钟**。成功登录后清除该 IP 的失败计数。
+
+当前锁定计数保存在 backend 进程内存中；单进程部署适用。未来多进程/多实例部署时应迁移到 SQLite 或 Redis，使限流状态可共享。
 
 反向代理必须正确传递 `X-Forwarded-For` 或 `X-Real-IP`；生产环境应只信任来自可信代理的这些 Header，避免客户端伪造 IP。
 
@@ -84,40 +90,43 @@ POST /api/auth/sessions/revoke-all
 
 ## 6. 前端
 
-前端为 SPA，登录页独立于工作区。工作区按 hooks/components/lib/styles 拆分；Session 页面支持响应式布局、自动滚动和 Activity 聚合。账号入口包含密码修改和 Session 管理。
+前端为 SPA，AppRouter 是唯一认证状态 owner。API client 只负责请求和抛出结构化 `ApiError`；收到 401 时发送认证过期事件，由 AppRouter 切换回 LoginPage。工作区按 hooks/components/lib/styles 拆分；Session 状态和消息发送集中在 `useSession`，避免 App 与 Session hooks 双重维护同一份消息状态。
 
-## 7. Swagger
+## 7. API 错误
 
-Swagger UI：`http://localhost:8080/docs`；OpenAPI：`/api-doc/openapi.json`。所有 HTTP API 应登记到 OpenAPI。
+所有 `/api` 非成功响应统一转换为：
 
-## 8. 部署
+```json
+{
+  "error": {
+    "code": "SESSION_RUNNING",
+    "message": "Session is already running"
+  }
+}
+```
+
+前端 `ApiError` 同时保留 HTTP status、错误 code、message 和 API path，UI 不需要解析后端字符串。
+
+## 8. Swagger
+
+Swagger UI：`http://localhost:8080/docs`；OpenAPI：`/api-doc/openapi.json`。所有 HTTP API 都登记到 OpenAPI，并为每个接口提供 tag、summary、description、参数及响应说明。
+
+## 9. 部署
 
 Agent Web 默认监听 `0.0.0.0:8080`。生产环境推荐由 Nginx 或 Caddy 终止 TLS，再反向代理到 8080，并透传 WebSocket Upgrade。
 
 示例：`docs/nginx.conf`、`docs/Caddyfile`。
 
-### Nginx
-
-```text
-Client HTTPS → Nginx :443 → Agent Web :8080
-```
-
-### Caddy
-
-```text
-Client HTTPS → Caddy :443 → Agent Web :8080
-```
-
-Caddy 可直接申请 Let's Encrypt 证书；Nginx 通常需要单独配置证书。
-
-## 9. Docker / 开发
+## 10. Docker / 开发
 
 本地开发使用 `make install` 安装依赖、`make dev` 启动 frontend/backend。Docker 持久化 `/data`、`/workspaces`、`/opt/agent-runtimes`，Agent 按需安装，不把所有 Agent 强制打进镜像。
 
-## 10. 数据库
+## 11. 数据库
 
-SQLite 使用 `schema_meta` 做幂等迁移。认证 Session 位于 `auth_sessions`，与 users 关联。删除数据库后会重新初始化 schema、内置 Agent 和默认 admin。
+SQLite 使用 SQLx embedded migrations 管理 schema，迁移文件位于 `backend/migrations/`，每次 schema 变更新增一个有版本号的 SQL 文件。旧数据库可以直接启动，初始 migration 使用 `CREATE TABLE IF NOT EXISTS` 兼容已经存在的数据表。
 
-## 11. 代码组织原则
+认证 Session 位于 `auth_sessions`，与 users 关联。删除数据库后会重新初始化 schema、内置 Agent 和默认 admin。
 
-文件保持单一职责；超过约 300 行优先拆分。Agent-specific 行为进入 agents 子模块，HTTP handler 按 agents/runtime/sessions/workspace/auth 分离。GitHub 修改大文件前先读取当前内容和 SHA，避免覆盖无关改动。
+## 12. 代码组织原则
+
+文件保持单一职责；超过约 300 行优先拆分。Session HTTP handlers 已拆分为 `sessions.rs`、`session_messages.rs` 和 `session_websocket.rs`。Agent-specific 行为进入 agents 子模块，HTTP handler 按 agents/runtime/sessions/workspace/auth 分离。GitHub 修改大文件前先读取当前内容和 SHA，避免覆盖无关改动。

@@ -1,34 +1,65 @@
 #![allow(dead_code)]
 use utoipa::OpenApi;
+
 #[derive(OpenApi)]
-#[openapi(info(title="Agent Web API",version="0.1.0",description="Agent Web API"),paths(health,auth_login,auth_me,auth_logout,auth_password,auth_sessions,auth_revoke_all,agents_get,agents_post,agent_catalog,runtime_settings_get,runtime_settings_put,node_versions,node_install,agent_status,agent_models,agent_install,sessions_get,sessions_post,session_get,session_delete,session_model,session_messages_get,session_messages_post,session_interrupt,session_files,session_file,session_diff,session_events))]
+#[openapi(info(title="Agent Web API",version="0.1.0",description="Agent Web backend API. Protected endpoints require the Agent Web session cookie."),tags((name="System",description="System health"),(name="Auth",description="Authentication and account security"),(name="Agents",description="Agent catalog and installation"),(name="Models",description="Model discovery and selection"),(name="Runtime",description="Node.js and Agent runtime"),(name="Sessions",description="Coding session lifecycle"),(name="Messages",description="Session messages and Agent execution"),(name="Workspace",description="Workspace files and Git diff"),(name="Events",description="Real-time session events")),paths(health,auth_login,auth_me,auth_logout,auth_password,auth_sessions,auth_revoke_all,agents_get,agents_post,agent_catalog,runtime_settings_get,runtime_settings_put,node_versions,node_install,agent_status,agent_models,agent_install,sessions_get,sessions_post,session_get,session_delete,session_model,session_messages_get,session_messages_post,session_interrupt,session_files,session_file,session_diff,session_events))]
 pub struct ApiDoc;
-#[utoipa::path(get,path="/api/health",tag="System",responses((status=200,description="Health")))]fn health(){}
-#[utoipa::path(post,path="/api/auth/login",tag="Auth",request_body=serde_json::Value,responses((status=200,description="Login"),(status=401,description="Invalid credentials"),(status=429,description="IP locked for 30 minutes")))]fn auth_login(){}
-#[utoipa::path(get,path="/api/auth/me",tag="Auth",responses((status=200,description="Current user"),(status=401,description="Not authenticated")))]fn auth_me(){}
-#[utoipa::path(post,path="/api/auth/logout",tag="Auth",responses((status=200,description="Logout")))]fn auth_logout(){}
-#[utoipa::path(put,path="/api/auth/password",tag="Auth",request_body=serde_json::Value,responses((status=200,description="Change password")))]fn auth_password(){}
-#[utoipa::path(get,path="/api/auth/sessions",tag="Auth",responses((status=200,description="Active sessions")))]fn auth_sessions(){}
-#[utoipa::path(post,path="/api/auth/sessions/revoke-all",tag="Auth",responses((status=200,description="Revoke other sessions")))]fn auth_revoke_all(){}
-#[utoipa::path(get,path="/api/agents",tag="Agents",responses((status=200,description="List agents")))]fn agents_get(){}
-#[utoipa::path(post,path="/api/agents",tag="Agents",request_body=serde_json::Value,responses((status=200,description="Create agent")))]fn agents_post(){}
-#[utoipa::path(get,path="/api/agent-catalog",tag="Agents",responses((status=200,description="Agent catalog")))]fn agent_catalog(){}
-#[utoipa::path(get,path="/api/runtime/settings",tag="Runtime",responses((status=200,description="Runtime settings")))]fn runtime_settings_get(){}
-#[utoipa::path(put,path="/api/runtime/settings",tag="Runtime",request_body=serde_json::Value,responses((status=200,description="Update settings")))]fn runtime_settings_put(){}
-#[utoipa::path(get,path="/api/node/versions",tag="Runtime",responses((status=200,description="Node versions")))]fn node_versions(){}
-#[utoipa::path(post,path="/api/node/install",tag="Runtime",request_body=serde_json::Value,responses((status=200,description="Install Node")))]fn node_install(){}
-#[utoipa::path(get,path="/api/agents/{id}/status",tag="Agents",params(("id"=String,Path)),responses((status=200,description="Agent status")))]fn agent_status(){}
-#[utoipa::path(get,path="/api/agents/{id}/models",tag="Models",params(("id"=String,Path)),responses((status=200,description="Agent models")))]fn agent_models(){}
-#[utoipa::path(post,path="/api/agents/{id}/install",tag="Agents",params(("id"=String,Path)),responses((status=200,description="Install agent")))]fn agent_install(){}
-#[utoipa::path(get,path="/api/sessions",tag="Sessions",responses((status=200,description="List sessions")))]fn sessions_get(){}
-#[utoipa::path(post,path="/api/sessions",tag="Sessions",request_body=serde_json::Value,responses((status=200,description="Create session")))]fn sessions_post(){}
-#[utoipa::path(get,path="/api/sessions/{id}",tag="Sessions",params(("id"=String,Path)),responses((status=200,description="Get session")))]fn session_get(){}
-#[utoipa::path(delete,path="/api/sessions/{id}",tag="Sessions",params(("id"=String,Path)),responses((status=204,description="Delete session")))]fn session_delete(){}
-#[utoipa::path(put,path="/api/sessions/{id}/model",tag="Models",params(("id"=String,Path)),request_body=serde_json::Value,responses((status=200,description="Set model")))]fn session_model(){}
-#[utoipa::path(get,path="/api/sessions/{id}/messages",tag="Messages",params(("id"=String,Path)))]fn session_messages_get(){}
-#[utoipa::path(post,path="/api/sessions/{id}/messages",tag="Messages",params(("id"=String,Path)),request_body=serde_json::Value)]fn session_messages_post(){}
-#[utoipa::path(post,path="/api/sessions/{id}/interrupt",tag="Sessions",params(("id"=String,Path)))]fn session_interrupt(){}
-#[utoipa::path(get,path="/api/sessions/{id}/files",tag="Workspace",params(("id"=String,Path)))]fn session_files(){}
-#[utoipa::path(get,path="/api/sessions/{id}/file/{path}",tag="Workspace",params(("id"=String,Path)))]fn session_file(){}
-#[utoipa::path(get,path="/api/sessions/{id}/diff",tag="Workspace",params(("id"=String,Path)))]fn session_diff(){}
-#[utoipa::path(get,path="/api/sessions/{id}/events",tag="Events",params(("id"=String,Path)))]fn session_events(){}
+
+/// Check backend health.
+#[utoipa::path(get,path="/api/health",tag="System",summary="Health check",description="Returns successfully when the backend is running.",responses((status=200,description="Backend is healthy")))]fn health(){}
+/// Login and create an HTTP-only session cookie.
+#[utoipa::path(post,path="/api/auth/login",tag="Auth",summary="Login",description="Authenticates the user and creates a persistent session cookie. Three failed attempts lock the IP for 30 minutes.",request_body=serde_json::Value,responses((status=200,description="Login succeeded"),(status=401,description="Invalid credentials"),(status=429,description="IP temporarily locked")))]fn auth_login(){}
+/// Get the current account.
+#[utoipa::path(get,path="/api/auth/me",tag="Auth",summary="Current account",description="Returns the authenticated username and current session id.",responses((status=200,description="Account information"),(status=401,description="Not authenticated")))]fn auth_me(){}
+/// Logout the current session.
+#[utoipa::path(post,path="/api/auth/logout",tag="Auth",summary="Logout",description="Revokes the current login session and clears its cookie.",responses((status=200,description="Logged out")))]fn auth_logout(){}
+/// Change the current password.
+#[utoipa::path(put,path="/api/auth/password",tag="Auth",summary="Change password",description="Changes the password and revokes all other active sessions.",request_body=serde_json::Value,responses((status=200,description="Password changed"),(status=400,description="Invalid password"),(status=401,description="Not authenticated")))]fn auth_password(){}
+/// List active login sessions.
+#[utoipa::path(get,path="/api/auth/sessions",tag="Auth",summary="List login sessions",description="Lists active sessions and marks the current session.",responses((status=200,description="Active sessions"),(status=401,description="Not authenticated")))]fn auth_sessions(){}
+/// Revoke all other login sessions.
+#[utoipa::path(post,path="/api/auth/sessions/revoke-all",tag="Auth",summary="Revoke other sessions",description="Keeps the current session and revokes every other session.",responses((status=200,description="Other sessions revoked"),(status=401,description="Not authenticated")))]fn auth_revoke_all(){}
+/// List registered Agents.
+#[utoipa::path(get,path="/api/agents",tag="Agents",summary="List Agents",description="Returns configured Agents and installation state.",responses((status=200,description="Agent list")))]fn agents_get(){}
+/// Register a custom Agent.
+#[utoipa::path(post,path="/api/agents",tag="Agents",summary="Create Agent",description="Registers a custom Agent definition.",request_body=serde_json::Value,responses((status=200,description="Agent created"),(status=400,description="Invalid definition")))]fn agents_post(){}
+/// List supported built-in Agents.
+#[utoipa::path(get,path="/api/agent-catalog",tag="Agents",summary="Agent catalog",description="Returns supported built-in Agents and runtime requirements.",responses((status=200,description="Agent catalog")))]fn agent_catalog(){}
+/// Read runtime settings.
+#[utoipa::path(get,path="/api/runtime/settings",tag="Runtime",summary="Get runtime settings",description="Returns Node.js and per-Agent executable paths.",responses((status=200,description="Runtime settings")))]fn runtime_settings_get(){}
+/// Update runtime settings.
+#[utoipa::path(put,path="/api/runtime/settings",tag="Runtime",summary="Update runtime settings",description="Stores Node.js and independent Agent executable paths.",request_body=serde_json::Value,responses((status=200,description="Settings updated"),(status=400,description="Invalid settings")))]fn runtime_settings_put(){}
+/// List available Node.js versions.
+#[utoipa::path(get,path="/api/node/versions",tag="Runtime",summary="List Node versions",description="Returns Node.js versions supported by the installer.",responses((status=200,description="Node versions")))]fn node_versions(){}
+/// Install a Node.js version.
+#[utoipa::path(post,path="/api/node/install",tag="Runtime",summary="Install Node",description="Installs the requested Node.js runtime.",request_body=serde_json::Value,responses((status=200,description="Installed"),(status=400,description="Installation failed")))]fn node_install(){}
+/// Detect Agent executable and version.
+#[utoipa::path(get,path="/api/agents/{id}/status",tag="Agents",summary="Agent status",description="Checks whether an Agent executable is available and reports its version.",params(("id"=String,Path)),responses((status=200,description="Agent status"),(status=404,description="Agent not found")))]fn agent_status(){}
+/// Discover models using the Agent-specific configuration.
+#[utoipa::path(get,path="/api/agents/{id}/models",tag="Models",summary="List Agent models",description="Discovers models using the selected Agent's own model configuration. Codex and Pi are currently supported.",params(("id"=String,Path)),responses((status=200,description="Model list"),(status=404,description="Agent not found")))]fn agent_models(){}
+/// Start asynchronous Agent installation.
+#[utoipa::path(post,path="/api/agents/{id}/install",tag="Agents",summary="Install Agent",description="Starts installation of the selected Agent runtime.",params(("id"=String,Path)),responses((status=200,description="Installation started"),(status=404,description="Unknown Agent")))]fn agent_install(){}
+/// List coding sessions.
+#[utoipa::path(get,path="/api/sessions",tag="Sessions",summary="List sessions",description="Returns sessions ordered by most recent update.",responses((status=200,description="Session list")))]fn sessions_get(){}
+/// Create a coding session.
+#[utoipa::path(post,path="/api/sessions",tag="Sessions",summary="Create session",description="Creates a session and its isolated workspace.",request_body=serde_json::Value,responses((status=200,description="Session created"),(status=400,description="Invalid workspace"),(status=404,description="Agent not found")))]fn sessions_post(){}
+/// Get one coding session.
+#[utoipa::path(get,path="/api/sessions/{id}",tag="Sessions",summary="Get session",description="Returns session metadata, selected Agent and model.",params(("id"=String,Path)),responses((status=200,description="Session"),(status=404,description="Session not found")))]fn session_get(){}
+/// Delete a coding session and its workspace.
+#[utoipa::path(delete,path="/api/sessions/{id}",tag="Sessions",summary="Delete session",description="Stops a running Agent, deletes the session record and removes its session-owned workspace.",params(("id"=String,Path)),responses((status=204,description="Deleted"),(status=404,description="Session not found")))]fn session_delete(){}
+/// Change a session's model.
+#[utoipa::path(put,path="/api/sessions/{id}/model",tag="Models",summary="Set session model",description="Changes the model while the session is idle.",params(("id"=String,Path)),request_body=serde_json::Value,responses((status=200,description="Model updated"),(status=409,description="Session is running")))]fn session_model(){}
+/// List persisted messages.
+#[utoipa::path(get,path="/api/sessions/{id}/messages",tag="Messages",summary="List messages",description="Returns persisted messages in chronological order.",params(("id"=String,Path)),responses((status=200,description="Messages"),(status=404,description="Session not found")))]fn session_messages_get(){}
+/// Send a message to the Agent.
+#[utoipa::path(post,path="/api/sessions/{id}/messages",tag="Messages",summary="Send message",description="Starts an asynchronous Agent run for the session.",params(("id"=String,Path)),request_body=serde_json::Value,responses((status=200,description="Run started"),(status=409,description="Session is already running")))]fn session_messages_post(){}
+/// Interrupt a running Agent.
+#[utoipa::path(post,path="/api/sessions/{id}/interrupt",tag="Sessions",summary="Interrupt session",description="Requests termination of the running Agent process.",params(("id"=String,Path)),responses((status=200,description="Interrupt requested"),(status=502,description="Interrupt failed")))]fn session_interrupt(){}
+/// List workspace files.
+#[utoipa::path(get,path="/api/sessions/{id}/files",tag="Workspace",summary="List workspace files",description="Returns workspace files with Git status information.",params(("id"=String,Path)),responses((status=200,description="File tree"),(status=404,description="Workspace not found")))]fn session_files(){}
+/// Preview a workspace file.
+#[utoipa::path(get,path="/api/sessions/{id}/file/{path}",tag="Workspace",summary="Preview file",description="Returns text contents up to the preview limit; deleted files may be read from Git HEAD.",params(("id"=String,Path),("path"=String,Path)),responses((status=200,description="File preview"),(status=400,description="Invalid path"),(status=404,description="File not found")))]fn session_file(){}
+/// Get the current Git diff.
+#[utoipa::path(get,path="/api/sessions/{id}/diff",tag="Workspace",summary="Get diff",description="Returns the workspace Git diff including supported untracked text files.",params(("id"=String,Path)),responses((status=200,description="Git diff"),(status=502,description="Git command failed")))]fn session_diff(){}
+/// Open the real-time session event stream.
+#[utoipa::path(get,path="/api/sessions/{id}/events",tag="Events",summary="Session events",description="WebSocket endpoint streaming Agent, message, tool, command and file events for a session.",params(("id"=String,Path)),responses((status=101,description="WebSocket upgrade"),(status=404,description="Session not found")))]fn session_events(){}
