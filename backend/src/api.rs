@@ -194,118 +194,108 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
 
 pub async fn create_session(State(s): State<AppState>, Json(v): Json<CreateSession>) -> Json<Session> {
     let id = Uuid::new_v4().to_string(); let now = Utc::now().to_rfc3339(); let title = v.title.unwrap_or_else(|| "New Chat".into());
-    let _ = sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(&id).bind(&v.agent_id).bind(&title).bind(&v.workspace).bind("created").bind(None::<String>).bind(&v.model).bind(&now).bind(&now).execute(&s.db).await;
-    Json(Session { id, agent_id: v.agent_id, title, workspace: v.workspace, status: "created".into(), native_session_id: None, model: v.model })
+    let _ = sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(&id).bind(&v.agent_id).bind(&title).bind(&v.workspace).bind("idle").bind::<Option<String>>(None).bind(&v.model).bind(&now).bind(&now).execute(&s.db).await;
+    Json(Session { id, agent_id: v.agent_id, title, workspace: v.workspace, status: "idle".into(), native_session_id: None, model: v.model })
 }
 
 pub async fn get_session(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Session>, StatusCode> {
-    let r = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model FROM sessions WHERE id=?").bind(&id).fetch_optional(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(Session { id: r.get(0), agent_id: r.get(1), title: r.get(2), workspace: r.get(3), status: r.get(4), native_session_id: r.get(5), model: r.get(6) }))
+    let row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model FROM sessions WHERE id=?").bind(&id).fetch_optional(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(Session { id: row.get(0), agent_id: row.get(1), title: row.get(2), workspace: row.get(3), status: row.get(4), native_session_id: row.get(5), model: row.get(6) }))
 }
 
-pub async fn set_session_model(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SetSessionModel>) -> Result<Json<Session>, StatusCode> {
-    let now = Utc::now().to_rfc3339();
-    sqlx::query("UPDATE sessions SET model=?,updated_at=? WHERE id=?").bind(&v.model).bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
+    match sqlx::query("DELETE FROM sessions WHERE id=?").bind(id).execute(&s.db).await { Ok(_) => StatusCode::NO_CONTENT, Err(_) => StatusCode::INTERNAL_SERVER_ERROR }
+}
+
+#[derive(Deserialize)]
+pub struct SetModel { pub model: Option<String> }
+
+pub async fn set_session_model(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SetModel>) -> Result<Json<Session>, StatusCode> {
+    sqlx::query("UPDATE sessions SET model=?, updated_at=? WHERE id=?").bind(&v.model).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     get_session(Path(id), State(s)).await
 }
 
-#[derive(Deserialize)]
-pub struct SetSessionModel { pub model: Option<String> }
-
-pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
-    let _ = sqlx::query("DELETE FROM messages WHERE session_id=?").bind(&id).execute(&s.db).await;
-    let _ = sqlx::query("DELETE FROM sessions WHERE id=?").bind(id).execute(&s.db).await; StatusCode::NO_CONTENT
-}
-
-#[derive(Serialize)]
-pub struct MessageItem { pub id: String, pub role: String, pub content: String, pub created_at: String }
-
-pub async fn list_messages(Path(id): Path<String>, State(s): State<AppState>) -> Json<Vec<MessageItem>> {
-    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at ASC").bind(&id).fetch_all(&s.db).await.unwrap_or_default();
-    Json(rows.into_iter().map(|r| MessageItem { id: r.get(0), role: r.get(1), content: r.get(2), created_at: r.get(3) }).collect())
+pub async fn list_messages(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at").bind(id).fetch_all(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows.into_iter().map(|r| serde_json::json!({"id": r.get::<String,_>(0), "role": r.get::<String,_>(1), "content": r.get::<String,_>(2), "created_at": r.get::<String,_>(3)})).collect()))
 }
 
 #[derive(Deserialize)]
-pub struct MessageReq { pub message: String }
+pub struct SendMessage { pub message: String }
 
-pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<MessageReq>) -> Json<serde_json::Value> {
-    let row = sqlx::query("SELECT agent_id,workspace,native_session_id,status,model FROM sessions WHERE id=?").bind(&id).fetch_optional(&s.db).await.ok().flatten();
-    let Some(r) = row else { return Json(serde_json::json!({"error": "session not found"})); };
-    let agent_id: String = r.get(0); let workspace: String = r.get(1); let native_session_id: Option<String> = r.get(2); let status: String = r.get(3); let model: Option<String> = r.get(4);
-    if status == "running" { return Json(serde_json::json!({"error": "session is already running"})); }
-    let binary = match resolve_agent_binary(&s.db, &agent_id).await { Some(b) => b, None => { let err_msg = format!("Agent '{agent_id}' is not installed or executable was not found."); let now = Utc::now().to_rfc3339(); let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?").bind(&now).bind(&id).execute(&s.db).await; s.events.publish(AgentEvent::Error { session_id: id.clone(), message: err_msg }); return Json(serde_json::json!({"error": "agent not found"})); } };
-    let _ = sqlx::query("INSERT INTO messages VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(Utc::now().to_rfc3339()).execute(&s.db).await;
-    let _ = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=?").bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await;
-    s.events.publish(AgentEvent::SessionStarted { session_id: id.clone() });
-    let command = configured_agent_path(&s.db, &agent_id).await.unwrap_or_else(|| binary.to_string_lossy().into_owned());
-    let runtime_path = node_bin_dir(&s.db).await.map(|p| p.to_string_lossy().into_owned());
-    let cfg = AgentConfig { id: agent_id.clone(), command, working_directory: Some(workspace), native_session_id, runtime_path, model };
-    let manager = s.agents.clone(); let events = s.events.clone(); let db = s.db.clone(); let msg = v.message; let session_id = id.clone();
-    tokio::spawn(async move {
-        let adapter = manager.adapter(&cfg.id).await;
-        match adapter.send_message(&cfg, &session_id, &msg, &events).await {
-            Ok(result) => {
-                if let Some(native) = result.native_session_id { let _ = sqlx::query("UPDATE sessions SET native_session_id=?,status='completed',updated_at=? WHERE id=?").bind(native).bind(Utc::now().to_rfc3339()).bind(&session_id).execute(&db).await; }
-                else { let _ = sqlx::query("UPDATE sessions SET status='completed',updated_at=? WHERE id=?").bind(Utc::now().to_rfc3339()).bind(&session_id).execute(&db).await; }
-                if !result.assistant_text.is_empty() { let _ = sqlx::query("INSERT INTO messages VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(&session_id).bind("assistant").bind(&result.assistant_text).bind(Utc::now().to_rfc3339()).execute(&db).await; }
-            }
-            Err(e) => { let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?").bind(Utc::now().to_rfc3339()).bind(&session_id).execute(&db).await; events.publish(AgentEvent::Error { session_id: session_id.clone(), message: e.to_string() }); }
+pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SendMessage>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let session = get_session(Path(id.clone()), State(s.clone())).await?.0;
+    let _ = sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(Utc::now().to_rfc3339()).execute(&s.db).await;
+    let events = s.events.clone(); let db = s.db.clone(); let agents = s.agents.clone();
+    tokio::spawn(async move { crate::agents::process::run_session(db, agents, session, v.message, events).await; });
+    Ok(Json(serde_json::json!({"status":"started"})))
+}
+
+pub async fn interrupt(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    s.agents.interrupt(&id).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(Json(serde_json::json!({"status":"interrupted"})))
+}
+
+pub async fn workspace_files(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let session = get_session(Path(id), State(s.clone())).await?.0;
+    let root = FsPath::new(&session.workspace);
+    let mut out = Vec::new(); let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let mut entries = fs::read_dir(&dir).await.map_err(|_| StatusCode::NOT_FOUND)?;
+        while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+            let path = entry.path(); let metadata = entry.metadata().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if metadata.is_dir() { stack.push(path.clone()); }
+            out.push(serde_json::json!({"name": entry.file_name().to_string_lossy(), "path": path.to_string_lossy(), "kind": if metadata.is_dir() {"directory"} else {"file"}, "size": metadata.len()}));
         }
-    });
-    Json(serde_json::json!({"status": "started"}))
+    }
+    Ok(Json(out))
 }
 
-pub async fn interrupt(Path(id): Path<String>, State(s): State<AppState>) -> Json<serde_json::Value> {
-    let row = sqlx::query("SELECT agent_id FROM sessions WHERE id=?").bind(&id).fetch_optional(&s.db).await.ok().flatten();
-    if let Some(r) = row { let agent_id: String = r.get(0); let _ = s.agents.adapter(&agent_id).await.interrupt(&id).await; let _ = sqlx::query("UPDATE sessions SET status='interrupted',updated_at=? WHERE id=?").bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await; }
-    Json(serde_json::json!({"status": "ok"}))
-}
-
-#[derive(Serialize)]
-pub struct FsEntry { pub name: String, pub path: String, pub kind: String, pub size: u64 }
-
-fn safe_workspace(workspace: &str) -> Result<PathBuf, StatusCode> {
-    let root = FsPath::new(&std::env::var("AGENTWEB_WORKSPACE_DIR").unwrap_or_else(|_| "./workspaces".into())).canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let requested = FsPath::new(workspace); let absolute = if requested.is_absolute() { requested.to_path_buf() } else { root.join(requested) }; let canonical = absolute.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
-    if canonical == root || canonical.starts_with(&root) { Ok(canonical) } else { Err(StatusCode::FORBIDDEN) }
-}
-
-async fn session_workspace(id: &str, s: &AppState) -> Result<PathBuf, StatusCode> {
-    let r = sqlx::query("SELECT workspace FROM sessions WHERE id=?").bind(id).fetch_optional(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?; safe_workspace(r.get::<String, _>(0).as_str())
-}
-
-fn safe_child(root: &FsPath, relative: &str) -> Result<PathBuf, StatusCode> {
-    let p = root.join(relative); if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err(StatusCode::FORBIDDEN); } Ok(p)
-}
-
-pub async fn workspace_files(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<FsEntry>>, StatusCode> {
-    let root = session_workspace(&id, &s).await?; let mut stack = vec![root.clone()]; let mut out = Vec::new();
-    while let Some(dir) = stack.pop() { let mut rd = fs::read_dir(&dir).await.map_err(|_| StatusCode::NOT_FOUND)?; while let Some(e) = rd.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? { let meta = e.metadata().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?; let path = e.path(); let rel = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\', "/"); if rel.starts_with(".git/") || rel == ".git" { continue; } let kind = if meta.is_dir() { "directory" } else { "file" }; out.push(FsEntry { name: e.file_name().to_string_lossy().into_owned(), path: rel.clone(), kind: kind.into(), size: if meta.is_file() { meta.len() } else { 0 } }); if meta.is_dir() { stack.push(path); } } }
-    out.sort_by(|a, b| a.path.cmp(&b.path)); Ok(Json(out))
-}
-
-pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): State<AppState>) -> Result<axum::response::Response, StatusCode> {
-    let root = session_workspace(&id, &s).await?; let file = safe_child(&root, &path)?; let canonical = file.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?; if !canonical.starts_with(&root) || !canonical.is_file() { return Err(StatusCode::FORBIDDEN); }
-    let content = fs::read(&canonical).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?; if content.len() > 2 * 1024 * 1024 { return Err(StatusCode::PAYLOAD_TOO_LARGE); } let text = String::from_utf8_lossy(&content).into_owned(); Ok(Json(serde_json::json!({"path": path, "content": text})).into_response())
+pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let session = get_session(Path(id), State(s)).await?.0;
+    let content = fs::read_to_string(FsPath::new(&session.workspace).join(path)).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(Json(serde_json::json!({"path": path, "content": content})))
 }
 
 pub async fn workspace_diff(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let root = session_workspace(&id, &s).await?;
-    let output = Command::new("git").arg("-C").arg(&root).arg("diff").arg("--no-ext-diff").output().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let status = Command::new("git").arg("-C").arg(&root).arg("status").arg("--short").output().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"git": output.status.success(), "diff": String::from_utf8_lossy(&output.stdout), "status": String::from_utf8_lossy(&status.stdout)})))
+    let session = get_session(Path(id), State(s.clone())).await?.0;
+    let output = Command::new("git").arg("-C").arg(&session.workspace).args(["diff", "--no-ext-diff"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(Json(serde_json::json!({"status": "ok", "diff": String::from_utf8_lossy(&output.stdout)})))
 }
 
 pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse { ws.on_upgrade(move |socket| websocket(socket, s, id)) }
 
+fn event_session_id(event: &AgentEvent) -> Option<&str> {
+    match event {
+        AgentEvent::SessionStarted { session_id }
+        | AgentEvent::MessageStarted { session_id }
+        | AgentEvent::MessageDelta { session_id, .. }
+        | AgentEvent::MessageCompleted { session_id }
+        | AgentEvent::ThinkingStarted { session_id }
+        | AgentEvent::ThinkingDelta { session_id, .. }
+        | AgentEvent::ThinkingCompleted { session_id }
+        | AgentEvent::ToolStarted { session_id, .. }
+        | AgentEvent::ToolOutput { session_id, .. }
+        | AgentEvent::ToolCompleted { session_id, .. }
+        | AgentEvent::FileCreated { session_id, .. }
+        | AgentEvent::FileModified { session_id, .. }
+        | AgentEvent::FileDeleted { session_id, .. }
+        | AgentEvent::CommandStarted { session_id, .. }
+        | AgentEvent::CommandOutput { session_id, .. }
+        | AgentEvent::CommandCompleted { session_id }
+        | AgentEvent::Error { session_id, .. }
+        | AgentEvent::SessionCompleted { session_id } => Some(session_id),
+        AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
+    }
+}
+
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
     let mut rx = s.events.subscribe();
     while let Ok(event) = rx.recv().await {
-        let matches = match &event {
-            AgentEvent::SessionStarted { session_id: s } | AgentEvent::MessageStarted { session_id: s } | AgentEvent::MessageDelta { session_id: s, .. } | AgentEvent::MessageCompleted { session_id: s } | AgentEvent::Error { session_id: s, .. } | AgentEvent::SessionCompleted { session_id: s } => s == &session_id,
-            _ => false,
-        };
-        if matches { if let Ok(text) = serde_json::to_string(&event) { if socket.send(axum::extract::ws::Message::Text(text.into())).await.is_err() { break; } } }
+        if event_session_id(&event) != Some(session_id.as_str()) { continue; }
+        if let Ok(text) = serde_json::to_string(&event) {
+            if socket.send(axum::extract::ws::Message::Text(text.into())).await.is_err() { break; }
+        }
     }
 }
 
