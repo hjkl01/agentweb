@@ -34,6 +34,9 @@ RUN sed -i \
     gawk \
     findutils \
     openssh-client \
+    ripgrep \
+    fd-find \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
