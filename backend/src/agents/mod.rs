@@ -10,6 +10,7 @@ pub mod opencode;
 pub mod pi;
 pub mod pi_events;
 pub mod process;
+pub mod session;
 
 pub use adapter::{AgentAdapter, AgentConfig};
 use codex::CodexAdapter;
