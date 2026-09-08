@@ -43,11 +43,12 @@ pub(crate) fn agent_executable(id: &str) -> &str {
 pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Option<PathBuf> {
     if let Some(p) = configured_agent_path(db, id).await {
         let path = FsPath::new(&p);
-        if path.exists() { return Some(path.to_path_buf()); }
+        if path.is_file() { return Some(path.to_path_buf()); }
+        if path.join(agent_executable(id)).is_file() { return Some(path.join(agent_executable(id))); }
     }
     if let Some(node_bin) = node_bin_dir(db).await {
         let binary = node_bin.join(agent_executable(id));
-        if binary.exists() { return Some(binary); }
+        if binary.is_file() { return Some(binary); }
     }
     let out = Command::new("which").arg(agent_executable(id)).output().await.ok()?;
     out.status.success().then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
@@ -67,9 +68,11 @@ async fn detect_agent(db: &sqlx::SqlitePool, id: &str) -> (bool, Option<String>,
 }
 
 pub(crate) async fn agent_runtime_label(id: &str, db: &sqlx::SqlitePool) -> Option<String> {
-    if id == "codex" { return None; }
-    if let Ok(Some((version, _))) = runtime::detect_installed_node().await { return Some(format!("Node {version}")); }
-    node_bin_dir(db).await.and_then(|p| p.join("node").exists().then(|| format!("Node ({})", p.display())))
+    if matches!(id, "codex" | "claude-code" | "opencode" | "pi") {
+        if let Ok(Some((version, _))) = runtime::detect_installed_node().await { return Some(format!("Node {version}")); }
+        return node_bin_dir(db).await.and_then(|p| p.join("node").exists().then(|| format!("Node ({})", p.display())));
+    }
+    None
 }
 
 #[derive(Deserialize)]
@@ -91,7 +94,7 @@ pub async fn catalog(State(s): State<AppState>) -> Json<Vec<CatalogItem>> {
     let p = detect_agent(db, "pi").await;
     let oc = detect_agent(db, "openclaw").await;
     Json(vec![
-        CatalogItem { id: "codex", name: "Codex", description: "OpenAI coding agent", installed: c.0, requirements: vec![] },
+        CatalogItem { id: "codex", name: "Codex", description: "OpenAI coding agent", installed: c.0, requirements: vec!["Node.js"] },
         CatalogItem { id: "claude-code", name: "Claude Code", description: "Anthropic coding agent", installed: cl.0, requirements: vec!["Node.js"] },
         CatalogItem { id: "opencode", name: "OpenCode", description: "Open-source coding agent", installed: o.0, requirements: vec!["Node.js"] },
         CatalogItem { id: "pi", name: "Pi", description: "Pi coding agent", installed: p.0, requirements: vec!["Node.js"] },
@@ -135,17 +138,16 @@ async fn install_agent_inner(db: &sqlx::SqlitePool, id: &str, events: &crate::ev
     let output = match cmd.output().await { Ok(output) => output, Err(error) => { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("npm install failed: {error}") }); return false; } };
     events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)) });
     if !output.status.success() { return false; }
-    let binary = node_bin.join(agent_executable(id));
-    let version = match detect_agent_version(&binary).await { Some(v) => v, None => return false };
+    let binary = resolve_agent_binary(db, id).await;
+    let version = match binary.as_deref().and_then(|path| futures::executor::block_on(detect_agent_version(path))) { Some(v) => v, None => return false };
     let now = chrono::Utc::now().to_rfc3339();
     let _ = sqlx::query("UPDATE agents SET installed=1,version=?,updated_at=? WHERE id=?").bind(&version).bind(&now).bind(id).execute(db).await;
     events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Installed {id} version {version}") }); true
 }
 
 pub(crate) async fn build_agent_config(db: &sqlx::SqlitePool, id: &str) -> Result<AgentConfig, StatusCode> {
-    let (kind, command, working_directory) = if let Some(row) = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? { (row.get::<String, _>(0), row.get::<String, _>(1), row.get::<Option<String>, _>(2)) } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == id) { (def.kind.to_owned(), def.command.to_owned(), None) } else { return Err(StatusCode::NOT_FOUND); };
+    let (kind, working_directory) = if let Some(row) = sqlx::query("SELECT kind,working_directory FROM agents WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? { (row.get::<String, _>(0), row.get::<Option<String>, _>(1)) } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == id) { (def.kind.to_owned(), None) } else { return Err(StatusCode::NOT_FOUND); };
     let binary = resolve_agent_binary(db, id).await.ok_or(StatusCode::NOT_FOUND)?;
-    let command = if command.trim().is_empty() { binary.to_string_lossy().into_owned() } else { command };
     let runtime_path = node_bin_dir(db).await.map(|p| p.to_string_lossy().into_owned());
-    Ok(AgentConfig { id: kind, command, working_directory, native_session_id: None, runtime_path, model: None })
+    Ok(AgentConfig { id: kind, command: binary.to_string_lossy().into_owned(), working_directory, native_session_id: None, runtime_path, model: None })
 }
