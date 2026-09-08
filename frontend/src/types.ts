@@ -6,6 +6,13 @@ export type Agent = {
   requirements: string[];
 };
 
+export type AgentModel = {
+  id: string;
+  name: string;
+  provider?: string;
+  source?: string;
+};
+
 export type Session = {
   id: string;
   agent_id: string;
@@ -13,6 +20,7 @@ export type Session = {
   workspace: string;
   status: string;
   native_session_id?: string;
+  model?: string;
 };
 
 export type ChatMessage = {
