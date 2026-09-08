@@ -18,6 +18,7 @@ use generic::GenericAdapter;
 use openclaw::OpenClawAdapter;
 use opencode::OpenCodeAdapter;
 use pi::PiAdapter;
+use anyhow::Result;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -25,6 +26,7 @@ pub struct AgentManager { adapters: Mutex<HashMap<String, Arc<dyn AgentAdapter>>
 impl Default for AgentManager { fn default() -> Self { Self { adapters: Mutex::new(HashMap::new()) } } }
 impl AgentManager {
     pub fn new() -> Self { Self::default() }
+
     pub async fn adapter(&self, kind: &str) -> Arc<dyn AgentAdapter> {
         let mut map = self.adapters.lock().await;
         if let Some(a) = map.get(kind) { return a.clone(); }
@@ -37,5 +39,15 @@ impl AgentManager {
         };
         map.insert(kind.to_owned(), adapter.clone());
         adapter
+    }
+
+    /// A Web Session only exposes its session id, not the provider kind.
+    /// Ask every instantiated adapter to interrupt; only the adapter owning
+    /// the process will find and kill it. This also keeps the HTTP layer
+    /// independent from provider-specific process registries.
+    pub async fn interrupt(&self, session_id: &str) -> Result<()> {
+        let adapters = self.adapters.lock().await.values().cloned().collect::<Vec<_>>();
+        for adapter in adapters { adapter.interrupt(session_id).await?; }
+        Ok(())
     }
 }
