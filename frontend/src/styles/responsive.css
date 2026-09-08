@@ -1,0 +1,64 @@
+html, body, #root {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 100%;
+}
+
+body { overflow: hidden; }
+
+.app {
+  width: 100%;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: clamp(190px, 18vw, 280px) minmax(0, 1fr) clamp(240px, 24vw, 360px);
+}
+
+.sidebar, .main-panel, .workspace { min-width: 0; min-height: 0; }
+.main-panel { width: 100%; overflow: hidden; }
+.chat { width: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.message-row, .activity-card { width: min(100%, 900px); }
+.message-content { min-width: 0; max-width: calc(100% - 40px); }
+.composer-wrap { width: 100%; min-width: 0; }
+.composer { width: min(100%, 900px); margin: 0 auto; }
+.workspace { width: 100%; }
+
+.startup-error {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(720px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border: 1px solid #f0c7c3;
+  border-radius: 9px;
+  background: #fff7f6;
+  box-shadow: 0 8px 25px #0002;
+  font-size: 12px;
+}
+.startup-error span { color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.startup-error button { padding: 5px 9px; }
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 210px minmax(0, 1fr); }
+  .workspace { display: none; }
+  .preview { right: 0; }
+}
+
+@media (max-width: 720px) {
+  .app { display: block; }
+  .sidebar { display: none; }
+  .main-panel { width: 100%; height: 100dvh; }
+  .chat { padding: 20px 14px; }
+  .composer-wrap { padding: 8px 10px; }
+  .topbar { padding: 0 12px; }
+  .top-actions select { max-width: 150px; }
+  .message-row, .activity-card { max-width: 100%; }
+  .message-content { max-width: calc(100% - 39px); }
+  .startup-error { left: 12px; right: 12px; transform: none; max-width: none; }
+}
