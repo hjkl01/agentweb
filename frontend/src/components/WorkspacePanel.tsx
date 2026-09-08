@@ -14,12 +14,17 @@ function PreviewNotice({ file }: { file: WorkspaceFile }) {
   return <div className="preview-notice"><span>{file.binary ? <FileWarning size={15} /> : <AlertTriangle size={15} />}</span><span>{file.message || (file.binary ? 'Binary file preview is not supported.' : 'File preview was truncated.')}</span></div>;
 }
 
+function Preview({ file, line, onClose }: { file: WorkspaceFile; line?: number; onClose: () => void }) {
+  const unavailable = file.binary || file.truncated;
+  return <div className="preview"><div className="preview-head"><div><strong>{file.path}</strong><small>File preview{line ? ` · line ${line}` : ''}{file.size !== undefined ? ` · ${file.size.toLocaleString()} bytes` : ''}{file.source === 'git' ? ' · HEAD' : ''}</small></div><button className="icon-button" onClick={onClose}><X size={15} /></button></div><PreviewNotice file={file} />{!unavailable && <CodePreview file={file} focusLine={line} />}</div>;
+}
+
 export function WorkspacePanel({ current, files, fileFilter, selectedFile, selectedLine, diff, tab, onFilterChange, onSelectTab, onRefresh, onOpenFile, onCloseFile }: Props) {
   return <aside className="workspace">
     <div className="workspace-head"><div><strong>Workspace</strong>{current && <small>{current.workspace}</small>}</div><button className="icon-button" onClick={onRefresh} title="Refresh"><RefreshCw size={15} /></button></div>
     <div className="tabs"><button className={tab === 'files' ? 'active' : ''} onClick={() => onSelectTab('files')}><Folder size={14} /> Files</button><button className={tab === 'diff' ? 'active' : ''} onClick={() => onSelectTab('diff')}><GitCompare size={14} /> Diff{diff?.truncated && <span className="tab-warning">!</span>}</button></div>
     {tab === 'files' && <><div className="file-search"><Search size={14} /><input value={fileFilter} onChange={event => onFilterChange(event.target.value)} placeholder="Filter files" /></div><FileTree files={files} filter={fileFilter} onOpenFile={path => onOpenFile(path)} /></>}
     {tab === 'diff' && <DiffViewer diff={diff} onOpenFile={(path, line) => { onSelectTab('files'); onOpenFile(path, line); }} />}
-    {selectedFile && <div className="preview"><div className="preview-head"><div><strong>{selectedFile.path}</strong><small>File preview{selectedLine ? ` · line ${selectedLine}` : ''}{selectedFile.size !== undefined ? ` · ${selectedFile.size.toLocaleString()} bytes` : ''}</small></div><button className="icon-button" onClick={onCloseFile}><X size={15} /></button></div><PreviewNotice file={selectedFile} />{!selectedFile.binary && !selectedFile.truncated && <CodePreview file={selectedFile} focusLine={selectedLine} />}</div>}
+    {selectedFile && <Preview file={selectedFile} line={selectedLine} onClose={onCloseFile} />}
   </aside>;
 }
