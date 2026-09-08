@@ -27,9 +27,9 @@ export function WorkspacePanel({ current, files, fileFilter, selectedFile, diff,
       </div>
       {tab === 'files' && <>
         <div className="file-search"><Search size={14} /><input value={fileFilter} onChange={event => onFilterChange(event.target.value)} placeholder="Filter files" /></div>
-        <div className="file-list">
-          {filteredFiles.map(file => <button className="file-item" key={file.path} onClick={() => onOpenFile(file.path)}><File size={14} /><span>{file.path}</span></button>)}
-          {!filteredFiles.length && <div className="empty-sidebar">No files</div>}
+        <div className="filetree">
+          {filteredFiles.map(file => <button className="file" key={file.path} onClick={() => onOpenFile(file.path)}><File size={14} /><span>{file.path}</span></button>)}
+          {!filteredFiles.length && <div className="workspace-empty">No files</div>}
         </div>
       </>}
       {tab === 'diff' && <pre className="diff">{diff?.status}{'\n'}{diff?.diff || 'No git diff'}</pre>}
