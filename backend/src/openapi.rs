@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use utoipa::OpenApi;
 
 /// Agent Web HTTP API documentation.
@@ -25,7 +27,7 @@ pub struct ApiDoc;
 #[utoipa::path(get, path = "/api/sessions/{id}", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Get session")))] fn session_get() {}
 #[utoipa::path(delete, path = "/api/sessions/{id}", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 204, description = "Session deleted")))] fn session_delete() {}
 #[utoipa::path(put, path = "/api/sessions/{id}/model", tag = "Models", params(("id" = String, Path, description = "Session id")), request_body = serde_json::Value, responses((status = 200, description = "Session model updated")))] fn session_model() {}
-#[utoipa::path(get, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Session messages")))] fn session_messages_get() {}
+#[utoipa::path(get, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session messages")))] fn session_messages_get() {}
 #[utoipa::path(post, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session id")), request_body = serde_json::Value, responses((status = 200, description = "Message execution started")))] fn session_messages_post() {}
 #[utoipa::path(post, path = "/api/sessions/{id}/interrupt", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Agent execution interrupted")))] fn session_interrupt() {}
 #[utoipa::path(get, path = "/api/sessions/{id}/files", tag = "Workspace", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Workspace file tree")))] fn session_files() {}
