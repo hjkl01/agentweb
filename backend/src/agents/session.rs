@@ -18,6 +18,11 @@ async fn runtime_path(db: &sqlx::SqlitePool) -> Option<String> {
     else { None }
 }
 
+async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, status: &str) {
+    let _ = sqlx::query("UPDATE sessions SET status=?,updated_at=? WHERE id=?")
+        .bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).execute(db).await;
+}
+
 pub async fn run_session(
     db: sqlx::SqlitePool,
     agents: Arc<AgentManager>,
@@ -32,12 +37,13 @@ pub async fn run_session(
     } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == session.agent_id) {
         (def.kind.to_owned(), def.command.to_owned())
     } else {
+        finish_session(&db, &session.id, "error").await;
         events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() });
         return;
     };
 
-    // The Web Session workspace is authoritative. Agent-level working_directory
-    // must never silently move a chat outside the workspace shown in the UI.
+    // send_message atomically claims the session before this task is spawned.
+    // Keep this function focused on resolving the Agent runtime and executing it.
     let config = AgentConfig {
         id: kind.clone(),
         command,
@@ -46,8 +52,6 @@ pub async fn run_session(
         runtime_path: runtime_path(&db).await,
         model: session.model.clone(),
     };
-    let _ = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=?")
-        .bind(Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
     let adapter = agents.adapter(&kind).await;
     match adapter.send_message(&config, &session.id, &message, &events).await {
         Ok(result) => {
@@ -63,8 +67,7 @@ pub async fn run_session(
         Err(error) => {
             let message = error.to_string();
             let status = if message == "agent process interrupted" { "interrupted" } else { "error" };
-            let _ = sqlx::query("UPDATE sessions SET status=?,updated_at=? WHERE id=?")
-                .bind(status).bind(Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
+            finish_session(&db, &session.id, status).await;
             if status == "error" {
                 events.publish(AgentEvent::Error { session_id: session.id, message });
             }
