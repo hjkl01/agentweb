@@ -2,7 +2,7 @@
 use utoipa::OpenApi;
 
 #[derive(OpenApi)]
-#[openapi(info(title="Agent Web API",version="0.1.0",description="Agent Web backend API. Protected endpoints require the Agent Web session cookie."),tags((name="System",description="System health"),(name="Auth",description="Authentication and account security"),(name="Agents",description="Agent catalog and installation"),(name="Models",description="Model discovery and selection"),(name="Runtime",description="Node.js and Agent runtime"),(name="Sessions",description="Coding session lifecycle"),(name="Messages",description="Session messages and Agent execution"),(name="Workspace",description="Workspace files and Git diff"),(name="Events",description="Real-time session events")),paths(health,auth_login,auth_me,auth_logout,auth_password,auth_sessions,auth_revoke_all,agents_get,agents_post,agent_catalog,runtime_settings_get,runtime_settings_put,node_versions,node_install,agent_status,agent_models,agent_install,sessions_get,sessions_post,session_get,session_delete,session_model,session_messages_get,session_messages_post,session_interrupt,session_files,session_file,session_diff,session_events))]
+#[openapi(info(title="Agent Web API",version="0.1.0",description="Agent Web backend API. Protected endpoints require the Agent Web session cookie."),tags((name="System",description="System health"),(name="Auth",description="Authentication and account security"),(name="Agents",description="Agent catalog and installation"),(name="Models",description="Model discovery and selection"),(name="Runtime",description="Node.js and Agent runtime"),(name="Sessions",description="Coding session lifecycle"),(name="Messages",description="Session messages and Agent execution"),(name="Workspace",description="Workspace files and Git diff"),(name="Events",description="Real-time session events")),paths(health,auth_login,auth_me,auth_logout,auth_password,auth_sessions,auth_revoke_all,agents_get,agents_post,agent_catalog,runtime_settings_get,runtime_settings_put,node_versions,node_install,agent_status,agent_models,agent_install,agent_custom_install,sessions_get,sessions_post,session_get,session_delete,session_title,session_pin,session_model,session_messages_get,session_messages_post,session_interrupt,session_files,session_file,session_diff,session_events))]
 pub struct ApiDoc;
 
 /// Check backend health.
@@ -24,15 +24,17 @@ pub struct ApiDoc;
 /// Register a custom Agent.
 #[utoipa::path(post,path="/api/agents",tag="Agents",summary="Create Agent",description="Registers a custom Agent definition.",request_body=serde_json::Value,responses((status=200,description="Agent created"),(status=400,description="Invalid definition")))]fn agents_post(){}
 /// List supported built-in Agents.
-#[utoipa::path(get,path="/api/agent-catalog",tag="Agents",summary="Agent catalog",description="Returns supported built-in Agents and runtime requirements.",responses((status=200,description="Agent catalog")))]fn agent_catalog(){}
+#[utoipa::path(get,path="/api/agent-catalog",tag="Agents",summary="Agent catalog",description="Returns popular Agents and one-click installation commands.",responses((status=200,description="Agent catalog")))]fn agent_catalog(){}
 /// Read runtime settings.
 #[utoipa::path(get,path="/api/runtime/settings",tag="Runtime",summary="Get runtime settings",description="Returns Node.js and per-Agent executable paths.",responses((status=200,description="Runtime settings")))]fn runtime_settings_get(){}
 /// Update runtime settings.
 #[utoipa::path(put,path="/api/runtime/settings",tag="Runtime",summary="Update runtime settings",description="Stores Node.js and independent Agent executable paths.",request_body=serde_json::Value,responses((status=200,description="Settings updated"),(status=400,description="Invalid settings")))]fn runtime_settings_put(){}
 /// List available Node.js versions.
-#[utoipa::path(get,path="/api/node/versions",tag="Runtime",summary="List Node versions",description="Returns Node.js versions supported by the installer.",responses((status=200,description="Node versions")))]fn node_versions(){}
+#[utoipa::path(get,path="/api/node/versions",tag="Runtime",summary="List Node versions",description="Returns Node.js releases available to the installer.",responses((status=200,description="Node versions")))]fn node_versions(){}
 /// Install a Node.js version.
-#[utoipa::path(post,path="/api/node/install",tag="Runtime",summary="Install Node",description="Installs the requested Node.js runtime.",request_body=serde_json::Value,responses((status=200,description="Installed"),(status=400,description="Installation failed")))]fn node_install(){}
+#[utoipa::path(post,path="/api/node/install",tag="Runtime",summary="Install Node",description="Installs an exact Node.js version or the newest available release matching a major version such as 22.",request_body=serde_json::Value,responses((status=200,description="Installed"),(status=400,description="Installation failed")))]fn node_install(){}
+/// Install an Agent using a custom shell command.
+#[utoipa::path(post,path="/api/agents/custom/install",tag="Agents",summary="Run custom Agent install command",description="Runs a user-provided shell installation command inside the Agent Web container. This is intended for personal Docker deployments.",request_body=serde_json::Value,responses((status=200,description="Command completed"),(status=400,description="Command failed")))]fn agent_custom_install(){}
 /// Detect Agent executable and version.
 #[utoipa::path(get,path="/api/agents/{id}/status",tag="Agents",summary="Agent status",description="Checks whether an Agent executable is available and reports its version.",params(("id"=String,Path)),responses((status=200,description="Agent status"),(status=404,description="Agent not found")))]fn agent_status(){}
 /// Discover models using the Agent-specific configuration.
@@ -47,6 +49,10 @@ pub struct ApiDoc;
 #[utoipa::path(get,path="/api/sessions/{id}",tag="Sessions",summary="Get session",description="Returns session metadata, selected Agent and model.",params(("id"=String,Path)),responses((status=200,description="Session"),(status=404,description="Session not found")))]fn session_get(){}
 /// Delete a coding session and its workspace.
 #[utoipa::path(delete,path="/api/sessions/{id}",tag="Sessions",summary="Delete session",description="Stops a running Agent, deletes the session record and removes its session-owned workspace.",params(("id"=String,Path)),responses((status=204,description="Deleted"),(status=404,description="Session not found")))]fn session_delete(){}
+/// Rename a coding session.
+#[utoipa::path(put,path="/api/sessions/{id}/title",tag="Sessions",summary="Rename session",description="Changes the sidebar title of a session.",params(("id"=String,Path)),request_body=serde_json::Value,responses((status=200,description="Session renamed"),(status=404,description="Session not found")))]fn session_title(){}
+/// Pin or unpin a coding session.
+#[utoipa::path(put,path="/api/sessions/{id}/pin",tag="Sessions",summary="Toggle session pin",description="Pins or unpins a session in the sidebar.",params(("id"=String,Path)),responses((status=200,description="Pin state updated"),(status=404,description="Session not found")))]fn session_pin(){}
 /// Change a session's model.
 #[utoipa::path(put,path="/api/sessions/{id}/model",tag="Models",summary="Set session model",description="Changes the model while the session is idle.",params(("id"=String,Path)),request_body=serde_json::Value,responses((status=200,description="Model updated"),(status=409,description="Session is running")))]fn session_model(){}
 /// List persisted messages.
