@@ -2,6 +2,7 @@ import { Activity, Bot, Send, Square } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { ActivityItem, Agent, AgentModel, ChatMessage, Session } from '../types';
 import { AgentActivity } from './AgentActivity';
+import { ModelSelector } from './ModelSelector';
 
 type Props = {
   current?: Session; currentAgent?: Agent; active?: string; models: AgentModel[]; modelLoading: boolean;
@@ -17,12 +18,7 @@ export function ChatPanel({ current, currentAgent, active, models, modelLoading,
       <header className="topbar">
         <div className="chat-title"><strong>{current?.title || 'Agent Web'}</strong>{currentAgent && <span><span className="status-dot" /> {currentAgent.name}</span>}</div>
         {active && <div className="top-actions">
-          {models.length > 0 && <select value={current?.model || ''} disabled={modelLoading || current?.status === 'running'} onChange={event => onModelChange(event.target.value || undefined)} aria-label="Model">
-            {!current?.model && <option value="">默认模型</option>}
-            {models.map(model => <option key={model.id} value={model.id}>{model.provider ? `${model.provider} / ${model.name}` : model.name}</option>)}
-          </select>}
-          {models.length === 0 && !modelLoading && <span className="model-empty">Agent 默认模型</span>}
-          {modelLoading && <span className="model-empty">加载模型…</span>}
+          <ModelSelector value={current?.model} models={models} loading={modelLoading} disabled={current?.status === 'running'} onChange={onModelChange} />
           <span className={`run-state ${current?.status === 'running' ? 'running' : ''}`}>{current?.status || 'ready'}</span>
           {current?.status === 'running' && <button className="stop" onClick={onStop}><Square size={13} /> Stop</button>}
         </div>}
