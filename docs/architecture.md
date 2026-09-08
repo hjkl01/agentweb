@@ -38,9 +38,9 @@ Agent Web Backend
 
 公共层只负责进程生命周期、WebSocket、Session 持久化和统一事件分发。
 
-## 3. 模型配置原则
+## 3. 模型配置与新建对话
 
-模型配置地址不能假设所有 Agent 相同。
+模型配置地址不能假设所有 Agent 相同。每个 Agent 必须使用自己的模型配置或官方 CLI 能力。
 
 当前优先适配：
 
@@ -49,10 +49,32 @@ Agent Web Backend
 
 后续新增 OpenCode、Claude Code、OpenClaw 时，应分别增加对应的模型发现器，不应复用 Codex/Pi 的配置路径。
 
+新建对话流程现在为：
+
+```text
+New Chat
+   │
+   ▼
+选择已安装 Agent
+   │
+   ▼
+GET /api/agents/{agent_id}/models
+   │
+   ▼
+显示该 Agent 可用模型
+   │
+   ├── 选择具体模型 ──► POST /api/sessions { agent_id, model }
+   │
+   └── 无可发现模型 ──► 使用 Agent 默认模型
+```
+
+模型选择属于 Session 配置，而不是全局 Agent 配置。用户也可以在已经创建的会话中继续通过 `PUT /api/sessions/{id}/model` 切换模型。
+
 前端显示：
 
 ```text
-Provider / Model
+Provider · Model Name
+provider/model-id
 ```
 
 如果 Agent 没有可发现的模型，则显示 `Agent 默认模型`，表示模型选择权仍由 Agent 自己决定。
@@ -116,9 +138,11 @@ Pi tool execution 的 start/update/end 事件映射到统一 tool 生命周期�
 
 Codex JSON 输出中的 thread/item 生命周期由 Codex Adapter 解析。command execution、MCP/tool call、assistant message 等事件映射到统一事件。
 
-### 后续 Agent
+### WebSocket
 
-OpenCode、Claude Code、OpenClaw 必须使用各自 Adapter 解析，不应继续向一个巨大的 `process.rs` 增加越来越多的 Agent 特判。
+Session WebSocket 必须转发所有带 `session_id` 的 AgentEvent，包括 thinking、tool、command 和 file 事件；安装事件不属于 Session WebSocket。
+
+前端收到 file 事件后刷新 Workspace 文件树，并在 Diff 面板打开时重新获取当前 Session 的 diff。
 
 ## 6. 前端事件展示
 
@@ -188,15 +212,31 @@ http://localhost:8080/api-doc/openapi.json
 
 所有 HTTP API 都应在 OpenAPI 中登记；WebSocket endpoint 也登记其用途和路径。
 
-## 10. 当前演进顺序
+## 10. 开发环境 WebSocket
+
+`make dev` 同时启动 Rust 后端和 Vite。Vite 将 `/api` 代理到 `127.0.0.1:8080`，并启用 WebSocket 代理。
+
+如果浏览器在后端刚启动、重编译或关闭页面时断开 WebSocket，Vite 可能打印 `write EPIPE` / `ws proxy socket error`。这表示代理向已经关闭的 socket 写数据，通常是连接生命周期中的断开，不等同于 Rust 编译失败。
+
+真正需要关注的是：
+
+1. 后端是否仍在 `0.0.0.0:8080` 运行；
+2. `GET /api/health` 是否返回 `{"status":"ok"}`；
+3. 浏览器 Network 中 `/api/sessions/{id}/events` 是否能保持 WebSocket 连接；
+4. Rust 进程是否在 EPIPE 后退出或 panic。
+
+如果 EPIPE 持续出现且后端同时退出，应优先检查后端日志，而不是单独修改 Vite proxy。
+
+## 11. 当前演进顺序
 
 1. Codex / Pi 原生 Session 恢复
 2. Codex / Pi 原生事件结构化
-3. 前端 Agent Activity 终端化
-4. 文件修改后 Workspace / Diff 自动刷新
-5. 独立 OpenCode Adapter
-6. 独立 Claude Code Adapter
-7. 独立 OpenClaw Adapter
-8. 各 Agent 独立模型发现与配置适配
+3. 新建对话时按 Agent 独立发现并选择模型
+4. 前端 Agent Activity 终端化
+5. 文件修改后 Workspace / Diff 自动刷新
+6. 独立 OpenCode Adapter
+7. 独立 Claude Code Adapter
+8. 独立 OpenClaw Adapter
+9. 各 Agent 独立模型发现与配置适配
 
 核心原则：**Agent Web 负责统一体验，但不强迫不同 Agent 使用相同的内部实现。**
