@@ -23,13 +23,23 @@ function state(type: string) {
 
 export function AgentActivity({ items, open, onToggle }: Props) {
   if (!items.length) return null;
+  const thinking = items.find(item => item.key === 'thinking');
+  const visibleCount = items.length;
+
   return (
     <div className="activity-card">
       <button className="activity-header" onClick={onToggle}>
         {open ? <Activity size={14} /> : <Circle size={8} />}
         <span>Agent activity</span>
-        <small>{items.length} events</small>
+        <small>{visibleCount} steps</small>
       </button>
+      {thinking && !open && (
+        <div className="activity-summary">
+          <span className="activity-icon"><Brain size={13} /></span>
+          <span>Thinking</span>
+          <span className="activity-summary-state">{state(thinking.type) || <LoaderCircle className="activity-spin" size={12} />}</span>
+        </div>
+      )}
       {open && <div className="activity-list">
         {items.map(item => (
           <div className="activity-item" key={item.id}>
