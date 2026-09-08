@@ -16,7 +16,7 @@ Agent Web 是一个面向 Codex、Claude Code、OpenCode、Pi、OpenClaw 等 Age
 - **Node.js 多版本 Runtime**：Node.js 不作为 Agent Web 后端依赖，可按需安装
 - **WebSocket 实时输出**：实时显示 Agent 执行事件
 - **Workspace**：文件树、文件预览、Git Diff
-- **持久化**：SQLite、用户配置、工作区和 Runtime 均可挂载保存
+- **持久化**：SQLite、用户配置、工作区和 Runtime 均统一保存到 `data/`
 - **国内镜像优先**：Docker 构建依赖使用国内镜像
 
 ## 快速开始
@@ -40,6 +40,15 @@ docker compose up -d --build
 http://localhost:8080
 ```
 
+Docker 模式只需要挂载一个目录：
+
+```yaml
+volumes:
+  - ./data:/data
+```
+
+`data/` 内部包含数据库、Agent 配置、Workspace、Node.js Runtime 和按需安装的 Agent。
+
 ## 本地开发
 
 如果需要修改 Rust 后端或 React 前端，可以直接在本地运行，不需要每次重新构建 Docker 镜像。
@@ -50,7 +59,7 @@ http://localhost:8080
 - Node.js 22+
 - npm
 
-本地开发模式默认使用**当前项目目录下的相对路径**，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
+本地开发默认将持久化数据统一放在项目根目录的 `data/` 下，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
 
 ### 1. 启动后端
 
@@ -67,21 +76,15 @@ http://localhost:8080
 
 首次启动时，如果 SQLite 中还没有用户，会自动创建 `admin` 用户，并在终端输出一次随机生成的密码，请保存该密码。
 
-默认数据文件为项目根目录下的：
+默认数据库：
 
 ```text
-./agentweb.db
+./data/agentweb.db
 ```
 
-如果需要指定其他位置，可以通过 `DATABASE_URL` 覆盖：
-
-```bash
-DATABASE_URL="sqlite:///./custom.db" cargo run
-```
+如果需要指定其他位置，可以通过 `DATABASE_URL` 覆盖。
 
 ### 2. 构建前端
-
-另开一个终端：
 
 ```bash
 cd frontend
@@ -89,77 +92,49 @@ npm install
 npm run build
 ```
 
-构建完成后，将生成：
+### 3. 格式化代码
 
-```text
-frontend/dist/
-```
-
-> 当前 Rust 后端通过 `/app/frontend` 提供前端静态文件。如果直接在宿主机运行后端，需要将前端构建目录链接到 `/app/frontend`，或者后续配置可自定义的前端目录。
-
-### 3. 后端开发检查
-
-修改 Rust 代码后重新运行：
+格式化 Rust：
 
 ```bash
-cd backend
-cargo run
+make fmt
 ```
 
-检查编译：
+只格式化前端：
 
 ```bash
-cargo check
+make fmt-frontend
 ```
 
-运行 Clippy：
+前端使用 Prettier 进行格式化。
 
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-### 4. 前端开发检查
-
-```bash
-cd frontend
-npm run build
-```
-
-### 本地开发目录
+## 数据目录
 
 推荐项目目录保持：
 
 ```text
 agentweb/
-├── agentweb.db              # SQLite 数据库
+├── data/
+│   ├── agentweb.db
+│   ├── home/                 # Agent 的 HOME、配置、缓存和数据
+│   ├── workspaces/           # Session 工作区
+│   └── runtimes/             # Node.js Runtime 和用户安装的 Agent
 ├── backend/
 ├── frontend/
-├── data/                    # 用户配置等数据
-├── workspaces/              # Agent 工作区
-├── runtimes/                # Node.js Runtime 和用户安装的 Agent
 └── docker/
 ```
 
-本地开发时默认使用项目目录下的这些路径。Docker 模式则通过 `docker-compose.yml` 将相同的数据目录挂载到容器内部。
-
-## Docker 持久化
-
-默认 `docker-compose.yml`：
-
-```yaml
-volumes:
-  - ./data:/data
-  - ./workspaces:/workspaces
-  - ./runtimes:/opt/agent-runtimes
-```
+Docker 中对应：
 
 | 容器目录 | 用途 |
 |---|---|
-| `/data` | SQLite、用户配置和 Agent 配置 |
-| `/workspaces` | Agent 工作区 |
-| `/opt/agent-runtimes` | Node.js Runtime 和用户安装的 Agent |
+| `/data/agentweb.db` | SQLite 数据库 |
+| `/data/home` | Agent HOME、配置、缓存和数据 |
+| `/data/workspaces` | Agent 工作区 |
+| `/data/runtimes/node` | Node.js Runtime |
+| `/data/runtimes/agents` | 用户安装的 Agent 运行时数据 |
 
-因此重新创建容器后，可以保留数据库、工作区和已经安装的 Runtime。
+因此重新创建容器后，只要保留宿主机 `./data`，数据库、Agent 配置、Workspace 和 Runtime 都可以继续使用。
 
 ## 使用方法
 
@@ -179,54 +154,17 @@ OpenClaw
 
 需要 Node.js 的 Agent，在安装前先选择并安装对应的 Node.js Runtime。
 
-### 2. 选择 Node.js Runtime
+### 2. 创建会话
 
-Node.js 按版本独立安装，例如：
+创建 Session 时选择 Agent、Workspace 和模型，然后在浏览器中发送任务。
 
-```text
-/opt/agent-runtimes/node/
-├── v20.x.x/
-├── v22.x.x/
-└── ...
-```
+### 3. 查看实时结果
 
-设计目标是允许不同 Agent 使用不同 Node.js 版本，例如：
+Agent Web 使用 WebSocket 接收 Agent 的实时事件，可以展示文本输出、Thinking、Tool 调用及输出、Command 输出、文件变化、错误和完成状态。
 
-```text
-OpenCode -> Node.js 22.x
-Pi       -> Node.js 20.x
-```
+### 4. 查看 Workspace
 
-### 3. 创建会话
-
-创建 Session 时选择：
-
-- Agent
-- Workspace
-- 会话名称
-
-然后在浏览器中发送任务。
-
-### 4. 查看实时结果
-
-Agent Web 使用 WebSocket 接收 Agent 的实时事件，可以展示：
-
-- 文本输出
-- Thinking
-- Tool 调用及输出
-- Command 输出
-- 文件变化
-- 错误
-- 完成状态
-
-### 5. 查看 Workspace
-
-Agent 在指定 Workspace 中执行任务，Web 界面可以查看：
-
-- 文件树
-- 文件内容
-- Git Diff
-- 生成的文件
+Agent 在指定 Workspace 中执行任务，Web 界面可以查看文件树、文件内容和 Git Diff。
 
 ## Agent Web 与 Agent 的关系
 
@@ -250,53 +188,20 @@ Rust + React + SQLite
 模型 / Tools / MCP / Skills / Shell / 文件操作
 ```
 
-Agent Web 负责：
-
-- Web UI
-- Session
-- 消息记录
-- WebSocket
-- Agent 管理
-- Runtime 管理
-- Workspace 展示
-
-Agent 负责：
-
-- 推理
-- 模型调用
-- 工具执行
-- Shell
-- 文件修改
-- MCP
-- Skills
-- 子 Agent
+Agent Web 负责 Web UI、Session、消息记录、WebSocket、Agent 管理、Runtime 管理和 Workspace 展示；Agent 负责推理、模型调用、工具执行、Shell、文件修改、MCP、Skills 和子 Agent。
 
 ## API
 
-当前主要接口：
+完整 API 文档启动后访问：
 
 ```text
-GET  /api/health
-GET  /api/agents
-POST /api/agents
-GET  /api/agent-catalog
-GET  /api/node/versions
-POST /api/node/install
-GET  /api/agents/{id}/status
-POST /api/agents/{id}/install
+http://localhost:8080/docs
+```
 
-GET    /api/sessions
-POST   /api/sessions
-GET    /api/sessions/{id}
-DELETE /api/sessions/{id}
-GET    /api/sessions/{id}/messages
-POST   /api/sessions/{id}/messages
-POST   /api/sessions/{id}/interrupt
+OpenAPI JSON：
 
-GET /api/sessions/{id}/files
-GET /api/sessions/{id}/file/{path}
-GET /api/sessions/{id}/diff
-WS  /api/sessions/{id}/events
+```text
+http://localhost:8080/api-doc/openapi.json
 ```
 
 完整架构和接口设计见 [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md)。
@@ -309,8 +214,6 @@ WS  /api/sessions/{id}/events
 ## 项目状态
 
 项目目前处于持续开发阶段，Agent Runtime 安装、Session 恢复和更多 Agent Adapter 仍在持续完善。
-
-技术方案中的“目标设计”和“当前实现”会明确区分，避免文档与代码状态混淆。
 
 ## License
 
