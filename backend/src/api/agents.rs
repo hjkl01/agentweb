@@ -1,5 +1,5 @@
 use super::runtime::{build_agent_config, detect_agent_version, resolve_agent_binary};
-use crate::{agents::{definition, models::AgentModel}, state::AppState};
+use crate::{agents::models::AgentModel, state::AppState};
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -57,18 +57,21 @@ pub struct AgentStatus {
 
 pub async fn agent_status(Path(id): Path<String>, State(s): State<AppState>) -> Json<AgentStatus> {
     let binary = resolve_agent_binary(&s.db, &id).await;
-    let version = binary.as_deref().and_then(|p| futures::executor::block_on(detect_agent_version(p)));
-    let installed = version.is_some();
-    Json(AgentStatus { id, installed, version, path: binary.map(|p| p.to_string_lossy().into_owned()), runtime: None })
+    let version = match binary.as_deref() {
+        Some(path) => detect_agent_version(path).await,
+        None => None,
+    };
+    Json(AgentStatus {
+        id,
+        installed: version.is_some(),
+        version,
+        path: binary.map(|p| p.to_string_lossy().into_owned()),
+        runtime: None,
+    })
 }
 
 pub async fn agent_models(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<AgentModel>>, StatusCode> {
     let cfg = build_agent_config(&s.db, &id).await?;
     let models = s.agents.adapter(&cfg.id).await.list_models(&cfg).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(models))
-}
-
-#[allow(dead_code)]
-fn _built_in_agent(id: &str) -> bool {
-    definition::BUILT_IN_AGENTS.iter().any(|agent| agent.id == id)
 }
