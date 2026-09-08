@@ -54,25 +54,30 @@ impl ProcessAdapter {
                         "resume".into(),
                         id.clone(),
                         "--json".into(),
-                        message.into(),
                     ]
                 } else {
-                    vec!["exec".into(), "--json".into(), message.into()]
+                    vec!["exec".into(), "--json".into()]
                 };
+                if let Some(model) = &config.model {
+                    args.extend(["--model".into(), model.clone()]);
+                }
+                args.push(message.into());
             }
             ProcessKind::OpenCode => {
-                args.extend([
-                    "run".into(),
-                    message.into(),
-                    "--format".into(),
-                    "json".into(),
-                ]);
+                args.push("run".into());
+                if let Some(model) = &config.model {
+                    args.extend(["--model".into(), model.clone()]);
+                }
                 if let Some(id) = &config.native_session_id {
                     args.extend(["--session".into(), id.clone()]);
                 }
+                args.extend([message.into(), "--format".into(), "json".into()]);
             }
             ProcessKind::Pi => {
                 args.extend(["--mode".into(), "json".into()]);
+                if let Some(model) = &config.model {
+                    args.extend(["--model".into(), model.clone()]);
+                }
                 if let Some(id) = &config.native_session_id {
                     args.extend(["--session".into(), id.clone()]);
                 }
@@ -143,97 +148,52 @@ impl ProcessAdapter {
 
         if t.contains("tool") {
             if start {
-                events.publish(AgentEvent::ToolStarted {
-                    session_id: session_id.into(),
-                    tool: tool.clone(),
-                });
+                events.publish(AgentEvent::ToolStarted { session_id: session_id.into(), tool: tool.clone() });
             }
             if let Some(x) = text.clone() {
-                events.publish(AgentEvent::ToolOutput {
-                    session_id: session_id.into(),
-                    tool: tool.clone(),
-                    output: x,
-                });
+                events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool: tool.clone(), output: x });
             }
             if done {
-                events.publish(AgentEvent::ToolCompleted {
-                    session_id: session_id.into(),
-                    tool,
-                });
+                events.publish(AgentEvent::ToolCompleted { session_id: session_id.into(), tool });
             }
             return None;
         }
-
         if t.contains("command") || t.contains("shell") || t.contains("exec") {
             if start {
-                events.publish(AgentEvent::CommandStarted {
-                    session_id: session_id.into(),
-                    command: tool.clone(),
-                });
+                events.publish(AgentEvent::CommandStarted { session_id: session_id.into(), command: tool.clone() });
             }
             if let Some(x) = text.clone() {
-                events.publish(AgentEvent::CommandOutput {
-                    session_id: session_id.into(),
-                    output: x,
-                });
+                events.publish(AgentEvent::CommandOutput { session_id: session_id.into(), output: x });
             }
             if done {
-                events.publish(AgentEvent::CommandCompleted {
-                    session_id: session_id.into(),
-                });
+                events.publish(AgentEvent::CommandCompleted { session_id: session_id.into() });
             }
             return None;
         }
-
         if t.contains("reason") || t.contains("think") || t.contains("thought") {
-            if start {
-                events.publish(AgentEvent::ThinkingStarted {
-                    session_id: session_id.into(),
-                });
-            }
-            if let Some(x) = text.clone() {
-                events.publish(AgentEvent::ThinkingDelta {
-                    session_id: session_id.into(),
-                    text: x,
-                });
-            }
-            if done {
-                events.publish(AgentEvent::ThinkingCompleted {
-                    session_id: session_id.into(),
-                });
-            }
+            if start { events.publish(AgentEvent::ThinkingStarted { session_id: session_id.into() }); }
+            if let Some(x) = text.clone() { events.publish(AgentEvent::ThinkingDelta { session_id: session_id.into(), text: x }); }
+            if done { events.publish(AgentEvent::ThinkingCompleted { session_id: session_id.into() }); }
             return None;
         }
-
         if t.contains("file") {
             if let Some(path) = Self::string(v, &["path", "file_path", "filePath"]) {
                 events.publish(if t.contains("creat") {
-                    AgentEvent::FileCreated {
-                        session_id: session_id.into(),
-                        path,
-                    }
+                    AgentEvent::FileCreated { session_id: session_id.into(), path }
                 } else if t.contains("delet") {
-                    AgentEvent::FileDeleted {
-                        session_id: session_id.into(),
-                        path,
-                    }
+                    AgentEvent::FileDeleted { session_id: session_id.into(), path }
                 } else {
-                    AgentEvent::FileModified {
-                        session_id: session_id.into(),
-                        path,
-                    }
+                    AgentEvent::FileModified { session_id: session_id.into(), path }
                 });
             }
             return None;
         }
-
         if t == "error" || t.contains("failed") || t.contains("failure") {
             events.publish(AgentEvent::Error {
                 session_id: session_id.into(),
                 message: Self::string(v, &["message", "error"]).unwrap_or_else(|| line.to_owned()),
             });
         }
-
         text
     }
 
@@ -248,63 +208,40 @@ impl ProcessAdapter {
         if self.processes.lock().await.contains_key(session_id) {
             return Err(anyhow!("session already has a running agent process"));
         }
-
         let mut cmd = Self::build_command(kind, config, message)?;
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let child = Arc::new(Mutex::new(child));
-        self.processes
-            .lock()
-            .await
-            .insert(session_id.to_owned(), child.clone());
-        events.publish(AgentEvent::MessageStarted {
-            session_id: session_id.into(),
-        });
-
+        self.processes.lock().await.insert(session_id.to_owned(), child.clone());
+        events.publish(AgentEvent::MessageStarted { session_id: session_id.into() });
         let result = Arc::new(Mutex::new(AgentRunResult::default()));
         let sid = session_id.to_owned();
         let ev = events.clone();
         let rr = result.clone();
-
         let out = tokio::spawn(async move {
             if let Some(stdout) = stdout {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Some(line) = lines.next_line().await? {
                     if let Ok(v) = serde_json::from_str::<Value>(&line) {
                         let (_, native, _, _) = Self::parsed(&v);
-                        if let Some(n) = native {
-                            rr.lock().await.native_session_id = Some(n);
-                        }
+                        if let Some(n) = native { rr.lock().await.native_session_id = Some(n); }
                         if let Some(text) = Self::normalize(&sid, &v, &line, &ev) {
                             let typ = Self::parsed(&v).0.to_ascii_lowercase();
-                            if typ.contains("agent_message")
-                                || typ.contains("assistant")
-                                || typ.contains("text")
-                                || typ == "item.completed"
-                                || typ == "message_update"
-                                || typ == "message.part.updated"
-                            {
+                            if typ.contains("agent_message") || typ.contains("assistant") || typ.contains("text") || typ == "item.completed" || typ == "message_update" || typ == "message.part.updated" {
                                 rr.lock().await.assistant_text.push_str(&text);
-                                ev.publish(AgentEvent::MessageDelta {
-                                    session_id: sid.clone(),
-                                    text,
-                                });
+                                ev.publish(AgentEvent::MessageDelta { session_id: sid.clone(), text });
                             }
                         }
                     } else if !line.trim().is_empty() {
                         let text = format!("{line}\n");
                         rr.lock().await.assistant_text.push_str(&text);
-                        ev.publish(AgentEvent::MessageDelta {
-                            session_id: sid.clone(),
-                            text,
-                        });
+                        ev.publish(AgentEvent::MessageDelta { session_id: sid.clone(), text });
                     }
                 }
             }
             Ok::<(), anyhow::Error>(())
         });
-
         let err = tokio::spawn(async move {
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
@@ -312,20 +249,14 @@ impl ProcessAdapter {
             }
             Ok::<(), anyhow::Error>(())
         });
-
         let status = child.lock().await.wait().await?;
         out.await??;
         err.await??;
         self.processes.lock().await.remove(session_id);
-
         let result = result.lock().await.clone();
         if status.success() {
-            events.publish(AgentEvent::MessageCompleted {
-                session_id: session_id.into(),
-            });
-            events.publish(AgentEvent::SessionCompleted {
-                session_id: session_id.into(),
-            });
+            events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
+            events.publish(AgentEvent::SessionCompleted { session_id: session_id.into() });
             Ok(result)
         } else {
             Err(anyhow!("agent exited with status {status}"))
@@ -342,15 +273,8 @@ impl ProcessAdapter {
 
 #[async_trait]
 impl AgentAdapter for ProcessAdapter {
-    async fn send_message(
-        &self,
-        config: &AgentConfig,
-        session_id: &str,
-        message: &str,
-        events: &EventBus,
-    ) -> Result<AgentRunResult> {
-        self.run(ProcessKind::Generic, config, session_id, message, events)
-            .await
+    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
+        self.run(ProcessKind::Generic, config, session_id, message, events).await
     }
 
     async fn interrupt(&self, session_id: &str) -> Result<()> {
