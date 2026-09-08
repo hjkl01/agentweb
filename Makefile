@@ -6,7 +6,7 @@ APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 
-.PHONY: help setup install dev dev-backend dev-frontend build release check test fmt lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
+.PHONY: help install dev dev-backend dev-frontend build release check test fmt lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
 
 help: ## Show available commands
 	@echo "Agent Web"
@@ -14,7 +14,7 @@ help: ## Show available commands
 	@echo "Usage: make <command>"
 	@echo ""
 	@echo "Development:"
-	@grep -E '^(setup|install|dev|dev-backend|dev-frontend|build|release|check|test|fmt|lint|clean):.*##' $(MAKEFILE_LIST) | \
+	@grep -E '^(install|dev|dev-backend|dev-frontend|build|release|check|test|fmt|lint|clean):.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Docker:"
@@ -24,8 +24,6 @@ help: ## Show available commands
 # -----------------------------------------------------------------------------
 # Local development
 # -----------------------------------------------------------------------------
-
-setup: install ## Install all local development dependencies
 
 install: ## Install frontend dependencies and fetch Rust dependencies
 	@mkdir -p data workspaces runtimes
