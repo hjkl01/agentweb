@@ -10,7 +10,7 @@ import { NewChatDialog } from './components/NewChatDialog';
 import type { WorkspaceFile } from './types';
 
 export function App() {
-  const { agents, node, nodeVersion, setNodeVersion, nodeGroups, refresh: refreshAgents } = useAgentRuntime();
+  const { agents, node, nodeVersion, setNodeVersion, nodeGroups, error: agentError, refresh: refreshAgents } = useAgentRuntime();
   const [active, setActive] = useState<string>();
   const [input, setInput] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
@@ -28,6 +28,7 @@ export function App() {
   const session = useSession(active);
   const current = useMemo(() => session.sessions.find(item => item.id === active), [session.sessions, active]);
   const currentAgent = useMemo(() => agents.find(item => item.id === current?.agent_id), [agents, current]);
+  const startupError = agentError || session.error;
 
   useEffect(() => {
     if (!active && session.sessions[0]) setActive(session.sessions[0].id);
@@ -138,6 +139,14 @@ export function App() {
 
   return (
     <div className="app" onClick={() => sessionMenu && setSessionMenu(undefined)}>
+      {startupError && (
+        <div className="startup-error" role="alert">
+          <strong>后端连接异常</strong>
+          <span>{startupError}</span>
+          <button onClick={() => { refreshAgents(); session.refreshSessions(); }}>重试</button>
+        </div>
+      )}
+
       <Sidebar
         agents={agents}
         sessions={session.sessions}
