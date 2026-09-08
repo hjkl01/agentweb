@@ -37,7 +37,8 @@ export function App({ sessionId, navigate }: Props) {
     try {
       const created = await session.createSession(agentId, model);
       navigate(sessionPath(created.id));
-      setNewChatOpen(false); setCatalogOpen(false);
+      setNewChatOpen(false);
+      setCatalogOpen(false);
     } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
   };
 
