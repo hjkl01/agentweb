@@ -11,13 +11,11 @@ use std::{collections::HashMap, path::{Path as FsPath, PathBuf}, process::Stdio}
 use tokio::process::Command;
 
 pub(crate) async fn setting(db: &sqlx::SqlitePool, key: &str) -> Option<String> {
-    sqlx::query("SELECT value FROM runtime_settings WHERE key=?")
-        .bind(key).fetch_optional(db).await.ok().flatten().map(|r| r.get(0))
+    sqlx::query("SELECT value FROM runtime_settings WHERE key=?").bind(key).fetch_optional(db).await.ok().flatten().map(|r| r.get(0))
 }
 
 pub(crate) async fn save_setting(db: &sqlx::SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO runtime_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-        .bind(key).bind(value).execute(db).await.map(|_| ())
+    sqlx::query("INSERT INTO runtime_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key).bind(value).execute(db).await.map(|_| ())
 }
 
 pub(crate) async fn configured_agent_path(db: &sqlx::SqlitePool, id: &str) -> Option<String> {
@@ -39,14 +37,7 @@ pub(crate) async fn node_bin_dir(db: &sqlx::SqlitePool) -> Option<PathBuf> {
 }
 
 pub(crate) fn agent_executable(id: &str) -> &str {
-    match id {
-        "codex" => "codex",
-        "claude-code" => "claude",
-        "opencode" => "opencode",
-        "pi" => "pi",
-        "openclaw" => "openclaw",
-        _ => id,
-    }
+    match id { "codex" => "codex", "claude-code" => "claude", "opencode" => "opencode", "pi" => "pi", "openclaw" => "openclaw", _ => id }
 }
 
 pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Option<PathBuf> {
@@ -75,11 +66,9 @@ async fn detect_agent(db: &sqlx::SqlitePool, id: &str) -> (bool, Option<String>,
     (version.is_some(), version, Some(binary.to_string_lossy().into_owned()))
 }
 
-async fn agent_runtime_label(id: &str, db: &sqlx::SqlitePool) -> Option<String> {
+pub(crate) async fn agent_runtime_label(id: &str, db: &sqlx::SqlitePool) -> Option<String> {
     if id == "codex" { return None; }
-    if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
-        return Some(format!("Node {version}"));
-    }
+    if let Ok(Some((version, _))) = runtime::detect_installed_node().await { return Some(format!("Node {version}")); }
     node_bin_dir(db).await.and_then(|p| p.join("node").exists().then(|| format!("Node ({})", p.display())))
 }
 
@@ -92,13 +81,7 @@ pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serd
 }
 
 #[derive(Serialize)]
-pub struct CatalogItem {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub installed: bool,
-    pub requirements: Vec<&'static str>,
-}
+pub struct CatalogItem { pub id: &'static str, pub name: &'static str, pub description: &'static str, pub installed: bool, pub requirements: Vec<&'static str> }
 
 pub async fn catalog(State(s): State<AppState>) -> Json<Vec<CatalogItem>> {
     let db = &s.db;
@@ -129,81 +112,38 @@ pub struct UpdateRuntimeSettings { pub node_path: Option<String>, pub agent_path
 
 pub async fn update_runtime_settings(State(s): State<AppState>, Json(v): Json<UpdateRuntimeSettings>) -> Result<Json<RuntimeSettings>, StatusCode> {
     let node_path = v.node_path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
-    let paths = v.agent_paths.into_iter().filter_map(|(k, p)| {
-        let p = p.trim().to_owned();
-        (!k.trim().is_empty() && !p.is_empty()).then_some((k, p))
-    }).collect::<HashMap<_, _>>();
+    let paths = v.agent_paths.into_iter().filter_map(|(k, p)| { let p = p.trim().to_owned(); (!k.trim().is_empty() && !p.is_empty()).then_some((k, p)) }).collect::<HashMap<_, _>>();
     save_setting(&s.db, "node_path", node_path.as_deref().unwrap_or("")).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     save_setting(&s.db, "agent_paths", &serde_json::to_string(&paths).map_err(|_| StatusCode::BAD_REQUEST)?).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(RuntimeSettings { node_path, agent_paths: paths }))
 }
 
 pub async fn install_agent(Path(id): Path<String>, State(s): State<AppState>) -> Json<serde_json::Value> {
-    let events = s.events.clone();
-    let db = s.db.clone();
-    let id2 = id.clone();
-    tokio::spawn(async move {
-        let success = install_agent_inner(&db, &id2, &events).await;
-        events.publish(AgentEvent::InstallCompleted { agent_id: id2, success });
-    });
+    let events = s.events.clone(); let db = s.db.clone(); let id2 = id.clone();
+    tokio::spawn(async move { let success = install_agent_inner(&db, &id2, &events).await; events.publish(AgentEvent::InstallCompleted { agent_id: id2, success }); });
     Json(serde_json::json!({ "status": "started", "agent_id": id }))
 }
 
 async fn install_agent_inner(db: &sqlx::SqlitePool, id: &str, events: &crate::events::EventBus) -> bool {
-    if id == "openclaw" {
-        events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: "OpenClaw installation package is not configured.".into() });
-        return false;
-    }
-    let node_bin = match node_bin_dir(db).await {
-        Some(path) => path,
-        None => {
-            events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: "Please install or configure Node.js first.".into() });
-            return false;
-        }
-    };
-    let package = match id {
-        "codex" => "@openai/codex",
-        "claude-code" => "@anthropic-ai/claude-code",
-        "opencode" => "opencode-ai@latest",
-        "pi" => "@mariozechner/pi-coding-agent",
-        _ => {
-            events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Unknown agent: {id}") });
-            return false;
-        }
-    };
+    if id == "openclaw" { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: "OpenClaw installation package is not configured.".into() }); return false; }
+    let node_bin = match node_bin_dir(db).await { Some(path) => path, None => { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: "Please install or configure Node.js first.".into() }); return false; } };
+    let package = match id { "codex" => "@openai/codex", "claude-code" => "@anthropic-ai/claude-code", "opencode" => "opencode-ai@latest", "pi" => "@mariozechner/pi-coding-agent", _ => { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Unknown agent: {id}") }); return false; } };
     let mut cmd = Command::new(node_bin.join("npm"));
-    cmd.args(["install", "-g", package])
-        .env("PATH", format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default()))
-        .stdout(Stdio::piped()).stderr(Stdio::piped());
-    if let Some(node_path) = configured_node_path(db).await {
-        if node_path.is_file() {
-            if let Some(home) = node_path.parent().and_then(|x| x.parent()) { cmd.env("NPM_CONFIG_PREFIX", home); }
-        }
-    }
+    cmd.args(["install", "-g", package]).env("PATH", format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default())).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(node_path) = configured_node_path(db).await { if node_path.is_file() { if let Some(home) = node_path.parent().and_then(|x| x.parent()) { cmd.env("NPM_CONFIG_PREFIX", home); } } }
     events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Installing {package} …") });
-    let output = match cmd.output().await {
-        Ok(output) => output,
-        Err(error) => {
-            events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("npm install failed: {error}") });
-            return false;
-        }
-    };
+    let output = match cmd.output().await { Ok(output) => output, Err(error) => { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("npm install failed: {error}") }); return false; } };
     events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)) });
     if !output.status.success() { return false; }
     let binary = node_bin.join(agent_executable(id));
     let version = match detect_agent_version(&binary).await { Some(v) => v, None => return false };
     let now = chrono::Utc::now().to_rfc3339();
     let _ = sqlx::query("UPDATE agents SET installed=1,version=?,updated_at=? WHERE id=?").bind(&version).bind(&now).bind(id).execute(db).await;
-    events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Installed {id} version {version}") });
-    true
+    events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: format!("Installed {id} version {version}") }); true
 }
 
 pub(crate) async fn build_agent_config(db: &sqlx::SqlitePool, id: &str) -> Result<AgentConfig, StatusCode> {
-    let (kind, command, working_directory) = if let Some(row) = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
-        (row.get::<String, _>(0), row.get::<String, _>(1), row.get::<Option<String>, _>(2))
-    } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == id) {
-        (def.kind.to_owned(), def.command.to_owned(), None)
-    } else { return Err(StatusCode::NOT_FOUND); };
+    let (kind, command, working_directory) = if let Some(row) = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? { (row.get::<String, _>(0), row.get::<String, _>(1), row.get::<Option<String>, _>(2)) } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == id) { (def.kind.to_owned(), def.command.to_owned(), None) } else { return Err(StatusCode::NOT_FOUND); };
     let binary = resolve_agent_binary(db, id).await.ok_or(StatusCode::NOT_FOUND)?;
     let command = if command.trim().is_empty() { binary.to_string_lossy().into_owned() } else { command };
     let runtime_path = node_bin_dir(db).await.map(|p| p.to_string_lossy().into_owned());
