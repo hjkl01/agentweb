@@ -4,7 +4,6 @@ import { api } from '../lib/api';
 
 type Item = { name: string; path: string; kind: string; size: number };
 type Props = { open: boolean; query: string; onSelect: (path: string) => void; onClose: () => void };
-
 type TreeNodeProps = { item: Item; depth: number; onSelect: (path: string) => void };
 
 function TreeNode({ item, depth, onSelect }: TreeNodeProps) {
@@ -32,17 +31,8 @@ function TreeNode({ item, depth, onSelect }: TreeNodeProps) {
 
   return (
     <div className="mention-tree-node">
-      <div className="mention-tree-row" style={{ paddingLeft: 8 + depth * 16 }}>
-        <button
-          className={`mention-tree-main ${directory ? 'directory' : 'file'}`}
-          onClick={toggle}
-          aria-label={directory ? `${expanded ? '收起' : '展开'} ${item.name}` : item.name}
-        >
-          {directory ? (
-            expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
-          ) : (
-            <span className="mention-spacer" />
-          )}
+      <div className="mention-tree-row" style={{ paddingLeft: depth * 18 }}>
+        <span className="mention-tree-name">
           {directory ? (
             expanded ? <FolderOpen size={15} /> : <Folder size={15} />
           ) : (
@@ -50,7 +40,19 @@ function TreeNode({ item, depth, onSelect }: TreeNodeProps) {
           )}
           <span title={item.path}>{item.name}</span>
           {loading && <LoaderCircle size={13} className="spin" />}
-        </button>
+        </span>
+        {directory ? (
+          <button
+            className="mention-expand"
+            onClick={toggle}
+            title={expanded ? `折叠 ${item.name}` : `展开 ${item.name}`}
+            aria-label={expanded ? `折叠 ${item.name}` : `展开 ${item.name}`}
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+        ) : (
+          <span className="mention-expand-placeholder" />
+        )}
         <button
           className="mention-confirm"
           onClick={() => onSelect(item.path)}
@@ -93,7 +95,7 @@ export function MentionPicker({ open, query, onSelect, onClose }: Props) {
       <div className="mention-picker-head">
         <div>
           <strong>选择文件或文件夹</strong>
-          <small>从 HOME 开始</small>
+          <small>从 HOME 开始，按需展开</small>
         </div>
         <button onClick={onClose}>Esc</button>
       </div>
