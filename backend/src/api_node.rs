@@ -2,7 +2,6 @@ use crate::{installation::runtime, state::AppState};
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::process::Stdio;
 use tokio::process::Command;
 
 #[derive(Serialize)]
@@ -27,7 +26,6 @@ pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serd
 }
 
 #[derive(Serialize)] pub struct CatalogItem { pub id: &'static str, pub name: &'static str, pub description: &'static str, pub installed: bool, pub requirements: Vec<&'static str>, pub install_command: &'static str }
-
 const AGENTS: &[(&str, &str, &str, &str, &[&str])] = &[
     ("codex", "Codex", "OpenAI coding agent", "npm install -g @openai/codex", &["Node.js"]),
     ("claude-code", "Claude Code", "Anthropic coding agent", "npm install -g @anthropic-ai/claude-code", &["Node.js"]),
@@ -37,9 +35,7 @@ const AGENTS: &[(&str, &str, &str, &str, &[&str])] = &[
     ("pi", "Pi", "Pi coding agent", "npm install -g @mariozechner/pi-coding-agent", &["Node.js"]),
     ("openclaw", "OpenClaw", "General purpose agent", "npm install -g openclaw", &["Node.js"]),
 ];
-
 async fn command_exists(command: &str) -> bool { Command::new("which").arg(command).output().await.map(|o| o.status.success()).unwrap_or(false) }
-
 pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
     let mut result = Vec::with_capacity(AGENTS.len());
     for (id, name, description, install_command, requirements) in AGENTS {
@@ -53,7 +49,14 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
 pub async fn install_custom_agent(Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let command = v.command.trim().to_owned();
     if command.is_empty() { return Err(axum::http::StatusCode::BAD_REQUEST); }
-    let output = Command::new("sh").args(["-lc", &command]).output().await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let mut process = Command::new("sh");
+    process.args(["-lc", &command]);
+    if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
+        let node_bin = runtime::node_bin(&version);
+        let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
+        process.env("PATH", path).env("NPM_CONFIG_PREFIX", runtime::node_home(&version));
+    }
+    let output = process.output().await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     if !output.status.success() { return Err(axum::http::StatusCode::BAD_REQUEST); }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().chars().take(1000).collect::<String>();
     Ok(Json(serde_json::json!({ "status": "installed", "command": command, "output": stdout })))
