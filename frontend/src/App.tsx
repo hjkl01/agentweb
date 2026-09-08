@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { AgentCatalog } from './components/AgentCatalog';
+import { NewChatDialog } from './components/NewChatDialog';
 import type { WorkspaceFile } from './types';
 
 export function App() {
@@ -13,6 +14,7 @@ export function App() {
   const [active, setActive] = useState<string>();
   const [input, setInput] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [sessionMenu, setSessionMenu] = useState<string>();
   const [workspaceTab, setWorkspaceTab] = useState<'files' | 'diff'>('files');
   const [fileFilter, setFileFilter] = useState('');
@@ -39,6 +41,7 @@ export function App() {
     try {
       const created = await session.createSession(agentId);
       setActive(created.id);
+      setNewChatOpen(false);
       setCatalogOpen(false);
     } catch (error: any) {
       alert(error.message);
@@ -60,9 +63,10 @@ export function App() {
   const deleteSession = async (id: string) => {
     if (!confirm('删除这个会话？')) return;
     try {
+      const nextActive = session.sessions.find(item => item.id !== id)?.id;
       await session.deleteSession(id);
       setSessionMenu(undefined);
-      if (active === id) setActive(session.sessions.find(item => item.id !== id)?.id);
+      if (active === id) setActive(nextActive);
     } catch (error: any) {
       alert(error.message);
     }
@@ -116,7 +120,8 @@ export function App() {
   const selectWorkspaceTab = async (tab: 'files' | 'diff') => {
     setWorkspaceTab(tab);
     if (tab === 'diff' && active) {
-      try { setDiff(await api(`/sessions/${active}/diff`)); } catch (error: any) { setDiff({ diff: error.message }); }
+      try { setDiff(await api(`/sessions/${active}/diff`)); }
+      catch (error: any) { setDiff({ diff: error.message }); }
     }
   };
 
@@ -138,7 +143,7 @@ export function App() {
         sessions={session.sessions}
         active={active}
         sessionMenu={sessionMenu}
-        onNewChat={() => setCatalogOpen(true)}
+        onNewChat={() => setNewChatOpen(true)}
         onSelectSession={setActive}
         onSessionMenu={id => setSessionMenu(value => value === id ? undefined : id)}
         onDeleteSession={deleteSession}
@@ -160,13 +165,12 @@ export function App() {
         onSend={send}
         onToggleActivity={() => session.setActivityOpen(value => !value)}
         onStop={stop}
-        onNewChat={() => setCatalogOpen(true)}
+        onNewChat={() => setNewChatOpen(true)}
         onAutoResize={autoResize}
       />
 
       <WorkspacePanel
         current={current}
-        active={active}
         files={session.files}
         fileFilter={fileFilter}
         selectedFile={selectedFile}
@@ -177,6 +181,14 @@ export function App() {
         onRefresh={refreshWorkspace}
         onOpenFile={openFile}
         onCloseFile={() => setSelectedFile(undefined)}
+      />
+
+      <NewChatDialog
+        open={newChatOpen}
+        agents={agents}
+        onClose={() => setNewChatOpen(false)}
+        onSelectAgent={createChat}
+        onManageAgents={() => { setNewChatOpen(false); setCatalogOpen(true); }}
       />
 
       <AgentCatalog
