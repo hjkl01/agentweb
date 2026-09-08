@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use super::models::AgentModel;
 
+#[derive(Debug, thiserror::Error)]
+pub enum AgentRunError {
+    #[error("agent process interrupted")]
+    Interrupted,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub id: String,
