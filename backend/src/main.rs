@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
         .route("/api/health", get(api::health))
         .route("/api/auth/login", axum::routing::post(auth::login))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/logout", axum::routing::post(auth::logout))
         .nest("/api", protected_api)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
         .fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)))
