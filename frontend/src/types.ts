@@ -1,6 +1,6 @@
 export type ApiErrorBody = { error: { code: string; message: string } };
 export class ApiError extends Error { status?:number; code?:string; path:string; constructor(message:string,path:string,status?:number,code?:string){super(message);this.name='ApiError';this.path=path;this.status=status;this.code=code;} }
-export type Agent = { id:string; name:string; description?:string; installed:boolean; requirements:string[] };
+export type Agent = { id:string; name:string; description?:string; installed:boolean; requirements:string[]; install_command?:string };
 export type AgentModel = { id:string; name:string; provider?:string; source?:string };
 export type Session = { id:string; agent_id:string; title:string; workspace:string; status:string; native_session_id?:string; model?:string; is_pinned:boolean };
 export type ChatMessage = { id:string; role:string; content:string; created_at?:string };
