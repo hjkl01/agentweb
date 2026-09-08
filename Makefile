@@ -21,16 +21,12 @@ help: ## Show available commands
 	@grep -E '^docker-(build|up|down|restart|logs|shell|pull|clean):.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
-# -----------------------------------------------------------------------------
-# Local development
-# -----------------------------------------------------------------------------
-
 install: ## Install frontend dependencies and fetch Rust dependencies
 	@mkdir -p data workspaces runtimes
-	cd frontend && npm install
+	cd frontend && npm install --no-audit --no-fund
 	cd backend && cargo fetch
 
-dev: install ## Start backend and frontend development servers
+dev: ## Start backend and frontend development servers
 	@trap 'kill 0' INT TERM EXIT; \
 		(cd backend && cargo run) & \
 		(cd frontend && npm run dev -- --host 127.0.0.1) & \
@@ -42,10 +38,6 @@ dev-backend: ## Start Rust backend development server
 
 dev-frontend: ## Start Vite frontend development server
 	cd frontend && npm run dev -- --host 127.0.0.1
-
-# -----------------------------------------------------------------------------
-# Build, test and quality
-# -----------------------------------------------------------------------------
 
 build: ## Build frontend and Rust backend in debug mode
 	cd frontend && npm run build
