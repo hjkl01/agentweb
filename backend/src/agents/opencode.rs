@@ -1,6 +1,7 @@
 use super::{
     adapter::{AgentAdapter, AgentConfig, AgentRunResult},
-    process::{ProcessAdapter, ProcessKind},
+    commands::ProcessKind,
+    process::ProcessAdapter,
 };
 use crate::events::EventBus;
 use anyhow::Result;
