@@ -14,6 +14,18 @@ fn ignored_dir(path: &FsPath) -> bool {
     path.file_name().and_then(|name| name.to_str()).map(|name| IGNORED_DIRS.contains(&name)).unwrap_or(false)
 }
 
+fn normalize_git_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn status_from_code(code: &str) -> &'static str {
+    if code.contains('R') { "renamed" }
+    else if code.contains('D') { "deleted" }
+    else if code.contains('A') { "added" }
+    else if code == "??" { "untracked" }
+    else { "modified" }
+}
+
 async fn workspace_root(path: &str) -> Result<PathBuf, StatusCode> {
     fs::canonicalize(path).await.map_err(|_| StatusCode::NOT_FOUND)
 }
@@ -27,15 +39,30 @@ async fn workspace_file_path(workspace: &str, relative: &str) -> Result<PathBuf,
 }
 
 async fn git_status(root: &PathBuf) -> Result<std::collections::HashMap<String, String>, StatusCode> {
-    let output = Command::new("git").arg("-C").arg(root).args(["status", "--porcelain=v1", "--untracked-files=all"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let output = Command::new("git").arg("-C").arg(root)
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     if !output.status.success() { return Ok(Default::default()); }
+
     let mut result = std::collections::HashMap::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if line.len() < 4 { continue; }
-        let code = &line[..2];
-        let path = line[3..].trim().trim_matches('"').replace('\\', "/");
-        let status = if code.contains('R') { "renamed" } else if code.contains('D') { "deleted" } else if code.contains('A') { "added" } else if code == "??" { "untracked" } else { "modified" };
+    let mut fields = String::from_utf8_lossy(&output.stdout).split('\0').map(str::to_owned).collect::<Vec<_>>();
+    if fields.last().is_some_and(String::is_empty) { fields.pop(); }
+    let mut index = 0;
+    while index < fields.len() {
+        let entry = &fields[index];
+        if entry.len() < 3 { index += 1; continue; }
+        let code = &entry[..2];
+        let path = normalize_git_path(entry[3..].trim());
+        let status = status_from_code(code);
         result.insert(path, status.to_owned());
+        if code.contains('R') || code.contains('C') {
+            if let Some(previous) = fields.get(index + 1) {
+                let previous = normalize_git_path(previous.trim());
+                if !previous.is_empty() { result.insert(previous, "deleted".to_owned()); }
+                index += 1;
+            }
+        }
+        index += 1;
     }
     Ok(result)
 }
@@ -92,9 +119,9 @@ pub async fn workspace_diff(Path(id): Path<String>, State(s): State<AppState>) -
     let mut diff = String::from_utf8_lossy(&output.stdout).into_owned();
     let mut truncated = false;
     if diff.len() > MAX_DIFF_TOTAL_BYTES { diff.truncate(MAX_DIFF_TOTAL_BYTES); truncated = true; }
-    let untracked = Command::new("git").arg("-C").arg(&root).args(["ls-files", "--others", "--exclude-standard"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let untracked = Command::new("git").arg("-C").arg(&root).args(["ls-files", "--others", "--exclude-standard", "-z"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     if untracked.status.success() {
-        for relative in String::from_utf8_lossy(&untracked.stdout).lines().filter(|line| !line.trim().is_empty()) {
+        for relative in String::from_utf8_lossy(&untracked.stdout).split('\0').filter(|line| !line.trim().is_empty()) {
             if diff.len() >= MAX_DIFF_TOTAL_BYTES { truncated = true; break; }
             if relative.split('/').any(|part| IGNORED_DIRS.contains(&part)) { continue; }
             let path = root.join(relative);
