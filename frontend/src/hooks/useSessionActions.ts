@@ -1,11 +1,10 @@
 import { useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../lib/api';
-import type { ChatMessage, Session } from '../types';
+import type { Session } from '../types';
 
 type Options = {
   setSessions: Dispatch<SetStateAction<Session[]>>;
-  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
 };
 
 export function useSessionActions({ setSessions }: Options) {
