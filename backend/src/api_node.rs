@@ -58,22 +58,29 @@ pub async fn install_custom_agent(State(s): State<AppState>, Json(v): Json<Custo
     let command = v.command.trim().to_owned();
     if command.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "INSTALL_COMMAND_REQUIRED", "install command is required")); }
 
-    // Never rely on the backend container's /usr/bin/npm. Node.js installed by Agent Web
-    // lives under /data/runtimes/node and must be explicitly added to PATH.
+    // Managed Node.js is installed under AGENTWEB_RUNTIME_DIR, not /usr/bin.
+    // Resolve the selected Node installation explicitly so shell commands such as
+    // `npm install -g ...` do not depend on the container's system PATH.
     let configured = sqlx::query("SELECT value FROM runtime_settings WHERE key=?")
         .bind("node_path").fetch_optional(&s.db).await.ok().flatten()
-        .map(|row| row.get::<String, _>(0));
-    let node_bin = runtime::active_node_bin(configured.as_deref()).await.map_err(|error| {
-        error_response(StatusCode::BAD_REQUEST, "NODE_RUNTIME_UNAVAILABLE", format!("Node.js runtime is not ready: {error:#}"))
-    })?;
+        .map(|row| row.get::<String, _>(0)).filter(|p| !p.trim().is_empty());
+    let node_bin = if let Some(path) = configured.as_deref() {
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() { path.parent().map(std::path::Path::to_path_buf) } else if path.join("node").is_file() { Some(path) } else { None }
+    } else {
+        runtime::installed_versions().await.ok().and_then(|versions| versions.first().cloned()).map(|version| runtime::node_bin(&version))
+    }.ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_RUNTIME_UNAVAILABLE", "Node.js runtime is not configured or installed"))?;
+
     let npm = node_bin.join("npm");
-    if !npm.is_file() {
-        return Err(error_response(StatusCode::BAD_REQUEST, "NPM_NOT_FOUND", format!("npm was not found at {}", npm.display())));
+    if !node_bin.join("node").is_file() || !npm.is_file() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "NPM_NOT_FOUND", format!("managed Node.js is incomplete: npm was not found at {}", npm.display())));
     }
+
     let mut process = Command::new("sh");
     process.args(["-lc", &command]);
     let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
-    process.env("PATH", path).env("NPM_CONFIG_PREFIX", node_bin.parent().unwrap_or(node_bin.as_path()));
+    let prefix = node_bin.parent().unwrap_or(node_bin.as_path());
+    process.env("PATH", path).env("NPM_CONFIG_PREFIX", prefix);
 
     let output = process.output().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "AGENT_INSTALL_START_FAILED", format!("failed to start install command: {error:#}")))?;
     if !output.status.success() {
