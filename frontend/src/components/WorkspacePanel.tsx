@@ -1,4 +1,5 @@
 import { Folder, GitCompare, RefreshCw, Search, X } from 'lucide-react';
+import { CodePreview } from './CodePreview';
 import { DiffViewer } from './DiffViewer';
 import { FileTree } from './FileTree';
 import type { FileItem, Session, WorkspaceDiff, WorkspaceFile } from '../types';
@@ -35,7 +36,7 @@ export function WorkspacePanel({ current, files, fileFilter, selectedFile, diff,
       {tab === 'diff' && <DiffViewer diff={diff} />}
       {selectedFile && <div className="preview">
         <div className="preview-head"><div><strong>{selectedFile.path}</strong><small>File preview</small></div><button className="icon-button" onClick={onCloseFile}><X size={15} /></button></div>
-        <pre>{selectedFile.content}</pre>
+        <CodePreview file={selectedFile} />
       </div>}
     </aside>
   );
