@@ -27,12 +27,24 @@ export function useSessionActions({ setSessions }: Options) {
   }, [setSessions]);
 
   const sendMessage = useCallback(async (sessionId: string, message: string) => {
-    const result = await api<{ status?: string; error?: string }>(`/sessions/${sessionId}/messages`, {
+    const result = await api<{ status?: string; error?: string; title?: string }>(`/sessions/${sessionId}/messages`, {
       method: 'POST',
       body: JSON.stringify({ message }),
     });
     if (result.error) throw new Error(result.error);
-    setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: 'running' } : item));
+    setSessions(items => items.map(item => item.id === sessionId
+      ? { ...item, status: 'running', ...(result.title ? { title: result.title } : {}) }
+      : item));
+    return result;
+  }, [setSessions]);
+
+  const renameSession = useCallback(async (sessionId: string, title: string) => {
+    const session = await api<Session>(`/sessions/${sessionId}/title`, {
+      method: 'PUT',
+      body: JSON.stringify({ title }),
+    });
+    setSessions(items => items.map(item => item.id === sessionId ? session : item));
+    return session;
   }, [setSessions]);
 
   const deleteSession = useCallback(async (sessionId: string) => {
@@ -47,5 +59,5 @@ export function useSessionActions({ setSessions }: Options) {
       : item));
   }, [setSessions]);
 
-  return { createSession, setModel, sendMessage, deleteSession, interrupt };
+  return { createSession, setModel, sendMessage, renameSession, deleteSession, interrupt };
 }
