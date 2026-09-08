@@ -53,15 +53,16 @@ function DiffFileView({ file, onOpenFile }: { file: DiffFile; onOpenFile?: (path
   const removals = file.rows.filter(row => row.kind === 'remove').length;
   const badge = file.status === 'added' ? 'A' : file.status === 'deleted' ? 'D' : file.status === 'renamed' ? 'R' : file.status === 'binary' ? 'B' : 'M';
   const target = file.status === 'deleted' ? file.name : file.newName || file.name;
-  const openLine = (line?: number) => onOpenFile?.(target, line);
+  const canOpen = file.status !== 'binary';
+  const openLine = (line?: number) => canOpen && onOpenFile?.(target, line);
   return <section className="diff-file">
     <button className="diff-file-head" onClick={() => setOpen(value => !value)}>{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className={`diff-status-badge diff-status-${file.status}`}>{badge}</span><strong>{file.name}</strong>{file.newName && file.newName !== file.name && <span className="diff-renamed">→ {file.newName}</span>}<span className="diff-count">{additions ? `+${additions}` : ''}{removals ? ` -${removals}` : ''}</span></button>
-    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => <Row key={`${index}-${row.text}`} row={row} onOpen={openLine} />)}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}<button className="diff-open-file" onClick={() => openLine()}>Open {target}</button></div>}
+    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => <Row key={`${index}-${row.text}`} row={row} onOpen={openLine} />)}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}{canOpen && <button className="diff-open-file" onClick={() => openLine()}>Open {target}</button>}</div>}
   </section>;
 }
 
 export function DiffViewer({ diff, onOpenFile }: Props) {
   const files = useMemo(() => parseFiles(diff?.diff), [diff?.diff]);
   if (!files.length) return <div className="diff-empty">No git changes</div>;
-  return <div className="diff-viewer">{diff?.status && <div className="diff-status">{diff.status}</div>}{files.map(file => <DiffFileView key={`${file.name}:${file.newName || ''}`} file={file} onOpenFile={onOpenFile} />)}</div>;
+  return <div className="diff-viewer">{diff?.status && <div className="diff-status">{diff.status}</div>}{diff?.truncated && <div className="diff-truncated">Diff is truncated because it exceeded the size limit.</div>}{files.map(file => <DiffFileView key={`${file.name}:${file.newName || ''}`} file={file} onOpenFile={onOpenFile} />)}</div>;
 }
