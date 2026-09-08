@@ -33,20 +33,23 @@ Agent Web Backend
 
 每个 Agent 独立负责启动参数、native session/thread ID、模型发现、模型选择和原生事件映射。
 
-当前已经开始增量拆分 provider event parser：
+当前结构：
 
 ```text
 agents/
-├── process.rs          # 公共进程生命周期与 IO
+├── process.rs          # 公共进程生命周期、stdin/stdout/stderr
+├── event_parser.rs     # 公共 JSON 字段提取和通用事件映射
 ├── codex.rs
-├── codex_events.rs     # Codex native event 辅助解析
+├── codex_events.rs     # Codex native session / assistant 判断
 ├── pi.rs
-├── pi_events.rs        # Pi native event 辅助解析
+├── pi_events.rs        # Pi message_update 等原生事件
 ├── opencode.rs
 └── openclaw.rs
 ```
 
-`process.rs` 暂时保留已经稳定的兼容解析逻辑，避免一次性重写导致 Session recovery 或已有事件处理回归。下一阶段继续把 Codex/Pi 的 command、tool、thinking、file 判断迁移到各自 event 模块，最终让公共 process 层不包含 Agent-specific JSON 判断。
+`process.rs` 不再直接实现大段 Agent-specific JSON normalization，而是调用公共 event parser，并将 Codex/Pi 的特殊事件交给对应模块。下一阶段继续把 command/tool/thinking/file 的 provider-specific 规则迁移到各自事件模块。
+
+公共 process 层只负责：启动 Agent CLI、维护运行中进程、读取 stdout/stderr、处理进程退出、interrupt，以及把统一事件交给 EventBus。
 
 ## 4. 模型配置与新建对话
 
@@ -117,8 +120,8 @@ http://localhost:8080/api-doc/openapi.json
 4. Codex / Pi Session 恢复
 5. Agent Activity 生命周期化
 6. Workspace / Diff 自动刷新
-7. 增量拆分 provider event parser
-8. OpenCode Adapter
+7. 公共 process 与 provider event parser 拆分
+8. OpenCode 独立事件适配
 9. Claude Code Adapter
-10. OpenClaw Adapter
+10. OpenClaw 独立事件适配
 11. 各 Agent 独立模型发现与配置适配
