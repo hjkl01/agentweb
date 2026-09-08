@@ -1,9 +1,8 @@
 use super::{adapter::{AgentAdapter, AgentConfig, AgentRunResult}, codex_events, event_parser, pi_events};
-use crate::{agents::AgentManager, events::{AgentEvent, EventBus}};
+use crate::events::{AgentEvent, EventBus};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::Row;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, Command}, sync::Mutex};
 
@@ -173,28 +172,4 @@ impl AgentAdapter for ProcessAdapter {
     async fn interrupt(&self, session_id: &str) -> Result<()> { self.interrupt_process(session_id).await }
 }
 
-pub async fn run_session(db: sqlx::SqlitePool, agents: Arc<AgentManager>, session: crate::api::Session, message: String, events: EventBus) {
-    let row = sqlx::query("SELECT kind,command,working_directory,native_session_id,model FROM agents WHERE id=?")
-        .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
-    let Some(row) = row else { events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() }); return; };
-    let kind: String = row.get(0);
-    let command: String = row.get(1);
-    let working_directory: Option<String> = row.get(2);
-    let native_session_id: Option<String> = row.get(3);
-    let model: Option<String> = row.get(4);
-    let process_kind = match kind.as_str() { "codex" => ProcessKind::Codex, "pi" => ProcessKind::Pi, "opencode" => ProcessKind::OpenCode, _ => ProcessKind::Generic };
-    let config = AgentConfig { id: kind.clone(), command, working_directory, native_session_id, runtime_path: None, model };
-    let adapter = agents.adapter(&kind).await;
-    match adapter.send_message(&config, &session.id, &message, &events).await {
-        Ok(result) => {
-            let _ = sqlx::query("UPDATE sessions SET native_session_id=?,status='idle',updated_at=? WHERE id=?")
-                .bind(result.native_session_id).bind(chrono::Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
-        }
-        Err(error) => {
-            let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?")
-                .bind(chrono::Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
-            events.publish(AgentEvent::Error { session_id: session.id, message: error.to_string() });
-        }
-    }
-    let _ = process_kind;
-}
+pub use super::session::run_session;
