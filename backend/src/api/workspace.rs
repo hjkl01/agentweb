@@ -4,6 +4,9 @@ use axum::{extract::{Path, State}, http::StatusCode, Json};
 use std::path::{Path as FsPath, PathBuf};
 use tokio::{fs, process::Command};
 
+const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_DIFF_TOTAL_BYTES: usize = 4 * 1024 * 1024;
+
 async fn workspace_root(path: &str) -> Result<PathBuf, StatusCode> {
     fs::canonicalize(path).await.map_err(|_| StatusCode::NOT_FOUND)
 }
@@ -48,16 +51,22 @@ pub async fn workspace_diff(Path(id): Path<String>, State(s): State<AppState>) -
     let output = Command::new("git").arg("-C").arg(&root).args(["diff", "--no-ext-diff", "--binary"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     if !output.status.success() { return Err(StatusCode::BAD_GATEWAY); }
     let mut diff = String::from_utf8_lossy(&output.stdout).into_owned();
+    if diff.len() > MAX_DIFF_TOTAL_BYTES { diff.truncate(MAX_DIFF_TOTAL_BYTES); }
 
     let untracked = Command::new("git").arg("-C").arg(&root).args(["ls-files", "--others", "--exclude-standard"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     if untracked.status.success() {
         for relative in String::from_utf8_lossy(&untracked.stdout).lines().filter(|line| !line.trim().is_empty()) {
+            if diff.len() >= MAX_DIFF_TOTAL_BYTES { break; }
             let path = root.join(relative);
             let metadata = match fs::metadata(&path).await { Ok(value) => value, Err(_) => continue };
-            if !metadata.is_file() { continue; }
-            let content = match fs::read_to_string(&path).await { Ok(value) => value, Err(_) => continue };
+            if !metadata.is_file() || metadata.len() > MAX_DIFF_FILE_BYTES { continue; }
+            let bytes = match fs::read(&path).await { Ok(value) => value, Err(_) => continue };
+            if bytes.contains(&0) { continue; }
+            let content = String::from_utf8_lossy(&bytes);
             let lines = content.lines().map(|line| format!("+{line}")).collect::<Vec<_>>();
-            diff.push_str(&format!("diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n@@ -0,0 +1,{} @@\n{}\n", lines.len(), lines.join("\n")));
+            let block = format!("diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n@@ -0,0 +1,{} @@\n{}\n", lines.len(), lines.join("\n"));
+            let remaining = MAX_DIFF_TOTAL_BYTES.saturating_sub(diff.len());
+            diff.push_str(&block[..block.len().min(remaining)]);
         }
     }
     Ok(Json(serde_json::json!({ "status": "ok", "diff": diff })))
