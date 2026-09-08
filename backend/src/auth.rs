@@ -5,19 +5,17 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-fn verify(state: &AppState, encoded: &str) -> impl std::future::Future<Output = bool> + '_ {
-    async move {
-        let Ok(decoded) = STANDARD.decode(encoded) else { return false; };
-        let Ok(credentials) = String::from_utf8(decoded) else { return false; };
-        let Some((username, password)) = credentials.split_once(':') else { return false; };
-        let Some(stored_hash) = sqlx::query("SELECT password_hash FROM users WHERE username=?").bind(username).fetch_optional(&state.db).await.ok().flatten().map(|row| row.get::<String, _>(0)) else { return false; };
-        format!("{:x}", Sha256::digest(password.as_bytes())) == stored_hash
-    }
+async fn verify(state: &AppState, encoded: &str) -> bool {
+    let Ok(decoded) = STANDARD.decode(encoded) else { return false; };
+    let Ok(credentials) = String::from_utf8(decoded) else { return false; };
+    let Some((username, password)) = credentials.split_once(':') else { return false; };
+    let Some(stored_hash) = sqlx::query("SELECT password_hash FROM users WHERE username=?").bind(username).fetch_optional(&state.db).await.ok().flatten().map(|row| row.get::<String, _>(0)) else { return false; };
+    format!("{:x}", Sha256::digest(password.as_bytes())) == stored_hash
 }
 
 fn unauthorized() -> Response { (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, r#"Basic realm="Agent Web""#)], "Authentication required").into_response() }
 fn credentials(request: &Request<Body>) -> Option<String> {
-    if let Some(value) = request.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Basic ")) { return Some(v.to_owned()); }
+    if let Some(value) = request.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Basic ")) { return Some(value.to_owned()); }
     let cookie = request.headers().get(header::COOKIE).and_then(|v| v.to_str().ok())?;
     cookie.split(';').map(str::trim).find_map(|item| item.strip_prefix("agentweb_auth=")).map(str::to_owned)
 }

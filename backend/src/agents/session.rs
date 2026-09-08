@@ -1,7 +1,6 @@
 use super::{adapter::AgentRunError, AgentManager};
 use crate::{api::{build_agent_config, Session}, events::{AgentEvent, EventBus}};
 use chrono::Utc;
-use sqlx::Row;
 use std::sync::Arc;
 use tokio::time::{self, Duration};
 
@@ -66,7 +65,7 @@ pub async fn run_session(db: sqlx::SqlitePool, agents: Arc<AgentManager>, sessio
         Ok(result) => {
             persist_task.abort();
             let now = Utc::now().to_rfc3339();
-            let updated = sqlx::query("UPDATE sessions SET native_session_id=?,status='idle',updated_at=? WHERE id=? AND status='running'")
+            let updated = sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',updated_at=? WHERE id=? AND status='running'")
                 .bind(&result.native_session_id).bind(&now).bind(&session.id).execute(&db).await;
             if updated.map(|r| r.rows_affected() == 1).unwrap_or(false) && !result.assistant_text.is_empty() {
                 let _ = sqlx::query("UPDATE messages SET content=? WHERE id=?")
