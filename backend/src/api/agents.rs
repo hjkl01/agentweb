@@ -1,4 +1,4 @@
-use super::runtime::{build_agent_config, detect_agent_version, resolve_agent_binary};
+use super::runtime::{agent_runtime_label, build_agent_config, detect_agent_version, resolve_agent_binary};
 use crate::{agents::models::AgentModel, state::AppState};
 use axum::{extract::{Path, State}, http::StatusCode, Json};
 use chrono::Utc;
@@ -35,14 +35,12 @@ pub struct CreateAgent {
 }
 
 pub async fn create_agent(State(s): State<AppState>, Json(v): Json<CreateAgent>) -> Result<Json<Agent>, StatusCode> {
-    if v.name.trim().is_empty() || v.kind.trim().is_empty() || v.command.trim().is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    if v.name.trim().is_empty() || v.kind.trim().is_empty() || v.command.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     sqlx::query("INSERT INTO agents(id,name,kind,command,working_directory,installed,created_at,updated_at) VALUES(?,?,?,?,?,0,?,?)")
-        .bind(&id).bind(&v.name).bind(&v.kind).bind(&v.command).bind(&v.working_directory)
-        .bind(&now).bind(&now).execute(&s.db).await.map_err(|_| StatusCode::CONFLICT)?;
+        .bind(&id).bind(&v.name).bind(&v.kind).bind(&v.command).bind(&v.working_directory).bind(&now).bind(&now)
+        .execute(&s.db).await.map_err(|_| StatusCode::CONFLICT)?;
     Ok(Json(Agent { id, name: v.name, kind: v.kind, command: v.command, working_directory: v.working_directory, installed: false, version: None }))
 }
 
@@ -57,17 +55,9 @@ pub struct AgentStatus {
 
 pub async fn agent_status(Path(id): Path<String>, State(s): State<AppState>) -> Json<AgentStatus> {
     let binary = resolve_agent_binary(&s.db, &id).await;
-    let version = match binary.as_deref() {
-        Some(path) => detect_agent_version(path).await,
-        None => None,
-    };
-    Json(AgentStatus {
-        id,
-        installed: version.is_some(),
-        version,
-        path: binary.map(|p| p.to_string_lossy().into_owned()),
-        runtime: None,
-    })
+    let version = match binary.as_deref() { Some(path) => detect_agent_version(path).await, None => None };
+    let runtime = if version.is_some() { agent_runtime_label(&id, &s.db).await } else { None };
+    Json(AgentStatus { id, installed: version.is_some(), version, path: binary.map(|p| p.to_string_lossy().into_owned()), runtime })
 }
 
 pub async fn agent_models(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<AgentModel>>, StatusCode> {
