@@ -11,6 +11,46 @@ function parseHunk(text: string) {
   return match ? { oldLine: Number(match[1]), newLine: Number(match[2]) } : undefined;
 }
 
+function unquoteGitPath(value: string) {
+  if (!value.startsWith('"') || !value.endsWith('"')) return value;
+  const body = value.slice(1, -1);
+  let result = '';
+  for (let i = 0; i < body.length; i += 1) {
+    if (body[i] !== '\\') { result += body[i]; continue; }
+    const next = body[++i];
+    if (next === 'n') result += '\n';
+    else if (next === 't') result += '\t';
+    else if (next === 'r') result += '\r';
+    else if (next === '\\' || next === '"') result += next;
+    else if (/[0-7]/.test(next || '')) {
+      let octal = next;
+      while (octal.length < 3 && /[0-7]/.test(body[i + 1] || '')) octal += body[++i];
+      result += String.fromCharCode(parseInt(octal, 8));
+    } else result += next || '';
+  }
+  return result;
+}
+
+function parseGitHeader(line: string) {
+  const prefix = 'diff --git ';
+  if (!line.startsWith(prefix)) return undefined;
+  const value = line.slice(prefix.length);
+  let quote = false;
+  let escaped = false;
+  let separator = -1;
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '"') { quote = !quote; continue; }
+    if (!quote && char === ' ' && value.startsWith('b/', i + 1)) { separator = i; break; }
+  }
+  if (separator < 0) return undefined;
+  const oldPath = unquoteGitPath(value.slice(0, separator)).replace(/^a\//, '');
+  const newPath = unquoteGitPath(value.slice(separator + 1)).replace(/^b\//, '');
+  return { oldPath, newPath };
+}
+
 function parseFiles(text?: string): DiffFile[] {
   if (!text?.trim()) return [];
   const files: DiffFile[] = [];
@@ -19,8 +59,8 @@ function parseFiles(text?: string): DiffFile[] {
   let newLine = 0;
   for (const line of text.split('\n')) {
     if (line.startsWith('diff --git ')) {
-      const match = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-      current = { name: match?.[1] || line.slice(11), newName: match?.[2], rows: [], status: 'modified' };
+      const header = parseGitHeader(line);
+      current = { name: header?.oldPath || line.slice(11), newName: header?.newPath, rows: [], status: 'modified' };
       files.push(current); continue;
     }
     if (!current) continue;
