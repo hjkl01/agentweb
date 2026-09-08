@@ -33,7 +33,7 @@ export function WorkspacePanel({ current, files, fileFilter, selectedFile, diff,
         <div className="file-search"><Search size={14} /><input value={fileFilter} onChange={event => onFilterChange(event.target.value)} placeholder="Filter files" /></div>
         <FileTree files={files} filter={fileFilter} onOpenFile={onOpenFile} />
       </>}
-      {tab === 'diff' && <DiffViewer diff={diff} />}
+      {tab === 'diff' && <DiffViewer diff={diff} onOpenFile={path => { onSelectTab('files'); onOpenFile(path); }} />}
       {selectedFile && <div className="preview">
         <div className="preview-head"><div><strong>{selectedFile.path}</strong><small>File preview</small></div><button className="icon-button" onClick={onCloseFile}><X size={15} /></button></div>
         <CodePreview file={selectedFile} />
