@@ -9,7 +9,7 @@ mod state;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::{net::SocketAddr, path::Path, str::FromStr};
 use tower_http::services::ServeDir;
 use utoipa::OpenApi;
