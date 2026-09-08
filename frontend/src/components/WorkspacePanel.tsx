@@ -1,4 +1,5 @@
 import { Folder, GitCompare, RefreshCw, Search, X } from 'lucide-react';
+import { DiffViewer } from './DiffViewer';
 import { FileTree } from './FileTree';
 import type { FileItem, Session, WorkspaceDiff, WorkspaceFile } from '../types';
 
@@ -31,7 +32,7 @@ export function WorkspacePanel({ current, files, fileFilter, selectedFile, diff,
         <div className="file-search"><Search size={14} /><input value={fileFilter} onChange={event => onFilterChange(event.target.value)} placeholder="Filter files" /></div>
         <FileTree files={files} filter={fileFilter} onOpenFile={onOpenFile} />
       </>}
-      {tab === 'diff' && <pre className="diff">{diff?.status ? `${diff.status}\n` : ''}{diff?.diff || 'No git diff'}</pre>}
+      {tab === 'diff' && <DiffViewer diff={diff} />}
       {selectedFile && <div className="preview">
         <div className="preview-head"><div><strong>{selectedFile.path}</strong><small>File preview</small></div><button className="icon-button" onClick={onCloseFile}><X size={15} /></button></div>
         <pre>{selectedFile.content}</pre>
