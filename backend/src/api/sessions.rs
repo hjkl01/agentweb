@@ -1,7 +1,7 @@
-use crate::{agents::AgentEvent, events::EventBus, state::AppState};
+use crate::{events::AgentEvent, state::AppState};
 use axum::{extract::{ws::WebSocket, Path, State, WebSocketUpgrade}, http::StatusCode, response::IntoResponse, Json};
 use chrono::Utc;
-use futures_util::SinkExt;
+use futures::SinkExt;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
