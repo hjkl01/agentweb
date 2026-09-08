@@ -24,119 +24,81 @@ pub struct ProcessAdapter {
 }
 
 impl ProcessAdapter {
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 
     fn command_parts(command: &str) -> Result<(String, Vec<String>)> {
         let mut p = command.split_whitespace();
-        let program = p
-            .next()
-            .ok_or_else(|| anyhow!("empty agent command"))?
-            .to_string();
+        let program = p.next().ok_or_else(|| anyhow!("empty agent command"))?.to_string();
         Ok((program, p.map(str::to_owned).collect()))
     }
 
-    pub fn build_command(
-        kind: ProcessKind,
-        config: &AgentConfig,
-        message: &str,
-    ) -> Result<Command> {
+    pub fn build_command(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<Command> {
         let (program, base) = Self::command_parts(&config.command)?;
         let mut c = Command::new(program);
         let mut args = base;
-
         match kind {
             ProcessKind::Codex => {
                 args = if let Some(id) = &config.native_session_id {
-                    vec![
-                        "exec".into(),
-                        "resume".into(),
-                        id.clone(),
-                        "--json".into(),
-                    ]
+                    vec!["exec".into(), "resume".into(), id.clone(), "--json".into()]
                 } else {
                     vec!["exec".into(), "--json".into()]
                 };
-                if let Some(model) = &config.model {
-                    args.extend(["--model".into(), model.clone()]);
-                }
+                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
                 args.push(message.into());
             }
             ProcessKind::OpenCode => {
                 args.push("run".into());
-                if let Some(model) = &config.model {
-                    args.extend(["--model".into(), model.clone()]);
-                }
-                if let Some(id) = &config.native_session_id {
-                    args.extend(["--session".into(), id.clone()]);
-                }
+                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
+                if let Some(id) = &config.native_session_id { args.extend(["--session".into(), id.clone()]); }
                 args.extend([message.into(), "--format".into(), "json".into()]);
             }
             ProcessKind::Pi => {
                 args.extend(["--mode".into(), "json".into()]);
-                if let Some(model) = &config.model {
-                    args.extend(["--model".into(), model.clone()]);
-                }
-                if let Some(id) = &config.native_session_id {
-                    args.extend(["--session".into(), id.clone()]);
-                }
+                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
+                if let Some(id) = &config.native_session_id { args.extend(["--session".into(), id.clone()]); }
                 args.extend(["-p".into(), message.into()]);
             }
             ProcessKind::Generic => args.push(message.into()),
         }
-
         c.args(args);
-        if let Some(dir) = &config.working_directory {
-            c.current_dir(dir);
-        }
+        if let Some(dir) = &config.working_directory { c.current_dir(dir); }
         if let Some(runtime) = &config.runtime_path {
-            let path = format!("{}:{}", runtime, std::env::var("PATH").unwrap_or_default());
-            c.env("PATH", path);
+            c.env("PATH", format!("{}:{}", runtime, std::env::var("PATH").unwrap_or_default()));
         }
-        c.stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         Ok(c)
     }
 
     fn string(v: &Value, keys: &[&str]) -> Option<String> {
-        keys.iter()
-            .find_map(|k| v.get(*k).and_then(Value::as_str).map(str::to_owned))
+        keys.iter().find_map(|k| v.get(*k).and_then(Value::as_str).map(str::to_owned))
     }
 
     fn nested_string(v: &Value, objects: &[&str], keys: &[&str]) -> Option<String> {
-        objects
-            .iter()
-            .find_map(|o| v.get(*o).and_then(|x| Self::string(x, keys)))
+        objects.iter().find_map(|o| v.get(*o).and_then(|x| Self::string(x, keys)))
     }
 
     fn parsed(v: &Value) -> (String, Option<String>, Option<String>, Option<String>) {
         let typ = Self::string(v, &["type", "event", "method"]).unwrap_or_default();
-        let sid =
-            Self::string(v, &["thread_id", "session_id", "sessionId", "sessionID"]).or_else(|| {
-                Self::nested_string(
-                    v,
-                    &["properties", "session", "context"],
-                    &["sessionID", "sessionId", "id"],
-                )
-            });
-        let text =
-            Self::string(v, &["delta", "text", "message", "output", "content"]).or_else(|| {
-                Self::nested_string(
-                    v,
-                    &["item", "part", "message", "content"],
-                    &["delta", "text", "output"],
-                )
-            });
-        let name =
-            Self::string(v, &["tool", "tool_name", "toolName", "name", "command"]).or_else(|| {
-                Self::nested_string(
-                    v,
-                    &["tool", "item", "part"],
-                    &["name", "toolName", "command"],
-                )
-            });
+        let sid = Self::string(v, &["thread_id", "session_id", "sessionId", "sessionID"]).or_else(|| {
+            Self::nested_string(v, &["properties", "session", "context"], &["sessionID", "sessionId", "id"])
+        });
+        let text = Self::string(v, &["delta", "text", "message", "output", "content"]).or_else(|| {
+            Self::nested_string(v, &["item", "part", "message", "content"], &["delta", "text", "output"])
+        });
+        let name = Self::string(v, &["tool", "tool_name", "toolName", "name", "command"]).or_else(|| {
+            Self::nested_string(v, &["tool", "item", "part"], &["name", "toolName", "command"])
+        });
         (typ, sid, text, name)
+    }
+
+    fn native_session_event(kind: ProcessKind, value: &Value, typ: &str) -> bool {
+        let t = typ.to_ascii_lowercase();
+        match kind {
+            ProcessKind::Codex => t == "thread.started" || t == "thread_start" || value.get("thread_id").is_some() && t.contains("thread"),
+            ProcessKind::Pi => t == "session_start" || t == "session.started" || t == "session_starting" || value.get("session_id").is_some() && t.contains("session"),
+            ProcessKind::OpenCode => t == "session.created" || t == "session.created" || (value.get("sessionID").is_some() && t.contains("session")),
+            ProcessKind::Generic => false,
+        }
     }
 
     fn normalize(session_id: &str, v: &Value, line: &str, events: &EventBus) -> Option<String> {
@@ -145,29 +107,16 @@ impl ProcessAdapter {
         let start = t.contains("start") || t == "turn.started";
         let done = t.contains("complete") || t.contains("finish") || t == "turn.completed";
         let tool = name.unwrap_or_else(|| "tool".into());
-
         if t.contains("tool") {
-            if start {
-                events.publish(AgentEvent::ToolStarted { session_id: session_id.into(), tool: tool.clone() });
-            }
-            if let Some(x) = text.clone() {
-                events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool: tool.clone(), output: x });
-            }
-            if done {
-                events.publish(AgentEvent::ToolCompleted { session_id: session_id.into(), tool });
-            }
+            if start { events.publish(AgentEvent::ToolStarted { session_id: session_id.into(), tool: tool.clone() }); }
+            if let Some(x) = text.clone() { events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool: tool.clone(), output: x }); }
+            if done { events.publish(AgentEvent::ToolCompleted { session_id: session_id.into(), tool }); }
             return None;
         }
         if t.contains("command") || t.contains("shell") || t.contains("exec") {
-            if start {
-                events.publish(AgentEvent::CommandStarted { session_id: session_id.into(), command: tool.clone() });
-            }
-            if let Some(x) = text.clone() {
-                events.publish(AgentEvent::CommandOutput { session_id: session_id.into(), output: x });
-            }
-            if done {
-                events.publish(AgentEvent::CommandCompleted { session_id: session_id.into() });
-            }
+            if start { events.publish(AgentEvent::CommandStarted { session_id: session_id.into(), command: tool.clone() }); }
+            if let Some(x) = text.clone() { events.publish(AgentEvent::CommandOutput { session_id: session_id.into(), output: x }); }
+            if done { events.publish(AgentEvent::CommandCompleted { session_id: session_id.into() }); }
             return None;
         }
         if t.contains("reason") || t.contains("think") || t.contains("thought") {
@@ -178,36 +127,18 @@ impl ProcessAdapter {
         }
         if t.contains("file") {
             if let Some(path) = Self::string(v, &["path", "file_path", "filePath"]) {
-                events.publish(if t.contains("creat") {
-                    AgentEvent::FileCreated { session_id: session_id.into(), path }
-                } else if t.contains("delet") {
-                    AgentEvent::FileDeleted { session_id: session_id.into(), path }
-                } else {
-                    AgentEvent::FileModified { session_id: session_id.into(), path }
-                });
+                events.publish(if t.contains("creat") { AgentEvent::FileCreated { session_id: session_id.into(), path } } else if t.contains("delet") { AgentEvent::FileDeleted { session_id: session_id.into(), path } } else { AgentEvent::FileModified { session_id: session_id.into(), path } });
             }
             return None;
         }
         if t == "error" || t.contains("failed") || t.contains("failure") {
-            events.publish(AgentEvent::Error {
-                session_id: session_id.into(),
-                message: Self::string(v, &["message", "error"]).unwrap_or_else(|| line.to_owned()),
-            });
+            events.publish(AgentEvent::Error { session_id: session_id.into(), message: Self::string(v, &["message", "error"]).unwrap_or_else(|| line.to_owned()) });
         }
         text
     }
 
-    pub async fn run(
-        &self,
-        kind: ProcessKind,
-        config: &AgentConfig,
-        session_id: &str,
-        message: &str,
-        events: &EventBus,
-    ) -> Result<AgentRunResult> {
-        if self.processes.lock().await.contains_key(session_id) {
-            return Err(anyhow!("session already has a running agent process"));
-        }
+    pub async fn run(&self, kind: ProcessKind, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
+        if self.processes.lock().await.contains_key(session_id) { return Err(anyhow!("session already has a running agent process")); }
         let mut cmd = Self::build_command(kind, config, message)?;
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take();
@@ -224,8 +155,14 @@ impl ProcessAdapter {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Some(line) = lines.next_line().await? {
                     if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                        let (_, native, _, _) = Self::parsed(&v);
-                        if let Some(n) = native { rr.lock().await.native_session_id = Some(n); }
+                        let (typ, native, _, _) = Self::parsed(&v);
+                        // Only persist the native conversation identifier emitted by
+                        // an explicit session/thread lifecycle event. Once captured,
+                        // later tool/message objects cannot overwrite it with an
+                        // unrelated id field.
+                        if rr.lock().await.native_session_id.is_none() && native.is_some() && Self::native_session_event(kind, &v, &typ) {
+                            rr.lock().await.native_session_id = native;
+                        }
                         if let Some(text) = Self::normalize(&sid, &v, &line, &ev) {
                             let typ = Self::parsed(&v).0.to_ascii_lowercase();
                             if typ.contains("agent_message") || typ.contains("assistant") || typ.contains("text") || typ == "item.completed" || typ == "message_update" || typ == "message.part.updated" {
@@ -264,9 +201,7 @@ impl ProcessAdapter {
     }
 
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
-        if let Some(child) = self.processes.lock().await.remove(session_id) {
-            child.lock().await.kill().await?;
-        }
+        if let Some(child) = self.processes.lock().await.remove(session_id) { child.lock().await.kill().await?; }
         Ok(())
     }
 }
@@ -276,8 +211,5 @@ impl AgentAdapter for ProcessAdapter {
     async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
         self.run(ProcessKind::Generic, config, session_id, message, events).await
     }
-
-    async fn interrupt(&self, session_id: &str) -> Result<()> {
-        self.interrupt_process(session_id).await
-    }
+    async fn interrupt(&self, session_id: &str) -> Result<()> { self.interrupt_process(session_id).await }
 }
