@@ -36,11 +36,15 @@ const AGENTS: &[(&str, &str, &str, &str, &[&str])] = &[
     ("openclaw", "OpenClaw", "General purpose agent", "npm install -g openclaw", &["Node.js"]),
 ];
 async fn command_exists(command: &str) -> bool { Command::new("which").arg(command).output().await.map(|o| o.status.success()).unwrap_or(false) }
+async fn agent_installed(command: &str) -> bool {
+    if command_exists(command).await { return true; }
+    runtime::detect_installed_node().await.ok().flatten().map(|(version, _)| runtime::node_bin(&version).join(command).is_file()).unwrap_or(false)
+}
 pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
     let mut result = Vec::with_capacity(AGENTS.len());
     for (id, name, description, install_command, requirements) in AGENTS {
         let binary = match *id { "qwen-code" => "qwen", "gemini-cli" => "gemini", other => other };
-        result.push(CatalogItem { id: *id, name: *name, description: *description, installed: command_exists(binary).await, requirements: requirements.to_vec(), install_command: *install_command });
+        result.push(CatalogItem { id: *id, name: *name, description: *description, installed: agent_installed(binary).await, requirements: requirements.to_vec(), install_command: *install_command });
     }
     Json(result)
 }
