@@ -93,10 +93,21 @@ pub struct SendMessage { pub message: String }
 
 pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SendMessage>) -> Result<Json<serde_json::Value>, StatusCode> {
     if v.message.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
+    let now = Utc::now().to_rfc3339();
+    let claimed = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=? AND status!='running'")
+        .bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if claimed.rows_affected() == 0 {
+        let _ = load_session(&s.db, &id).await?;
+        return Err(StatusCode::CONFLICT);
+    }
     let session = load_session(&s.db, &id).await?;
-    if session.status == "running" { return Err(StatusCode::CONFLICT); }
-    sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)")
-        .bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(Utc::now().to_rfc3339()).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Err(_) = sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)")
+        .bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(&now).execute(&s.db).await
+    {
+        let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?")
+            .bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
     let events = s.events.clone();
     let db = s.db.clone();
     let agents = s.agents.clone();
