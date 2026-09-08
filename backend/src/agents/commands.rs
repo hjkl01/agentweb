@@ -1,6 +1,6 @@
 use super::adapter::AgentConfig;
 use anyhow::{anyhow, Result};
-use std::process::Command;
+use tokio::process::Command;
 
 #[derive(Clone, Copy)]
 pub enum ProcessKind { Codex, OpenCode, Pi, Generic }
