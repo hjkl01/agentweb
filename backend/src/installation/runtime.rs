@@ -6,7 +6,7 @@ use tokio::{fs, process::Command};
 pub fn runtime_root() -> PathBuf {
     std::env::var("AGENTWEB_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("./runtimes/node"))
+        .unwrap_or_else(|_| PathBuf::from("./data/runtimes/node"))
 }
 
 #[derive(Debug, Deserialize)]
