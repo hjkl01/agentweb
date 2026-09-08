@@ -1,4 +1,4 @@
-import { Activity, Brain, Check, Circle, FileText, LoaderCircle, Terminal, Wrench } from 'lucide-react';
+import { Activity, Brain, Circle, FileText, Terminal, Wrench } from 'lucide-react';
 import type { ActivityItem } from '../types';
 
 type Props = { items: ActivityItem[]; open: boolean; onToggle: () => void };
@@ -11,18 +11,12 @@ function icon(type: string) {
   return <Circle size={8} />;
 }
 
-function state(type: string) {
-  if (type.endsWith('.completed') || type.startsWith('file.')) return <Check size={12} />;
-  if (type.endsWith('.started')) return <LoaderCircle className="activity-spin" size={12} />;
-  return null;
-}
-
 function ActivityRow({ item }: { item: ActivityItem }) {
   return (
     <div className="activity-item" key={item.id}>
       <span className="activity-icon">{icon(item.type)}</span>
       <div className="activity-body">
-        <div className="activity-label"><span>{item.label}</span><span>{state(item.type)}</span></div>
+        <div className="activity-label"><span>{item.label}</span></div>
         {item.detail && <pre>{item.detail}</pre>}
       </div>
     </div>
@@ -44,7 +38,6 @@ export function AgentActivity({ items, open, onToggle }: Props) {
         <div className="activity-summary">
           <span className="activity-icon"><Brain size={13} /></span>
           <span>Thinking</span>
-          <span className="activity-summary-state">{state(thinking.type) || <LoaderCircle className="activity-spin" size={12} />}</span>
         </div>
       )}
       {open && <div className="activity-list">{items.map(item => <ActivityRow key={item.id} item={item} />)}</div>}
