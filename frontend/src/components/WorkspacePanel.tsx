@@ -24,7 +24,7 @@ export function WorkspacePanel({ current, files, fileFilter, selectedFile, selec
     <div className="workspace-head"><div><strong>Workspace</strong>{current && <small>{current.workspace}</small>}</div><button className="icon-button" onClick={onRefresh} title="Refresh"><RefreshCw size={15} /></button></div>
     <div className="tabs"><button className={tab === 'files' ? 'active' : ''} onClick={() => onSelectTab('files')}><Folder size={14} /> Files</button><button className={tab === 'diff' ? 'active' : ''} onClick={() => onSelectTab('diff')}><GitCompare size={14} /> Diff{diff?.truncated && <span className="tab-warning">!</span>}</button></div>
     {tab === 'files' && <><div className="file-search"><Search size={14} /><input value={fileFilter} onChange={event => onFilterChange(event.target.value)} placeholder="Filter files" /></div><FileTree files={files} filter={fileFilter} onOpenFile={path => onOpenFile(path)} /></>}
-    {tab === 'diff' && <DiffViewer diff={diff} onOpenFile={(path, line) => { onSelectTab('files'); onOpenFile(path, line); }} />}
+    {tab === 'diff' && <DiffViewer diff={diff} />}
     {selectedFile && <Preview file={selectedFile} line={selectedLine} onClose={onCloseFile} />}
   </aside>;
 }
