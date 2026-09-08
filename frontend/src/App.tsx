@@ -22,7 +22,7 @@ export function App() {
   const [sessionMenu, setSessionMenu] = useState<string>();
   const refs: ComposerRefs = { chat: useRef<HTMLElement>(null), textarea: useRef<HTMLTextAreaElement>(null) };
   const session = useSession(active);
-  const workspace = useWorkspace(active);
+  const workspace = useWorkspace(active, session.workspaceRevision);
   const installation = useAgentInstallation(agents, nodeVersion, node, refreshAgents);
   const current = useMemo(() => session.sessions.find(item => item.id === active), [session.sessions, active]);
   const currentAgent = useMemo(() => agents.find(item => item.id === current?.agent_id), [agents, current?.agent_id]);
@@ -33,10 +33,8 @@ export function App() {
   useEffect(() => { if (refs.chat.current) refs.chat.current.scrollTop = refs.chat.current.scrollHeight; }, [session.messages, session.stream, session.activity]);
 
   const createChat = async (agentId: string, model?: string) => {
-    try {
-      const created = await session.createSession(agentId, model);
-      setActive(created.id); setNewChatOpen(false); setCatalogOpen(false);
-    } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
+    try { const created = await session.createSession(agentId, model); setActive(created.id); setNewChatOpen(false); setCatalogOpen(false); }
+    catch (error) { alert(error instanceof Error ? error.message : String(error)); }
   };
 
   const send = async () => {
