@@ -33,59 +33,91 @@ async fn command_output(config: &AgentConfig, extra: &[&str]) -> Result<String> 
     }
     let output = command.output().await?;
     if !output.status.success() {
-        return Err(anyhow::anyhow!("model discovery command failed"));
+        return Err(anyhow::anyhow!(
+            "model discovery command failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn parse_model_lines(output: &str, source: &str) -> Vec<AgentModel> {
+/// Parse the human-readable model table emitted by `pi --list-models`.
+///
+/// Pi intentionally owns its model registry and authentication state. We ask
+/// Pi itself instead of reading provider credentials or duplicating its registry.
+fn parse_pi_models(output: &str) -> Vec<AgentModel> {
     let mut result = Vec::new();
     for raw in output.lines() {
         let line = raw.replace('\u{1b}', "");
-        let line = line.trim().trim_matches(|c: char| c == '[' || c == ']' || c == '|');
-        if line.is_empty() || line.contains("Available models") || line.starts_with("Provider") {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Provider") || line.starts_with("Model") {
             continue;
         }
-        let candidate = line
-            .split_whitespace()
-            .find(|token| token.contains('/') && !token.starts_with('-'))
-            .unwrap_or(line.split_whitespace().next().unwrap_or(""))
-            .trim_matches('|')
-            .trim();
-        if candidate.is_empty() || candidate.len() > 200 || candidate.contains(':') && candidate.ends_with(':') {
+
+        // Typical rows are: provider  model  context ...
+        let mut columns = line.split_whitespace();
+        let Some(provider) = columns.next() else { continue };
+        let Some(model) = columns.next() else { continue };
+        if provider.starts_with('-') || model.starts_with('-') {
             continue;
         }
-        let provider = candidate.split('/').next().map(str::to_owned);
-        if result.iter().any(|m: &AgentModel| m.id == candidate) {
+
+        let id = if model.contains('/') {
+            model.to_owned()
+        } else {
+            format!("{provider}/{model}")
+        };
+        if result.iter().any(|m: &AgentModel| m.id == id) {
             continue;
         }
         result.push(AgentModel {
-            id: candidate.to_owned(),
-            name: candidate.to_owned(),
-            provider,
-            source: source.to_owned(),
+            id: id.clone(),
+            name: model.to_owned(),
+            provider: Some(provider.to_owned()),
+            source: "pi --list-models".into(),
         });
     }
     result
 }
 
+/// Codex reads models from CODEX_HOME/config.toml (or ~/.codex/config.toml).
+///
+/// Do not assume the model is only at the top level: Codex configurations can
+/// contain profiles/sections, so collect every `model = "..."` entry while
+/// deliberately ignoring unrelated TOML values.
 fn codex_config_paths() -> Vec<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from);
-    let root = env::var_os("CODEX_HOME").map(PathBuf::from).or(home.map(|h| h.join(".codex")));
-    root.into_iter().map(|p| p.join("config.toml")).collect()
+    let mut paths = Vec::new();
+    if let Some(path) = env::var_os("CODEX_HOME") {
+        paths.push(PathBuf::from(path).join("config.toml"));
+    }
+    if let Some(home) = env::var_os("HOME") {
+        paths.push(PathBuf::from(home).join(".codex/config.toml"));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn codex_config_models() -> Vec<AgentModel> {
     let mut result = Vec::new();
     for path in codex_config_paths() {
-        let Ok(text) = fs::read_to_string(path) else { continue };
+        let Ok(text) = fs::read_to_string(&path) else { continue };
         for line in text.lines() {
             let trimmed = line.trim();
-            if !trimmed.starts_with("model") || !trimmed.contains('=') {
+            if trimmed.starts_with('#') || !trimmed.starts_with("model") || !trimmed.contains('=') {
                 continue;
             }
-            let Some(value) = trimmed.split_once('=').map(|(_, v)| v.trim()) else { continue };
-            let value = value.trim_matches('"').trim_matches('\'');
+            let Some((key, value)) = trimmed.split_once('=') else { continue };
+            if key.trim() != "model" {
+                continue;
+            }
+            let value = value
+                .split('#')
+                .next()
+                .unwrap_or(value)
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
             if value.is_empty() || result.iter().any(|m: &AgentModel| m.id == value) {
                 continue;
             }
@@ -93,7 +125,7 @@ fn codex_config_models() -> Vec<AgentModel> {
                 id: value.to_owned(),
                 name: value.to_owned(),
                 provider: Some("openai".into()),
-                source: "codex config.toml".into(),
+                source: format!("{}", path.display()),
             });
         }
     }
@@ -101,11 +133,12 @@ fn codex_config_models() -> Vec<AgentModel> {
 }
 
 pub async fn discover(kind: &str, config: &AgentConfig) -> Result<Vec<AgentModel>> {
-    let models = match kind {
-        "opencode" => parse_model_lines(&command_output(config, &["models"]).await?, "opencode models"),
-        "pi" => parse_model_lines(&command_output(config, &["--list-models"]).await?, "pi --list-models"),
-        "codex" => codex_config_models(),
-        _ => Vec::new(),
-    };
-    Ok(models)
+    match kind {
+        // These are the first two adapters with explicit model discovery. Other
+        // agents return an empty list until their own configuration surface is
+        // implemented, rather than pretending their models are compatible.
+        "codex" => Ok(codex_config_models()),
+        "pi" => Ok(parse_pi_models(&command_output(config, &["--list-models"]).await?)),
+        _ => Ok(Vec::new()),
+    }
 }
