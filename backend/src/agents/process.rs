@@ -3,14 +3,17 @@ use crate::events::{AgentEvent, EventBus};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, Command}, sync::Mutex};
 
 #[derive(Clone, Copy)]
 pub enum ProcessKind { Codex, OpenCode, Pi, Generic }
 
 #[derive(Default)]
-pub struct ProcessAdapter { processes: Mutex<HashMap<String, Arc<Mutex<Child>>>> }
+pub struct ProcessAdapter {
+    processes: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
+    interrupted: Mutex<HashSet<String>>,
+}
 
 impl ProcessAdapter {
     pub fn new() -> Self { Self::default() }
@@ -115,6 +118,7 @@ impl ProcessAdapter {
 
     pub async fn run(&self, kind: ProcessKind, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
         if self.processes.lock().await.contains_key(session_id) { return Err(anyhow!("session already has a running agent process")); }
+        self.interrupted.lock().await.remove(session_id);
         let mut command = Self::build_command(kind, config, message)?;
         let mut child_process = command.spawn()?;
         let stdout = child_process.stdout.take();
@@ -149,7 +153,12 @@ impl ProcessAdapter {
         out.await??;
         err.await??;
         self.processes.lock().await.remove(session_id);
+        let was_interrupted = self.interrupted.lock().await.remove(session_id);
         let result = result.lock().await.clone();
+        if was_interrupted {
+            events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
+            return Err(anyhow!("agent process interrupted"));
+        }
         if status.success() {
             events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
             events.publish(AgentEvent::SessionCompleted { session_id: session_id.into() });
@@ -161,7 +170,11 @@ impl ProcessAdapter {
     }
 
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
-        if let Some(child) = self.processes.lock().await.remove(session_id) { child.lock().await.kill().await?; }
+        let child = self.processes.lock().await.get(session_id).cloned();
+        if let Some(child) = child {
+            self.interrupted.lock().await.insert(session_id.to_owned());
+            child.lock().await.kill().await?;
+        }
         Ok(())
     }
 }
