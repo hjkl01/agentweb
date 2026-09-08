@@ -27,13 +27,24 @@ export function useSessionEvents(options: Options) {
 
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${protocol}://${location.host}/api/sessions/${active}/events`);
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleWorkspaceRefresh = () => {
+      options.setWorkspaceRevision(value => value + 1);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        api<FileItem[]>(`/sessions/${active}/files`).then(options.setFiles).catch(console.error);
+      }, 120);
+    };
     ws.onerror = () => options.setError('WebSocket 连接失败，请确认后端正在运行。');
-    ws.onmessage = event => handleEvent(event.data, active, options);
-    return () => ws.close();
+    ws.onmessage = event => handleEvent(event.data, active, options, scheduleWorkspaceRefresh);
+    return () => {
+      ws.close();
+      if (refreshTimer) clearTimeout(refreshTimer);
+    };
   }, [active]);
 }
 
-function handleEvent(raw: string, active: string, options: Options) {
+function handleEvent(raw: string, active: string, options: Options, refreshWorkspace: () => void) {
   let event: AgentEvent;
   try { event = JSON.parse(raw) as AgentEvent; } catch { return; }
   const data = event.data || {};
@@ -45,13 +56,10 @@ function handleEvent(raw: string, active: string, options: Options) {
 
   const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'agent.error' || event.type === 'error';
   if (activityEvent) { options.setActivity(items => applyAgentEvent(items, event)); options.setActivityOpen(true); }
-  if (event.type.startsWith('file.')) {
-    options.setWorkspaceRevision(value => value + 1);
-    api<FileItem[]>(`/sessions/${active}/files`).then(options.setFiles).catch(console.error);
-  }
+  if (event.type.startsWith('file.')) refreshWorkspace();
   if (event.type === 'session.completed' || event.type === 'session.error') {
     api<ChatMessage[]>(`/sessions/${active}/messages`).then(options.setMessages).catch(console.error);
-    api<FileItem[]>(`/sessions/${active}/files`).then(options.setFiles).catch(console.error);
+    refreshWorkspace();
     options.refreshSessions().catch(console.error);
   }
 }
