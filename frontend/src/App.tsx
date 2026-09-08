@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { useAgentRuntime } from './hooks/useAgentRuntime';
 import { useAgentInstallation } from './hooks/useAgentInstallation';
 import { useSession } from './hooks/useSession';
@@ -10,8 +11,8 @@ import { AgentCatalog } from './components/AgentCatalog';
 import { NewChatDialog } from './components/NewChatDialog';
 
 type ComposerRefs = {
-  chat: React.RefObject<HTMLElement | null>;
-  textarea: React.RefObject<HTMLTextAreaElement | null>;
+  chat: RefObject<HTMLElement | null>;
+  textarea: RefObject<HTMLTextAreaElement | null>;
 };
 
 export function App() {
@@ -77,9 +78,7 @@ export function App() {
   };
 
   const stop = () => {
-    if (active) {
-      session.interrupt(active).catch(error => console.error('Failed to interrupt session:', error));
-    }
+    if (active) session.interrupt(active).catch(error => console.error('Failed to interrupt session:', error));
   };
 
   const autoResize = () => {
@@ -93,31 +92,25 @@ export function App() {
     <div className="app" onClick={() => sessionMenu && setSessionMenu(undefined)}>
       {startupError && (
         <div className="startup-error" role="alert">
-          <strong>连接或运行异常</strong>
-          <span>{startupError}</span>
+          <strong>连接或运行异常</strong><span>{startupError}</span>
           <button onClick={() => { refreshAgents(); session.refreshSessions(); workspace.refresh(); }}>重试</button>
         </div>
       )}
-
       <Sidebar agents={agents} sessions={session.sessions} active={active} sessionMenu={sessionMenu}
         onNewChat={() => setNewChatOpen(true)} onSelectSession={setActive}
         onSessionMenu={id => setSessionMenu(value => value === id ? undefined : id)}
         onDeleteSession={deleteSession} onOpenCatalog={() => setCatalogOpen(true)} />
-
       <ChatPanel current={current} currentAgent={currentAgent} active={active} messages={session.messages}
         stream={session.stream} activity={session.activity} activityOpen={session.activityOpen} input={input}
         textareaRef={refs.textarea} chatRef={refs.chat} onInputChange={setInput} onSend={send}
         onToggleActivity={() => session.setActivityOpen(value => !value)} onStop={stop}
         onNewChat={() => setNewChatOpen(true)} onAutoResize={autoResize} />
-
       <WorkspacePanel current={current} files={workspace.files} fileFilter={workspace.filter}
         selectedFile={workspace.selectedFile} diff={workspace.diff} tab={workspace.tab}
         onFilterChange={workspace.setFilter} onSelectTab={workspace.selectTab} onRefresh={workspace.refresh}
         onOpenFile={workspace.openFile} onCloseFile={() => workspace.setSelectedFile(undefined)} />
-
       <NewChatDialog open={newChatOpen} agents={agents} onClose={() => setNewChatOpen(false)}
         onSelectAgent={createChat} onManageAgents={() => { setNewChatOpen(false); setCatalogOpen(true); }} />
-
       <AgentCatalog open={catalogOpen} agents={agents} node={node} nodeVersion={nodeVersion}
         installingNode={installation.installingNode} installingAgent={installation.installingAgent} nodeGroups={nodeGroups}
         onClose={() => setCatalogOpen(false)} onNodeVersionChange={setNodeVersion}
