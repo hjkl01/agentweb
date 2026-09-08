@@ -2,6 +2,7 @@ pub mod adapter;
 pub mod codex;
 pub mod codex_events;
 pub mod definition;
+pub mod event_parser;
 pub mod generic;
 pub mod models;
 pub mod openclaw;
