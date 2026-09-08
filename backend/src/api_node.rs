@@ -20,29 +20,14 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
 
 pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let requested = v.version.trim();
-    if requested.is_empty() {
-        return Err(error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_REQUIRED", "Node.js version is required"));
-    }
-
-    let available = runtime::available_node_versions().await.map_err(|error| {
-        error_response(StatusCode::BAD_GATEWAY, "NODE_VERSION_LIST_FAILED", format!("failed to fetch Node.js versions: {error:#}"))
-    })?;
-    let version = available
-        .iter()
-        .find(|item| *item == requested || item.starts_with(&format!("{requested}.")))
-        .cloned()
-        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_UNSUPPORTED", format!("unsupported Node.js version: {requested}")))?;
-
-    runtime::install_node(&version, |message| tracing::info!(message = %message, "Node.js installation")).await.map_err(|error| {
-        error_response(StatusCode::BAD_GATEWAY, "NODE_INSTALL_FAILED", format!("failed to install Node.js {version}: {error:#}"))
-    })?;
-
+    if requested.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_REQUIRED", "Node.js version is required")); }
+    let available = runtime::available_node_versions().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "NODE_VERSION_LIST_FAILED", format!("failed to fetch Node.js versions: {error:#}")))?;
+    let version = available.iter().find(|item| *item == requested || item.starts_with(&format!("{requested}."))).cloned().ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_UNSUPPORTED", format!("unsupported Node.js version: {requested}")))?;
+    runtime::install_node(&version, |message| tracing::info!(message = %message, "Node.js installation")).await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "NODE_INSTALL_FAILED", format!("failed to install Node.js {version}: {error:#}")))?;
     Ok(Json(serde_json::json!({ "status": "installed", "version": version })))
 }
 
-fn error_response(status: StatusCode, code: &str, message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": { "code": code, "message": message.into() } })))
-}
+fn error_response(status: StatusCode, code: &str, message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) { (status, Json(serde_json::json!({ "error": { "code": code, "message": message.into() } }))) }
 
 #[derive(Serialize)] pub struct CatalogItem { pub id: &'static str, pub name: &'static str, pub description: &'static str, pub installed: bool, pub requirements: Vec<&'static str>, pub install_command: &'static str }
 const AGENTS: &[(&str, &str, &str, &str, &[&str])] = &[
@@ -69,16 +54,27 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
 }
 
 #[derive(Deserialize)] pub struct CustomAgentInstall { pub command: String }
-pub async fn install_custom_agent(Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+pub async fn install_custom_agent(State(s): State<AppState>, Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let command = v.command.trim().to_owned();
     if command.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "INSTALL_COMMAND_REQUIRED", "install command is required")); }
+
+    // Never rely on the backend container's /usr/bin/npm. Node.js installed by Agent Web
+    // lives under /data/runtimes/node and must be explicitly added to PATH.
+    let configured = sqlx::query("SELECT value FROM runtime_settings WHERE key=?")
+        .bind("node_path").fetch_optional(&s.db).await.ok().flatten()
+        .map(|row| row.get::<String, _>(0));
+    let node_bin = runtime::active_node_bin(configured.as_deref()).await.map_err(|error| {
+        error_response(StatusCode::BAD_REQUEST, "NODE_RUNTIME_UNAVAILABLE", format!("Node.js runtime is not ready: {error:#}"))
+    })?;
+    let npm = node_bin.join("npm");
+    if !npm.is_file() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "NPM_NOT_FOUND", format!("npm was not found at {}", npm.display())));
+    }
     let mut process = Command::new("sh");
     process.args(["-lc", &command]);
-    if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
-        let node_bin = runtime::node_bin(&version);
-        let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
-        process.env("PATH", path).env("NPM_CONFIG_PREFIX", runtime::node_home(&version));
-    }
+    let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
+    process.env("PATH", path).env("NPM_CONFIG_PREFIX", node_bin.parent().unwrap_or(node_bin.as_path()));
+
     let output = process.output().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "AGENT_INSTALL_START_FAILED", format!("failed to start install command: {error:#}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().chars().take(3000).collect::<String>();
