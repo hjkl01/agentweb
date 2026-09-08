@@ -32,9 +32,10 @@ export function ChatPanel({ current, currentAgent, active, models, modelLoading,
         {active && <div className="top-actions">
           {models.length > 0 && <select value={current?.model || ''} disabled={modelLoading || current?.status === 'running'} onChange={event => onModelChange(event.target.value || undefined)} aria-label="Model">
             {!current?.model && <option value="">默认模型</option>}
-            {models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+            {models.map(model => <option key={model.id} value={model.id}>{model.provider ? `${model.provider} / ${model.name}` : model.name}</option>)}
           </select>}
           {models.length === 0 && !modelLoading && <span className="model-empty">Agent 默认模型</span>}
+          {modelLoading && <span className="model-empty">加载模型…</span>}
           <span className={`run-state ${current?.status === 'running' ? 'running' : ''}`}>{current?.status || 'ready'}</span>
           {current?.status === 'running' && <button className="stop" onClick={onStop}><Square size={13} /> Stop</button>}
         </div>}
