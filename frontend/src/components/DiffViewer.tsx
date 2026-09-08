@@ -6,6 +6,8 @@ type Props = { diff?: WorkspaceDiff };
 type DiffRow = { kind: 'hunk' | 'add' | 'remove' | 'context' | 'meta' | 'binary'; text: string; oldLine?: number; newLine?: number };
 type DiffFile = { name: string; newName?: string; rows: DiffRow[]; status: 'added' | 'deleted' | 'modified' | 'renamed' | 'binary' };
 
+type InlinePart = { text: string; changed: boolean };
+
 function parseHunk(text: string) {
   const match = text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
   return match ? { oldLine: Number(match[1]), newLine: Number(match[2]) } : undefined;
@@ -81,9 +83,29 @@ function parseFiles(text?: string): DiffFile[] {
   return files;
 }
 
-function Row({ row }: { row: DiffRow }) {
+function inlineDiff(oldText: string, newText: string): { oldParts: InlinePart[]; newParts: InlinePart[] } {
+  let prefix = 0;
+  while (prefix < oldText.length && prefix < newText.length && oldText[prefix] === newText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < oldText.length - prefix && suffix < newText.length - prefix && oldText[oldText.length - suffix - 1] === newText[newText.length - suffix - 1]) suffix += 1;
+  const oldMiddle = oldText.slice(prefix, oldText.length - suffix || undefined);
+  const newMiddle = newText.slice(prefix, newText.length - suffix || undefined);
+  const before = oldText.slice(0, prefix);
+  const after = suffix ? oldText.slice(oldText.length - suffix) : '';
+  const newAfter = suffix ? newText.slice(newText.length - suffix) : '';
+  return {
+    oldParts: [{ text: before, changed: false }, ...(oldMiddle ? [{ text: oldMiddle, changed: true }] : []), ...(after ? [{ text: after, changed: false }] : [])],
+    newParts: [{ text: newText.slice(0, prefix), changed: false }, ...(newMiddle ? [{ text: newMiddle, changed: true }] : []), ...(newAfter ? [{ text: newAfter, changed: false }] : [])],
+  };
+}
+
+function InlineText({ parts }: { parts: InlinePart[] }) {
+  return <>{parts.map((part, index) => part.changed ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</>;
+}
+
+function Row({ row, inlineParts }: { row: DiffRow; inlineParts?: InlinePart[] }) {
   const marker = row.kind === 'add' ? <Plus size={12} /> : row.kind === 'remove' ? <Minus size={12} /> : null;
-  return <div className={`diff-row diff-${row.kind}`}><span className="diff-line-number">{row.oldLine || ''}</span><span className="diff-line-number">{row.newLine || ''}</span><span className="diff-marker">{marker}</span><code>{row.text || ' '}</code></div>;
+  return <div className={`diff-row diff-${row.kind}`}><span className="diff-line-number">{row.oldLine || ''}</span><span className="diff-line-number">{row.newLine || ''}</span><span className="diff-marker">{marker}</span><code>{inlineParts ? <InlineText parts={inlineParts} /> : row.text || ' '}</code></div>;
 }
 
 function DiffFileView({ file }: { file: DiffFile }) {
@@ -93,7 +115,15 @@ function DiffFileView({ file }: { file: DiffFile }) {
   const badge = file.status === 'added' ? 'A' : file.status === 'deleted' ? 'D' : file.status === 'renamed' ? 'R' : file.status === 'binary' ? 'B' : 'M';
   return <section className="diff-file">
     <button className="diff-file-head" onClick={() => setOpen(value => !value)}>{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className={`diff-status-badge diff-status-${file.status}`}>{badge}</span><strong>{file.name}</strong>{file.newName && file.newName !== file.name && <span className="diff-renamed">→ {file.newName}</span>}<span className="diff-count">{additions ? `+${additions}` : ''}{removals ? ` -${removals}` : ''}</span></button>
-    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => <Row key={`${index}-${row.text}`} row={row} />)}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}</div>}
+    {open && <div className="diff-file-body">{file.status !== 'binary' && file.rows.map((row, index) => {
+      const next = file.rows[index + 1];
+      if (row.kind === 'remove' && next?.kind === 'add') {
+        const parts = inlineDiff(row.text, next.text);
+        return <div key={`${index}-${row.text}`} className="diff-pair"><Row row={row} inlineParts={parts.oldParts} /><Row row={next} inlineParts={parts.newParts} /></div>;
+      }
+      if (row.kind === 'add' && file.rows[index - 1]?.kind === 'remove') return null;
+      return <Row key={`${index}-${row.text}`} row={row} />;
+    })}{file.status === 'binary' && <div className="diff-binary">Binary file cannot be displayed as text.</div>}</div>}
   </section>;
 }
 
