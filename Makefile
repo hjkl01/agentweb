@@ -6,7 +6,7 @@ APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 
-.PHONY: help install dev dev-backend dev-frontend build release check test fmt lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
+.PHONY: help install dev dev-backend dev-frontend build release check test fmt fmt-frontend lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
 
 help: ## Show available commands
 	@echo "Agent Web"
@@ -14,7 +14,7 @@ help: ## Show available commands
 	@echo "Usage: make <command>"
 	@echo ""
 	@echo "Development:"
-	@grep -E '^(install|dev|dev-backend|dev-frontend|build|release|check|test|fmt|lint|clean):.*##' $(MAKEFILE_LIST) | \
+	@grep -E '^(install|dev|dev-backend|dev-frontend|build|release|check|test|fmt|fmt-frontend|lint|clean):.*##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Docker:"
@@ -22,7 +22,7 @@ help: ## Show available commands
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 install: ## Install frontend dependencies and fetch Rust dependencies
-	@mkdir -p data workspaces runtimes
+	@mkdir -p data data/workspaces data/runtimes/node
 	cd frontend && npm install --no-audit --no-fund
 	cd backend && cargo fetch
 
@@ -32,7 +32,7 @@ dev: ## Start backend and frontend development servers
 		cd backend && cargo run
 
 dev-backend: ## Start Rust backend development server
-	@mkdir -p data workspaces runtimes
+	@mkdir -p data data/workspaces data/runtimes/node
 	cd backend && cargo run
 
 dev-frontend: ## Start Vite frontend development server
@@ -53,8 +53,12 @@ check: ## Run Rust checks and frontend build checks
 test: ## Run Rust tests
 	cd backend && cargo test
 
-fmt: ## Format Rust code
+fmt: ## Format Rust and frontend code
 	cd backend && cargo fmt
+	$(MAKE) fmt-frontend
+
+fmt-frontend: ## Format frontend code with Prettier
+	npx --yes prettier@3 --write frontend/src frontend/*.json frontend/*.html
 
 lint: ## Run Rust Clippy with warnings treated as errors
 	cd backend && cargo clippy --all-targets --all-features -- -D warnings
@@ -78,7 +82,6 @@ docker-down: ## Stop Docker services
 
 docker-restart: ## Restart Docker services
 	$(COMPOSE) restart
-
 docker-logs: ## Follow Agent Web container logs
 	$(COMPOSE) logs -f agentweb
 docker-shell: ## Open a shell inside the Agent Web container
