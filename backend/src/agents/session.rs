@@ -25,19 +25,23 @@ pub async fn run_session(
     message: String,
     events: EventBus,
 ) {
-    let row = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?")
+    let row = sqlx::query("SELECT kind,command FROM agents WHERE id=?")
         .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
-    let (kind, command, working_directory) = if let Some(row) = row {
-        (row.get(0), row.get(1), row.get(2))
+    let (kind, command) = if let Some(row) = row {
+        (row.get(0), row.get(1))
     } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == session.agent_id) {
-        (def.kind.to_owned(), def.command.to_owned(), None)
+        (def.kind.to_owned(), def.command.to_owned())
     } else {
         events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() });
         return;
     };
+
+    // The Web Session workspace is authoritative. Agent-level working_directory
+    // must never silently move a chat outside the workspace shown in the UI.
     let config = AgentConfig {
-        id: kind.clone(), command,
-        working_directory: working_directory.or_else(|| Some(session.workspace.clone())),
+        id: kind.clone(),
+        command,
+        working_directory: Some(session.workspace.clone()),
         native_session_id: session.native_session_id.clone(),
         runtime_path: runtime_path(&db).await,
         model: session.model.clone(),
