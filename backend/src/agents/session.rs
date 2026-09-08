@@ -22,7 +22,6 @@ async fn persist_stream(db: sqlx::SqlitePool, session_id: String, message_id: St
                     if !pending.is_empty() {
                         let _ = sqlx::query("UPDATE messages SET content=content||? WHERE id=?")
                             .bind(&pending).bind(&message_id).execute(&db).await;
-                        pending.clear();
                     }
                     return;
                 }
@@ -69,7 +68,7 @@ pub async fn run_session(db: sqlx::SqlitePool, agents: Arc<AgentManager>, sessio
             let now = Utc::now().to_rfc3339();
             let updated = sqlx::query("UPDATE sessions SET native_session_id=?,status='idle',updated_at=? WHERE id=? AND status='running'")
                 .bind(&result.native_session_id).bind(&now).bind(&session.id).execute(&db).await;
-            if updated.map(|r| r.rows_affected() == 1).unwrap_or(false) {
+            if updated.map(|r| r.rows_affected() == 1).unwrap_or(false) && !result.assistant_text.is_empty() {
                 let _ = sqlx::query("UPDATE messages SET content=? WHERE id=?")
                     .bind(&result.assistant_text).bind(&assistant_id).execute(&db).await;
             }
