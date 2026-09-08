@@ -11,7 +11,7 @@ mod state;
 use anyhow::Result;
 use axum::{middleware, routing::get, Router};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
-use std::{net::SocketAddr, path::Path, str::FromStr};
+use std::{path::Path, str::FromStr};
 use tower_http::services::{ServeDir, ServeFile};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
