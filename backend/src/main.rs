@@ -24,21 +24,14 @@ async fn main() -> Result<()> {
     let db_options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let pool: SqlitePool = SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
     db::init(&pool).await?;
-    if let Some(password) = db::ensure_default_admin(&pool).await? {
-        tracing::warn!(username="admin", password=%password, "Created default admin account. Save this password; it will only be shown once.");
-        println!();
-        println!("============================================================");
-        println!(" Agent Web 首次启动，已创建默认管理员账号");
-        println!(" 用户名: admin");
-        println!(" 密码:   {password}");
-        println!(" 请立即保存密码；删除数据库后会重新生成新的密码。");
-        println!("============================================================");
-        println!();
-    }
+    if let Some(password) = db::ensure_default_admin(&pool).await? { tracing::warn!(username="admin", password=%password, "Created default admin account. Save this password; it will only be shown once."); println!("\n============================================================\n Agent Web 首次启动，已创建默认管理员账号\n 用户名: admin\n 密码:   {password}\n 请立即保存密码；删除数据库后会重新生成新的密码。\n============================================================\n"); }
     let state = state::AppState::new(pool);
     let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| "./frontend/dist".into());
     let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
+        .route("/auth/password", axum::routing::put(auth::change_password))
+        .route("/auth/sessions", get(auth::list_sessions))
+        .route("/auth/sessions/revoke-all", axum::routing::post(auth::revoke_all_sessions))
         .route("/agents", get(api::list_agents).post(api::create_agent))
         .route("/agent-catalog", get(api::catalog))
         .route("/runtime/settings", get(api::get_runtime_settings).put(api::update_runtime_settings))
@@ -66,8 +59,7 @@ async fn main() -> Result<()> {
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
         .fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)))
         .with_state(state);
-    let addr: SocketAddr = "0.0.0.0:8080".parse()?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
