@@ -6,10 +6,7 @@ APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 
-.PHONY: help \
-        setup install dev dev-backend dev-frontend \
-        build release check test fmt lint clean \
-        docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
+.PHONY: help setup install dev dev-backend dev-frontend build release check test fmt lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
 
 help: ## Show available commands
 	@echo "Agent Web"
@@ -31,16 +28,18 @@ help: ## Show available commands
 setup: install ## Install all local development dependencies
 
 install: ## Install frontend dependencies and fetch Rust dependencies
+	@mkdir -p data workspaces runtimes
 	cd frontend && npm install
 	cd backend && cargo fetch
 
-dev: ## Start backend and frontend development servers
+dev: install ## Start backend and frontend development servers
 	@trap 'kill 0' INT TERM EXIT; \
 		(cd backend && cargo run) & \
 		(cd frontend && npm run dev -- --host 127.0.0.1) & \
 		wait
 
 dev-backend: ## Start Rust backend development server
+	@mkdir -p data workspaces runtimes
 	cd backend && cargo run
 
 dev-frontend: ## Start Vite frontend development server
