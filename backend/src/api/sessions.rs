@@ -8,23 +8,27 @@ use tokio::fs;
 use uuid::Uuid;
 
 #[derive(Serialize, Clone)]
-pub struct Session { pub id:String, pub agent_id:String, pub title:String, pub workspace:String, pub status:String, pub native_session_id:Option<String>, pub model:Option<String> }
+pub struct Session { pub id:String, pub agent_id:String, pub title:String, pub workspace:String, pub status:String, pub native_session_id:Option<String>, pub model:Option<String>, pub is_pinned:bool }
+
+fn session_from_row(row:&sqlx::sqlite::SqliteRow)->Session { Session{id:row.get(0),agent_id:row.get(1),title:row.get(2),workspace:row.get(3),status:row.get(4),native_session_id:row.get(5),model:row.get(6),is_pinned:row.get::<i64,_>(7)!=0} }
 
 pub(crate) async fn load_session(db:&sqlx::SqlitePool,id:&str)->Result<Session,StatusCode>{
- let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
- Ok(Session{id:row.get(0),agent_id:row.get(1),title:row.get(2),workspace:row.get(3),status:row.get(4),native_session_id:row.get(5),model:row.get(6)})
+ let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+ Ok(session_from_row(&row))
 }
 
-pub async fn list_sessions(State(s):State<AppState>)->Json<Vec<Session>>{let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model FROM sessions ORDER BY updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();Json(rows.into_iter().map(|r|Session{id:r.get(0),agent_id:r.get(1),title:r.get(2),workspace:r.get(3),status:r.get(4),native_session_id:r.get(5),model:r.get(6)}).collect())}
+pub async fn list_sessions(State(s):State<AppState>)->Json<Vec<Session>>{let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();Json(rows.iter().map(session_from_row).collect())}
 
 #[derive(Deserialize)] pub struct CreateSession { pub agent_id:String,pub title:Option<String>,pub workspace:Option<String>,pub model:Option<String> }
 
 async fn create_workspace(session_id:&str,requested:Option<&str>)->Result<String,StatusCode>{let base_path=std::env::var("AGENTWEB_WORKSPACE_DIR").unwrap_or_else(|_|"./workspaces".into());fs::create_dir_all(&base_path).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;let base=fs::canonicalize(&base_path).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;let name=requested.unwrap_or("").trim();let relative=if name.is_empty()||name=="."{session_id.to_owned()}else{name.to_owned()};let path=FsPath::new(&relative);if path.is_absolute()||path.components().any(|c|matches!(c,Component::ParentDir)){return Err(StatusCode::BAD_REQUEST)}let workspace=base.join(path);fs::create_dir_all(&workspace).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;let canonical=fs::canonicalize(&workspace).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;if !canonical.starts_with(&base){return Err(StatusCode::FORBIDDEN)}Ok(canonical.to_string_lossy().into_owned())}
 
-pub async fn create_session(State(s):State<AppState>,Json(v):Json<CreateSession>)->Result<Json<Session>,StatusCode>{let exists=sqlx::query("SELECT 1 FROM agents WHERE id=?").bind(&v.agent_id).fetch_optional(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.is_some();if !exists{return Err(StatusCode::NOT_FOUND)}let id=Uuid::new_v4().to_string();let workspace=create_workspace(&id,v.workspace.as_deref()).await?;let now=Utc::now().to_rfc3339();let title=v.title.filter(|t|!t.trim().is_empty()).unwrap_or_else(||"New Chat".into());sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(&id).bind(&v.agent_id).bind(&title).bind(&workspace).bind("idle").bind::<Option<String>>(None).bind(&v.model).bind(&now).bind(&now).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(Session{id,agent_id:v.agent_id,title,workspace,status:"idle".into(),native_session_id:None,model:v.model}))}
+pub async fn create_session(State(s):State<AppState>,Json(v):Json<CreateSession>)->Result<Json<Session>,StatusCode>{let exists=sqlx::query("SELECT 1 FROM agents WHERE id=?").bind(&v.agent_id).fetch_optional(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.is_some();if !exists{return Err(StatusCode::NOT_FOUND)}let id=Uuid::new_v4().to_string();let workspace=create_workspace(&id,v.workspace.as_deref()).await?;let now=Utc::now().to_rfc3339();let title=v.title.filter(|t|!t.trim().is_empty()).unwrap_or_else(||"New Chat".into());sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&id).bind(&v.agent_id).bind(&title).bind(&workspace).bind("idle").bind::<Option<String>>(None).bind(&v.model).bind(0i64).bind(&now).bind(&now).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(Session{id,agent_id:v.agent_id,title,workspace,status:"idle".into(),native_session_id:None,model:v.model,is_pinned:false}))}
 
 #[derive(Deserialize)] pub struct RenameSession { pub title:String }
 pub async fn rename_session(Path(id):Path<String>,State(s):State<AppState>,Json(v):Json<RenameSession>)->Result<Json<Session>,StatusCode>{let title=v.title.split_whitespace().collect::<Vec<_>>().join(" ");if title.is_empty(){return Err(StatusCode::BAD_REQUEST)}let title=title.chars().take(80).collect::<String>();load_session(&s.db,&id).await?;sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=?").bind(&title).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(load_session(&s.db,&id).await?))}
+
+pub async fn toggle_pin(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Session>,StatusCode>{load_session(&s.db,&id).await?;sqlx::query("UPDATE sessions SET is_pinned=CASE WHEN is_pinned=1 THEN 0 ELSE 1 END,updated_at=? WHERE id=?").bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(load_session(&s.db,&id).await?))}
 
 pub async fn get_session(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Session>,StatusCode>{Ok(Json(load_session(&s.db,&id).await?))}
 
