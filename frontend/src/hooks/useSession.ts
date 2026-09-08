@@ -11,6 +11,7 @@ export function useSession(active?: string) {
   const [stream, setStream] = useState('');
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [error, setError] = useState<string>();
 
   const refreshSessions = useCallback(async () => {
@@ -19,15 +20,12 @@ export function useSession(active?: string) {
   }, []);
 
   useEffect(() => { refreshSessions().catch(console.error); }, [refreshSessions]);
-
-  const actions = useSessionActions({ setSessions, setMessages });
-  useSessionEvents({ active, refreshSessions, setMessages, setFiles, setStream, setActivity, setActivityOpen, setError });
+  const actions = useSessionActions({ setSessions });
+  useSessionEvents({ active, refreshSessions, setMessages, setFiles, setStream, setActivity, setActivityOpen, setWorkspaceRevision, setError });
 
   useEffect(() => {
-    if (!active) {
-      setMessages([]); setFiles([]); setStream(''); setActivity([]); setActivityOpen(false);
-    }
+    if (!active) { setMessages([]); setFiles([]); setStream(''); setActivity([]); setActivityOpen(false); setWorkspaceRevision(0); }
   }, [active]);
 
-  return { sessions, messages, files, stream, activity, activityOpen, error, setMessages, setFiles, setActivityOpen, refreshSessions, ...actions };
+  return { sessions, messages, files, stream, activity, activityOpen, workspaceRevision, error, setMessages, setFiles, setActivityOpen, refreshSessions, ...actions };
 }
