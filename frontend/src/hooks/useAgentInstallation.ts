@@ -1,26 +1,19 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
-import type { Agent, NodeInfo } from '../types';
+import type { Agent } from '../types';
 
-export function useAgentInstallation(
-  agents: Agent[],
-  nodeVersion: string,
-  node?: NodeInfo,
-  refreshAgents?: () => Promise<void>,
-) {
+export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?: { installed: string[] }, refreshAgents?: () => Promise<void>) {
   const [installingNode, setInstallingNode] = useState(false);
   const [installingAgent, setInstallingAgent] = useState<string>();
   const [error, setError] = useState<string>();
 
   const installNode = async () => {
-    if (!nodeVersion) return;
+    const version = nodeVersion.trim();
+    if (!version) return;
     setInstallingNode(true);
     setError(undefined);
     try {
-      await api('/node/install', {
-        method: 'POST',
-        body: JSON.stringify({ version: nodeVersion }),
-      });
+      await api('/node/install', { method: 'POST', body: JSON.stringify({ version }) });
       await refreshAgents?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -33,18 +26,16 @@ export function useAgentInstallation(
 
   const installAgent = async (id: string) => {
     const agent = agents.find(item => item.id === id);
-    if (agent?.requirements.includes('Node.js') && !node?.installed.includes(nodeVersion)) {
-      const message = '请先选择并安装一个 Node.js 版本';
+    if (!agent?.install_command) return;
+    if (agent.requirements.includes('Node.js') && !(node?.installed || []).includes(nodeVersion)) {
+      const message = '请先安装 Node.js；安装后再点击 Agent 的安装按钮。';
       setError(message);
       throw new Error(message);
     }
     setInstallingAgent(id);
     setError(undefined);
     try {
-      await api(`/agents/${id}/install`, { method: 'POST' });
-      // Installation is asynchronous on the backend. Keep the button disabled
-      // briefly through the current request, then refresh the catalog so a
-      // completed installation is reflected when the backend reports it.
+      await api('/agents/custom/install', { method: 'POST', body: JSON.stringify({ command: agent.install_command }) });
       await refreshAgents?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -55,5 +46,22 @@ export function useAgentInstallation(
     }
   };
 
-  return { installingNode, installingAgent, error, installNode, installAgent };
+  const installCustomAgent = async (command: string) => {
+    const value = command.trim();
+    if (!value) return;
+    setInstallingAgent('custom');
+    setError(undefined);
+    try {
+      await api('/agents/custom/install', { method: 'POST', body: JSON.stringify({ command: value }) });
+      await refreshAgents?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setInstallingAgent(undefined);
+    }
+  };
+
+  return { installingNode, installingAgent, error, installNode, installAgent, installCustomAgent };
 }
