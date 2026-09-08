@@ -11,10 +11,7 @@ export function useAgentRuntime() {
   const refresh = useCallback(async () => {
     setError(undefined);
     try {
-      const [catalog, nodeInfo] = await Promise.all([
-        api<Agent[]>('/agent-catalog'),
-        api<NodeInfo>('/node/versions'),
-      ]);
+      const [catalog, nodeInfo] = await Promise.all([api<Agent[]>('/agent-catalog'), api<NodeInfo>('/node/versions')]);
       setAgents(catalog);
       setNode(nodeInfo);
       setNodeVersion(current => current || nodeInfo.active || '');
@@ -25,17 +22,7 @@ export function useAgentRuntime() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  const nodeGroups = Object.entries(
-    (node?.available || []).reduce((groups, version) => {
-      const major = version.split('.')[0];
-      (groups[major] ??= []).push(version);
-      return groups;
-    }, {} as Record<string, string[]>)
-  ).sort(([a], [b]) => Number(b) - Number(a));
-
-  return { agents, node, nodeVersion, setNodeVersion, nodeGroups, error, refresh };
+  return { agents, node, nodeVersion, setNodeVersion, error, refresh };
 }
