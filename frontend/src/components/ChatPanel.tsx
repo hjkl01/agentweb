@@ -1,11 +1,13 @@
 import { Activity, Bot, ChevronDown, ChevronRight, Circle, Send, Square } from 'lucide-react';
 import type { RefObject } from 'react';
-import type { ActivityItem, Agent, ChatMessage, Session } from '../types';
+import type { ActivityItem, Agent, AgentModel, ChatMessage, Session } from '../types';
 
 type Props = {
   current?: Session;
   currentAgent?: Agent;
   active?: string;
+  models: AgentModel[];
+  modelLoading: boolean;
   messages: ChatMessage[];
   stream: string;
   activity: ActivityItem[];
@@ -14,6 +16,7 @@ type Props = {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   chatRef: RefObject<HTMLElement | null>;
   onInputChange: (value: string) => void;
+  onModelChange: (model?: string) => void;
   onSend: () => void;
   onToggleActivity: () => void;
   onStop: () => void;
@@ -21,12 +24,20 @@ type Props = {
   onAutoResize: () => void;
 };
 
-export function ChatPanel({ current, currentAgent, active, messages, stream, activity, activityOpen, input, textareaRef, chatRef, onInputChange, onSend, onToggleActivity, onStop, onNewChat, onAutoResize }: Props) {
+export function ChatPanel({ current, currentAgent, active, models, modelLoading, messages, stream, activity, activityOpen, input, textareaRef, chatRef, onInputChange, onModelChange, onSend, onToggleActivity, onStop, onNewChat, onAutoResize }: Props) {
   return (
     <main className="main-panel">
       <header className="topbar">
         <div className="chat-title"><strong>{current?.title || 'Agent Web'}</strong>{currentAgent && <span><span className="status-dot" /> {currentAgent.name}</span>}</div>
-        {active && <div className="top-actions"><span className={`run-state ${current?.status === 'running' ? 'running' : ''}`}>{current?.status || 'ready'}</span>{current?.status === 'running' && <button className="stop" onClick={onStop}><Square size={13} /> Stop</button>}</div>}
+        {active && <div className="top-actions">
+          {models.length > 0 && <select value={current?.model || ''} disabled={modelLoading || current?.status === 'running'} onChange={event => onModelChange(event.target.value || undefined)} aria-label="Model">
+            {!current?.model && <option value="">默认模型</option>}
+            {models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>}
+          {models.length === 0 && !modelLoading && <span className="model-empty">Agent 默认模型</span>}
+          <span className={`run-state ${current?.status === 'running' ? 'running' : ''}`}>{current?.status || 'ready'}</span>
+          {current?.status === 'running' && <button className="stop" onClick={onStop}><Square size={13} /> Stop</button>}
+        </div>}
       </header>
 
       <section className="chat" ref={chatRef}>
