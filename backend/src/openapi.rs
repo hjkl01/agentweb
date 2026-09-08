@@ -6,12 +6,13 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Agent Web API", version = "0.1.0", description = "Web API for Agent Web: agent runtimes, models, sessions, workspace files, diffs and streaming events."),
-    paths(health, auth_login, agents_get, agents_post, agent_catalog, runtime_settings_get, runtime_settings_put, node_versions, node_install, agent_status, agent_models, agent_install, sessions_get, sessions_post, session_get, session_delete, session_model, session_messages_get, session_messages_post, session_interrupt, session_files, session_file, session_diff, session_events)
+    paths(health, auth_login, auth_me, agents_get, agents_post, agent_catalog, runtime_settings_get, runtime_settings_put, node_versions, node_install, agent_status, agent_models, agent_install, sessions_get, sessions_post, session_get, session_delete, session_model, session_messages_get, session_messages_post, session_interrupt, session_files, session_file, session_diff, session_events)
 )]
 pub struct ApiDoc;
 
 #[utoipa::path(get, path = "/api/health", tag = "System", responses((status = 200, description = "Service health")))] fn health() {}
 #[utoipa::path(post, path = "/api/auth/login", tag = "System", request_body = serde_json::Value, responses((status = 200, description = "Set authentication cookie"), (status = 401, description = "Invalid credentials")))] fn auth_login() {}
+#[utoipa::path(get, path = "/api/auth/me", tag = "System", responses((status = 200, description = "Check current authentication"), (status = 401, description = "Not authenticated")))] fn auth_me() {}
 #[utoipa::path(get, path = "/api/agents", tag = "Agents", responses((status = 200, description = "List agents")))] fn agents_get() {}
 #[utoipa::path(post, path = "/api/agents", tag = "Agents", request_body = serde_json::Value, responses((status = 200, description = "Create agent")))] fn agents_post() {}
 #[utoipa::path(get, path = "/api/agent-catalog", tag = "Agents", responses((status = 200, description = "Available agent catalog")))] fn agent_catalog() {}
