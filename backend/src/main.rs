@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         .route("/api/agent-catalog", get(api::catalog))
         .route("/api/runtime/settings", get(api::get_runtime_settings).put(api::update_runtime_settings))
         .route("/api/node/versions", get(api_node::node_versions))
-        .route("/api/node/install", axum::routing::post(api_node::install_node))
+        .route("/api/node/install", axum::routing::post(api::install_node))
         .route("/api/agents/{id}/status", get(api::agent_status))
         .route("/api/agents/{id}/models", get(api::agent_models))
         .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}/diff", get(api::workspace_diff))
         .route("/api/sessions/{id}/events", get(api::ws_events))
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
-        .fallback_service(ServeDir::new(frontend_dir).not_found_service(ServeFile::new(index_file)))
+        .fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)))
         .with_state(state);
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
