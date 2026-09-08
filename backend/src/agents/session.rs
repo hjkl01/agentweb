@@ -25,13 +25,16 @@ pub async fn run_session(
     message: String,
     events: EventBus,
 ) {
-    let row = sqlx::query("SELECT kind,command,working_directory,native_session_id,model FROM agents WHERE id=?")
+    // Agent configuration belongs to the agents table; native session/model
+    // state belongs to this Web Session. Do not read non-existent session
+    // columns from agents, otherwise custom agents silently fall back.
+    let row = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?")
         .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
 
-    let (kind, command, working_directory, native_session_id, model) = if let Some(row) = row {
-        (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
+    let (kind, command, working_directory) = if let Some(row) = row {
+        (row.get(0), row.get(1), row.get(2))
     } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == session.agent_id) {
-        (def.kind.to_owned(), def.command.to_owned(), None, session.native_session_id.clone(), session.model.clone())
+        (def.kind.to_owned(), def.command.to_owned(), None)
     } else {
         events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() });
         return;
@@ -41,9 +44,9 @@ pub async fn run_session(
         id: kind.clone(),
         command,
         working_directory: working_directory.or_else(|| Some(session.workspace.clone())),
-        native_session_id: native_session_id.or(session.native_session_id.clone()),
+        native_session_id: session.native_session_id.clone(),
         runtime_path: runtime_path(&db).await,
-        model: model.or(session.model.clone()),
+        model: session.model.clone(),
     };
 
     let _ = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=?")
