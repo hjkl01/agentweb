@@ -6,19 +6,27 @@ export function useAgentRuntime() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [node, setNode] = useState<NodeInfo>();
   const [nodeVersion, setNodeVersion] = useState('');
+  const [error, setError] = useState<string>();
 
   const refresh = useCallback(async () => {
-    const [catalog, nodeInfo] = await Promise.all([
-      api<Agent[]>('/agent-catalog'),
-      api<NodeInfo>('/node/versions'),
-    ]);
-    setAgents(catalog);
-    setNode(nodeInfo);
-    setNodeVersion(current => current || nodeInfo.active || '');
+    setError(undefined);
+    try {
+      const [catalog, nodeInfo] = await Promise.all([
+        api<Agent[]>('/agent-catalog'),
+        api<NodeInfo>('/node/versions'),
+      ]);
+      setAgents(catalog);
+      setNode(nodeInfo);
+      setNodeVersion(current => current || nodeInfo.active || '');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load Agent runtime:', error);
+      setError(message);
+    }
   }, []);
 
   useEffect(() => {
-    refresh().catch(() => {});
+    refresh();
   }, [refresh]);
 
   const nodeGroups = Object.entries(
@@ -29,5 +37,5 @@ export function useAgentRuntime() {
     }, {} as Record<string, string[]>)
   ).sort(([a], [b]) => Number(b) - Number(a));
 
-  return { agents, node, nodeVersion, setNodeVersion, nodeGroups, refresh };
+  return { agents, node, nodeVersion, setNodeVersion, nodeGroups, error, refresh };
 }
