@@ -1,11 +1,13 @@
 pub mod adapter;
 pub mod codex;
+pub mod codex_events;
 pub mod definition;
 pub mod generic;
 pub mod models;
 pub mod openclaw;
 pub mod opencode;
 pub mod pi;
+pub mod pi_events;
 pub mod process;
 
 pub use adapter::{AgentAdapter, AgentConfig};
@@ -25,10 +27,13 @@ impl AgentManager {
         let mut map = self.adapters.lock().await;
         if let Some(a) = map.get(kind) { return a.clone(); }
         let adapter: Arc<dyn AgentAdapter> = match kind {
-            "codex" => Arc::new(CodexAdapter::new()), "opencode" => Arc::new(OpenCodeAdapter::new()),
-            "pi" => Arc::new(PiAdapter::new()), "openclaw" => Arc::new(OpenClawAdapter::new()),
+            "codex" => Arc::new(CodexAdapter::new()),
+            "opencode" => Arc::new(OpenCodeAdapter::new()),
+            "pi" => Arc::new(PiAdapter::new()),
+            "openclaw" => Arc::new(OpenClawAdapter::new()),
             _ => Arc::new(GenericAdapter::new()),
         };
-        map.insert(kind.to_owned(), adapter.clone()); adapter
+        map.insert(kind.to_owned(), adapter.clone());
+        adapter
     }
 }
