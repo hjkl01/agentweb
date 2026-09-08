@@ -32,9 +32,9 @@ export function App() {
   useEffect(() => { if (!active && session.sessions[0]) setActive(session.sessions[0].id); }, [active, session.sessions]);
   useEffect(() => { if (refs.chat.current) refs.chat.current.scrollTop = refs.chat.current.scrollHeight; }, [session.messages, session.stream, session.activity]);
 
-  const createChat = async (agentId: string) => {
+  const createChat = async (agentId: string, model?: string) => {
     try {
-      const created = await session.createSession(agentId);
+      const created = await session.createSession(agentId, model);
       setActive(created.id); setNewChatOpen(false); setCatalogOpen(false);
     } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
   };
