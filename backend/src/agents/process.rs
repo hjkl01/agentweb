@@ -1,13 +1,10 @@
-use super::{adapter::{AgentAdapter, AgentConfig, AgentRunResult}, codex_events, event_parser, pi_events};
+use super::{adapter::{AgentAdapter, AgentConfig, AgentRunResult}, codex_events, event_parser, pi_events, commands::{self, ProcessKind}};
 use crate::events::{AgentEvent, EventBus};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::{collections::{HashMap, HashSet}, sync::Arc};
-use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, Command}, sync::Mutex};
-
-#[derive(Clone, Copy)]
-pub enum ProcessKind { Codex, OpenCode, Pi, Generic }
+use tokio::{io::{AsyncBufReadExt, BufReader}, process::Child, sync::Mutex};
 
 #[derive(Default)]
 pub struct ProcessAdapter {
@@ -17,43 +14,6 @@ pub struct ProcessAdapter {
 
 impl ProcessAdapter {
     pub fn new() -> Self { Self::default() }
-
-    fn command_parts(command: &str) -> Result<(String, Vec<String>)> {
-        let mut parts = command.split_whitespace();
-        let program = parts.next().ok_or_else(|| anyhow!("empty agent command"))?.to_owned();
-        Ok((program, parts.map(str::to_owned).collect()))
-    }
-
-    pub fn build_command(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<Command> {
-        let (program, base) = Self::command_parts(&config.command)?;
-        let mut command = Command::new(program);
-        let mut args = base;
-        match kind {
-            ProcessKind::Codex => {
-                args = if let Some(id) = &config.native_session_id { vec!["exec".into(), "resume".into(), id.clone(), "--json".into()] } else { vec!["exec".into(), "--json".into()] };
-                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
-                args.push(message.into());
-            }
-            ProcessKind::OpenCode => {
-                args.push("run".into());
-                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
-                if let Some(id) = &config.native_session_id { args.extend(["--session".into(), id.clone()]); }
-                args.extend([message.into(), "--format".into(), "json".into()]);
-            }
-            ProcessKind::Pi => {
-                args.extend(["--mode".into(), "json".into()]);
-                if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
-                if let Some(id) = &config.native_session_id { args.extend(["--session".into(), id.clone()]); }
-                args.extend(["-p".into(), message.into()]);
-            }
-            ProcessKind::Generic => args.push(message.into()),
-        }
-        command.args(args);
-        if let Some(dir) = &config.working_directory { command.current_dir(dir); }
-        if let Some(runtime) = &config.runtime_path { command.env("PATH", format!("{}:{}", runtime, std::env::var("PATH").unwrap_or_default())); }
-        command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        Ok(command)
-    }
 
     fn native_session(kind: ProcessKind, value: &Value) -> Option<String> {
         match kind {
@@ -67,7 +27,6 @@ impl ProcessAdapter {
                 if typ == "session.created" || (value.get("sessionID").is_some() && typ.contains("session")) { event_parser::parsed(value).1 } else { None }
             }
             ProcessKind::Generic => None,
-            _ => None,
         }
     }
 
@@ -119,7 +78,7 @@ impl ProcessAdapter {
     pub async fn run(&self, kind: ProcessKind, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
         if self.processes.lock().await.contains_key(session_id) { return Err(anyhow!("session already has a running agent process")); }
         self.interrupted.lock().await.remove(session_id);
-        let mut command = Self::build_command(kind, config, message)?;
+        let mut command = commands::build(kind, config, message)?;
         let mut child_process = command.spawn()?;
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
