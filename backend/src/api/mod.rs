@@ -1,5 +1,4 @@
 mod agents;
-mod filesystem;
 mod health;
 mod runtime;
 mod sessions;
@@ -8,7 +7,6 @@ mod session_websocket;
 mod workspace;
 
 pub use agents::{agent_models, agent_status, create_agent, list_agents};
-pub use filesystem::tree as filesystem_tree;
 pub use health::health;
 pub use runtime::{get_runtime_settings, install_agent, update_runtime_settings};
 pub(crate) use runtime::build_agent_config;
