@@ -4,6 +4,7 @@ mod api_node;
 mod db;
 mod events;
 mod installation;
+mod openapi;
 mod state;
 
 use anyhow::Result;
@@ -11,6 +12,8 @@ use axum::{routing::get, Router};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::{net::SocketAddr, path::Path, str::FromStr};
 use tower_http::services::ServeDir;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,6 +52,7 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}/file/{*path}", get(api::workspace_file))
         .route("/api/sessions/{id}/diff", get(api::workspace_diff))
         .route("/api/sessions/{id}/events", get(api::ws_events))
+        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
         .fallback_service(ServeDir::new(frontend_dir))
         .with_state(state);
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
