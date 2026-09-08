@@ -2,14 +2,24 @@ use crate::events::EventBus;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::{error::Error, fmt};
 
 use super::models::AgentModel;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy)]
 pub enum AgentRunError {
-    #[error("agent process interrupted")]
     Interrupted,
 }
+
+impl fmt::Display for AgentRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interrupted => f.write_str("agent process interrupted"),
+        }
+    }
+}
+
+impl Error for AgentRunError {}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
