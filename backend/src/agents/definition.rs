@@ -11,6 +11,8 @@ pub struct AgentDefinition {
 pub const BUILT_IN_AGENTS: &[AgentDefinition] = &[
     AgentDefinition { id: "codex", name: "Codex", kind: "codex", command: "codex" },
     AgentDefinition { id: "claude-code", name: "Claude Code", kind: "claude-code", command: "claude" },
+    AgentDefinition { id: "qwen-code", name: "Qwen Code", kind: "qwen-code", command: "qwen" },
+    AgentDefinition { id: "gemini-cli", name: "Gemini CLI", kind: "gemini-cli", command: "gemini" },
     AgentDefinition { id: "pi", name: "Pi", kind: "pi", command: "pi" },
     AgentDefinition { id: "opencode", name: "OpenCode", kind: "opencode", command: "opencode" },
     AgentDefinition { id: "openclaw", name: "OpenClaw", kind: "openclaw", command: "openclaw" },
