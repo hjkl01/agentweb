@@ -91,7 +91,9 @@ function handleEvent(raw: string, active: string, options: Options) {
   }
   if (event.type === 'message.completed') options.setStream('');
 
-  const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'agent.error' || event.type === 'error';
+  // message.completed must be fed into the activity reducer so the
+  // corresponding "Agent started" row changes from spinner to check.
+  const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'message.completed' || event.type === 'agent.error' || event.type === 'error';
   if (activityEvent) { options.setActivity(items => applyAgentEvent(items, event)); options.setActivityOpen(true); }
   if (event.type.startsWith('file.')) options.setWorkspaceRevision(value => value + 1);
   if (event.type === 'session.completed' || event.type === 'agent.error') {
