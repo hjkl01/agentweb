@@ -1,8 +1,9 @@
 use super::{adapter::{AgentAdapter, AgentConfig, AgentRunResult}, codex_events, event_parser, pi_events};
-use crate::events::{AgentEvent, EventBus};
+use crate::{agents::AgentManager, events::{AgentEvent, EventBus}};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
+use sqlx::Row;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, Command}, sync::Mutex};
 
@@ -27,9 +28,7 @@ impl ProcessAdapter {
         let mut args = base;
         match kind {
             ProcessKind::Codex => {
-                args = if let Some(id) = &config.native_session_id {
-                    vec!["exec".into(), "resume".into(), id.clone(), "--json".into()]
-                } else { vec!["exec".into(), "--json".into()] };
+                args = if let Some(id) = &config.native_session_id { vec!["exec".into(), "resume".into(), id.clone(), "--json".into()] } else { vec!["exec".into(), "--json".into()] };
                 if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
                 args.push(message.into());
             }
@@ -49,9 +48,7 @@ impl ProcessAdapter {
         }
         command.args(args);
         if let Some(dir) = &config.working_directory { command.current_dir(dir); }
-        if let Some(runtime) = &config.runtime_path {
-            command.env("PATH", format!("{}:{}", runtime, std::env::var("PATH").unwrap_or_default()));
-        }
+        if let Some(runtime) = &config.runtime_path { command.env("PATH", format!("{}:{}", runtime, std::env::var("PATH").unwrap_or_default())); }
         command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         Ok(command)
     }
@@ -61,15 +58,11 @@ impl ProcessAdapter {
             ProcessKind::Codex if codex_events::is_session_event(value) => codex_events::native_session_id(value),
             ProcessKind::Pi => {
                 let typ = value.get("type").and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
-                if typ == "session_start" || typ == "session.started" || typ == "session_starting" {
-                    event_parser::parsed(value).1
-                } else { None }
+                if typ == "session_start" || typ == "session.started" || typ == "session_starting" { event_parser::parsed(value).1 } else { None }
             }
             ProcessKind::OpenCode => {
                 let typ = value.get("type").and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
-                if typ == "session.created" || (value.get("sessionID").is_some() && typ.contains("session")) {
-                    event_parser::parsed(value).1
-                } else { None }
+                if typ == "session.created" || (value.get("sessionID").is_some() && typ.contains("session")) { event_parser::parsed(value).1 } else { None }
             }
             ProcessKind::Generic => None,
             _ => None,
@@ -77,10 +70,7 @@ impl ProcessAdapter {
     }
 
     fn provider_text(kind: ProcessKind, session_id: &str, value: &Value, events: &EventBus) -> Option<String> {
-        match kind {
-            ProcessKind::Pi => pi_events::handle(session_id, value, events),
-            _ => None,
-        }
+        match kind { ProcessKind::Pi => pi_events::handle(session_id, value, events), _ => None }
     }
 
     fn assistant_event(kind: ProcessKind, value: &Value) -> bool {
@@ -127,13 +117,13 @@ impl ProcessAdapter {
     pub async fn run(&self, kind: ProcessKind, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
         if self.processes.lock().await.contains_key(session_id) { return Err(anyhow!("session already has a running agent process")); }
         let mut command = Self::build_command(kind, config, message)?;
-        let mut child = command.spawn()?;
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let child = Arc::new(Mutex::new(child));
+        let mut child_process = command.spawn()?;
+        let stdout = child_process.stdout.take();
+        let stderr = child_process.stderr.take();
+        let child = Arc::new(Mutex::new(child_process));
         self.processes.lock().await.insert(session_id.to_owned(), child.clone());
         events.publish(AgentEvent::MessageStarted { session_id: session_id.into() });
-        let result = Arc::new(Mutex::new(AgentRunResult::default()));
+        let result = Arc::new(Mutex::new(AgentRunResult { native_session_id: config.native_session_id.clone(), ..Default::default() }));
         let sid = session_id.to_owned();
         let out_result = result.clone();
         let out_events = events.clone();
@@ -141,9 +131,7 @@ impl ProcessAdapter {
         let out = tokio::spawn(async move {
             if let Some(stdout) = stdout {
                 let mut lines = BufReader::new(stdout).lines();
-                while let Some(line) = lines.next_line().await? {
-                    Self::handle_stdout(kind, &out_sid, &line, &out_result, &out_events).await;
-                }
+                while let Some(line) = lines.next_line().await? { Self::handle_stdout(kind, &out_sid, &line, &out_result, &out_events).await; }
             }
             Ok::<(), anyhow::Error>(())
         });
@@ -181,8 +169,32 @@ impl ProcessAdapter {
 
 #[async_trait]
 impl AgentAdapter for ProcessAdapter {
-    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
-        self.run(ProcessKind::Generic, config, session_id, message, events).await
-    }
+    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> { self.run(ProcessKind::Generic, config, session_id, message, events).await }
     async fn interrupt(&self, session_id: &str) -> Result<()> { self.interrupt_process(session_id).await }
+}
+
+pub async fn run_session(db: sqlx::SqlitePool, agents: Arc<AgentManager>, session: crate::api::Session, message: String, events: EventBus) {
+    let row = sqlx::query("SELECT kind,command,working_directory,native_session_id,model FROM agents WHERE id=?")
+        .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
+    let Some(row) = row else { events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() }); return; };
+    let kind: String = row.get(0);
+    let command: String = row.get(1);
+    let working_directory: Option<String> = row.get(2);
+    let native_session_id: Option<String> = row.get(3);
+    let model: Option<String> = row.get(4);
+    let process_kind = match kind.as_str() { "codex" => ProcessKind::Codex, "pi" => ProcessKind::Pi, "opencode" => ProcessKind::OpenCode, _ => ProcessKind::Generic };
+    let config = AgentConfig { id: kind.clone(), command, working_directory, native_session_id, runtime_path: None, model };
+    let adapter = agents.adapter(&kind).await;
+    match adapter.send_message(&config, &session.id, &message, &events).await {
+        Ok(result) => {
+            let _ = sqlx::query("UPDATE sessions SET native_session_id=?,status='idle',updated_at=? WHERE id=?")
+                .bind(result.native_session_id).bind(chrono::Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
+        }
+        Err(error) => {
+            let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?")
+                .bind(chrono::Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
+            events.publish(AgentEvent::Error { session_id: session.id, message: error.to_string() });
+        }
+    }
+    let _ = process_kind;
 }
