@@ -11,6 +11,7 @@ use axum::{routing::get, Router};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use state::AppState;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::str::FromStr;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
@@ -24,7 +25,21 @@ async fn main() -> Result<()> {
         std::env::var("AGENTWEB_WORKSPACE_DIR").unwrap_or_else(|_| "./workspaces".into());
     tokio::fs::create_dir_all(&workspace_dir).await?;
     tokio::fs::create_dir_all(installation::runtime::runtime_root()).await?;
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://./data/agentweb.db".into());
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite://./data/agentweb.db".into());
+
+    // SQLite can create the database file itself, but its parent directory must
+    // exist first. Create it automatically so a fresh checkout can start with
+    // `make dev` without requiring a manual `mkdir` step.
+    if let Some(path) = db_url.strip_prefix("sqlite://") {
+        let path = path.split('?').next().unwrap_or(path);
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        }
+    }
+
     let db_options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
