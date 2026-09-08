@@ -24,7 +24,14 @@ async fn main() -> Result<()> {
     let db_options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let pool: SqlitePool = SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
     db::init(&pool).await?;
-    if let Some(password) = db::ensure_default_admin(&pool).await? { tracing::warn!(username="admin", password=%password, "Created default admin account. Save this password; it will only be shown once."); println!("\n============================================================\n Agent Web 首次启动，已创建默认管理员账号\n 用户名: admin\n 密码:   {password}\n 请立即保存密码；删除数据库后会重新生成新的密码。\n============================================================\n"); }
+    if let Some(password) = db::ensure_default_admin(&pool).await? {
+        eprintln!("\n============================================================");
+        eprintln!(" Agent Web 首次启动，已创建默认管理员账号");
+        eprintln!(" 用户名: admin");
+        eprintln!(" 密码:   {password}");
+        eprintln!(" 请立即保存密码；删除数据库后会重新生成新的密码。");
+        eprintln!("============================================================\n");
+    }
     let state = state::AppState::new(pool);
     let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| "./frontend/dist".into());
     let index_file = Path::new(&frontend_dir).join("index.html");
