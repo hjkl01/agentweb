@@ -17,7 +17,13 @@ impl ProcessAdapter {
 
     fn native_session(kind: ProcessKind, value: &Value) -> Option<String> {
         match kind {
-            ProcessKind::Codex if codex_events::is_session_event(value) => codex_events::native_session_id(value),
+            ProcessKind::Codex => {
+                if codex_events::is_session_event(value) {
+                    codex_events::native_session_id(value)
+                } else {
+                    None
+                }
+            }
             ProcessKind::Pi => {
                 let typ = value.get("type").and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
                 if typ == "session_start" || typ == "session.started" || typ == "session_starting" { event_parser::parsed(value).1 } else { None }
@@ -127,21 +133,3 @@ impl ProcessAdapter {
             Err(anyhow!("agent exited with status {status}"))
         }
     }
-
-    pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
-        let child = self.processes.lock().await.get(session_id).cloned();
-        if let Some(child) = child {
-            self.interrupted.lock().await.insert(session_id.to_owned());
-            child.lock().await.kill().await?;
-        }
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl AgentAdapter for ProcessAdapter {
-    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> { self.run(ProcessKind::Generic, config, session_id, message, events).await }
-    async fn interrupt(&self, session_id: &str) -> Result<()> { self.interrupt_process(session_id).await }
-}
-
-pub use super::session::run_session;
