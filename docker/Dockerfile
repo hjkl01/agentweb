@@ -1,14 +1,14 @@
 FROM node:22-bookworm AS frontend
 WORKDIR /src/frontend
-COPY frontend/package.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm config set registry https://registry.npmmirror.com \
-  && npm install
+  && npm ci
 COPY frontend ./
 RUN npm run build
 
 FROM rust:1.88-bookworm AS backend
 WORKDIR /src
-COPY backend/Cargo.toml ./backend/
+COPY backend/Cargo.toml backend/Cargo.lock ./backend/
 COPY backend ./backend
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://mirrors.cernet.edu.cn/crates.io-index/
 RUN cd backend && cargo build --release
@@ -19,7 +19,7 @@ RUN sed -i \
   -e 's@security.debian.org@mirrors.aliyun.com@g' \
   /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
   && apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git procps xz-utils \
+  && apt-get install -y --no-install-recommends ca-certificates curl git procps util-linux xz-utils \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
