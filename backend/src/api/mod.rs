@@ -8,7 +8,7 @@ mod workspace;
 
 pub use agents::{agent_models, agent_status, create_agent, list_agents};
 pub use health::health;
-pub use runtime::{catalog, get_runtime_settings, install_agent, install_node, update_runtime_settings};
+pub use runtime::{get_runtime_settings, install_agent, update_runtime_settings};
 pub(crate) use runtime::build_agent_config;
 pub use sessions::{create_session, delete_session, get_session, list_sessions, rename_session, set_session_model, toggle_pin, Session};
 pub use session_messages::{interrupt, list_messages, send_message};
