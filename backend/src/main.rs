@@ -49,6 +49,7 @@ async fn main() -> Result<()> {
         .layer(middleware::from_fn_with_state(state.clone(), auth::basic_auth));
     let app = Router::new()
         .route("/api/health", get(api::health))
+        .route("/api/auth/login", axum::routing::post(auth::login))
         .nest("/api", protected_api)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
         .fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)))
