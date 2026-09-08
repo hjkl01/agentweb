@@ -1,0 +1,16 @@
+# Agent Web Caddy reverse proxy example.
+# Replace agent.example.com with a real DNS name pointing to this server.
+
+agent.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+        header_up X-Forwarded-Proto {scheme}
+        transport http {
+            read_buffer 4096
+        }
+    }
+}
+
+# Caddy automatically handles HTTPS certificates for public hostnames.
+# WebSocket Upgrade is supported automatically by reverse_proxy.
