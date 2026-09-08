@@ -2,82 +2,94 @@ use crate::state::AppState;
 use axum::{body::Body, extract::State, http::{header, Request, StatusCode}, middleware::Next, response::{IntoResponse, Response}, Json};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{Duration, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-async fn verify_password(state: &AppState, username: &str, password: &str) -> bool {
-    let Some(stored_hash) = sqlx::query("SELECT password_hash FROM users WHERE username=?")
-        .bind(username).fetch_optional(&state.db).await.ok().flatten()
-        .map(|row| row.get::<String, _>(0)) else { return false; };
-    format!("{:x}", Sha256::digest(password.as_bytes())) == stored_hash
-}
+const MAX_FAILURES: u32 = 3;
+const LOCK_SECONDS: i64 = 30 * 60;
 
+fn hash(value: &str) -> String { format!("{:x}", Sha256::digest(value.as_bytes())) }
 fn unauthorized() -> Response { (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, r#"Basic realm=\"Agent Web\""#)], "Authentication required").into_response() }
+fn cookie_token(request: &Request<Body>) -> Option<String> { request.headers().get(header::COOKIE).and_then(|v| v.to_str().ok())?.split(';').map(str::trim).find_map(|x| x.strip_prefix("agentweb_session=")).map(str::to_owned) }
+fn basic_credentials(request: &Request<Body>) -> Option<(String, String)> { let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Basic ")?; let decoded = STANDARD.decode(value).ok()?; String::from_utf8(decoded).ok()?.split_once(':').map(|(u,p)|(u.to_owned(),p.to_owned())) }
+fn client_ip(request: &Request<Body>) -> String { request.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.split(',').next()).map(str::trim).filter(|v| !v.is_empty()).or_else(|| request.headers().get("x-real-ip").and_then(|v|v.to_str().ok())).unwrap_or("unknown").to_owned() }
 
-fn cookie_token(request: &Request<Body>) -> Option<String> {
-    let cookie = request.headers().get(header::COOKIE).and_then(|v| v.to_str().ok())?;
-    cookie.split(';').map(str::trim).find_map(|item| item.strip_prefix("agentweb_session=")).map(str::to_owned)
+async fn locked(state: &AppState, ip: &str) -> bool {
+    let mut map = state.login_failures.lock().await;
+    if let Some((_, until)) = map.get(ip).copied() { if until > Utc::now().timestamp() { return true; } map.remove(ip); }
+    false
 }
-
-async fn valid_session(state: &AppState, token: &str) -> bool {
-    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-    let now = Utc::now().to_rfc3339();
-    sqlx::query("SELECT id FROM auth_sessions WHERE token_hash=? AND expires_at>? LIMIT 1")
-        .bind(hash).bind(now).fetch_optional(&state.db).await.ok().flatten().is_some()
+async fn record_failure(state: &AppState, ip: &str) {
+    let mut map = state.login_failures.lock().await;
+    let entry = map.entry(ip.to_owned()).or_insert((0, 0));
+    entry.0 += 1;
+    if entry.0 >= MAX_FAILURES { entry.1 = Utc::now().timestamp() + LOCK_SECONDS; }
 }
-
-fn basic_credentials(request: &Request<Body>) -> Option<(String, String)> {
-    let value = request.headers().get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Basic ")?;
-    let decoded = STANDARD.decode(value).ok()?;
-    let credentials = String::from_utf8(decoded).ok()?;
-    credentials.split_once(':').map(|(u, p)| (u.to_owned(), p.to_owned()))
+async fn clear_failures(state: &AppState, ip: &str) { state.login_failures.lock().await.remove(ip); }
+async fn verify_password(state: &AppState, username: &str, password: &str) -> Option<String> {
+    let row = sqlx::query("SELECT id, password_hash FROM users WHERE username=?").bind(username).fetch_optional(&state.db).await.ok().flatten()?;
+    if hash(password) == row.get::<String,_>(1) { Some(row.get::<String,_>(0)) } else { None }
+}
+async fn valid_session(state: &AppState, token: &str) -> Option<(String, String)> {
+    let row = sqlx::query("SELECT s.id, u.username FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? LIMIT 1").bind(hash(token)).bind(Utc::now().to_rfc3339()).fetch_optional(&state.db).await.ok().flatten()?;
+    Some((row.get(0), row.get(1)))
 }
 
 pub async fn basic_auth(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
-    if let Some(token) = cookie_token(&request) {
-        if valid_session(&state, &token).await { return next.run(request).await; }
-    }
-    if let Some((username, password)) = basic_credentials(&request) {
-        if verify_password(&state, &username, &password).await { return next.run(request).await; }
-    }
+    if let Some(token) = cookie_token(&request) { if valid_session(&state, &token).await.is_some() { return next.run(request).await; } }
+    if let Some((username,password)) = basic_credentials(&request) { if verify_password(&state,&username,&password).await.is_some() { return next.run(request).await; } }
     unauthorized()
 }
 
 pub async fn me(State(state): State<AppState>, request: Request<Body>) -> Response {
-    if let Some(token) = cookie_token(&request) {
-        if valid_session(&state, &token).await { return (StatusCode::OK, Json(serde_json::json!({ "authenticated": true }))).into_response(); }
-    }
-    unauthorized()
+    let Some(token) = cookie_token(&request) else { return unauthorized(); };
+    let Some((session_id, username)) = valid_session(&state,&token).await else { return unauthorized(); };
+    (StatusCode::OK, Json(serde_json::json!({"authenticated":true,"username":username,"session_id":session_id}))).into_response()
 }
 
-#[derive(Deserialize)]
-pub struct LoginRequest { pub username: String, pub password: String }
+#[derive(Deserialize)] pub struct LoginRequest { pub username: String, pub password: String }
+#[derive(Deserialize)] pub struct ChangePasswordRequest { pub current_password: String, pub new_password: String }
+#[derive(Serialize)] pub struct AuthSession { pub id: String, pub created_at: String, pub expires_at: String, pub current: bool }
 
-pub async fn login(State(state): State<AppState>, Json(value): Json<LoginRequest>) -> Response {
-    if !verify_password(&state, &value.username, &value.password).await { return unauthorized(); }
+pub async fn login(State(state): State<AppState>, request: Request<Body>, Json(value): Json<LoginRequest>) -> Response {
+    let ip = client_ip(&request);
+    if locked(&state,&ip).await { return (StatusCode::TOO_MANY_REQUESTS, "Too many failed login attempts. Try again in 30 minutes.").into_response(); }
+    let Some(user_id) = verify_password(&state,&value.username,&value.password).await else { record_failure(&state,&ip).await; return unauthorized(); };
+    clear_failures(&state,&ip).await;
     let token = Uuid::new_v4().to_string();
-    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-    let now = Utc::now();
-    let expires = now + Duration::days(30);
-    let user_id: Option<String> = sqlx::query("SELECT id FROM users WHERE username=?").bind(&value.username).fetch_optional(&state.db).await.ok().flatten().map(|row| row.get(0));
-    let Some(user_id) = user_id else { return unauthorized(); };
-    if sqlx::query("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)")
-        .bind(Uuid::new_v4().to_string()).bind(user_id).bind(hash).bind(expires.to_rfc3339()).bind(now.to_rfc3339()).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR, "Unable to create session").into_response(); }
-    Response::builder().status(StatusCode::OK)
-        .header(header::SET_COOKIE, format!("agentweb_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000"))
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"status":"authenticated"}"#)).unwrap()
+    let now = Utc::now(); let expires = now + Duration::days(30);
+    if sqlx::query("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(user_id).bind(hash(&token)).bind(expires.to_rfc3339()).bind(now.to_rfc3339()).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to create session").into_response(); }
+    Response::builder().status(StatusCode::OK).header(header::SET_COOKIE,format!("agentweb_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000")).header(header::CONTENT_TYPE,"application/json").body(Body::from(r#"{"status":"authenticated"}"#)).unwrap()
 }
 
 pub async fn logout(State(state): State<AppState>, request: Request<Body>) -> Response {
-    if let Some(token) = cookie_token(&request) {
-        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-        let _ = sqlx::query("DELETE FROM auth_sessions WHERE token_hash=?").bind(hash).execute(&state.db).await;
-    }
-    Response::builder().status(StatusCode::OK)
-        .header(header::SET_COOKIE, "agentweb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"status":"logged_out"}"#)).unwrap()
+    if let Some(token)=cookie_token(&request) { let _=sqlx::query("DELETE FROM auth_sessions WHERE token_hash=?").bind(hash(&token)).execute(&state.db).await; }
+    clear_cookie()
+}
+fn clear_cookie() -> Response { Response::builder().status(StatusCode::OK).header(header::SET_COOKIE,"agentweb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0").header(header::CONTENT_TYPE,"application/json").body(Body::from(r#"{"status":"logged_out"}"#)).unwrap() }
+
+async fn current_user(state: &AppState, request: &Request<Body>) -> Option<(String,String)> { valid_session(state,&cookie_token(request)?).await }
+
+pub async fn change_password(State(state): State<AppState>, request: Request<Body>, Json(value): Json<ChangePasswordRequest>) -> Response {
+    let Some((session_id,username))=current_user(&state,&request).await else { return unauthorized(); };
+    if value.new_password.len() < 8 { return (StatusCode::BAD_REQUEST,"Password must contain at least 8 characters").into_response(); }
+    if verify_password(&state,&username,&value.current_password).await.is_none() { return (StatusCode::BAD_REQUEST,"Current password is incorrect").into_response(); }
+    if sqlx::query("UPDATE users SET password_hash=?,updated_at=? WHERE username=?").bind(hash(&value.new_password)).bind(Utc::now().to_rfc3339()).bind(&username).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to update password").into_response(); }
+    let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&session_id).bind(&session_id).execute(&state.db).await;
+    (StatusCode::OK,Json(serde_json::json!({"status":"password_changed","username":username}))).into_response()
+}
+
+pub async fn list_sessions(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let Some((current_id,_))=current_user(&state,&request).await else { return unauthorized(); };
+    let rows=sqlx::query("SELECT id,created_at,expires_at FROM auth_sessions WHERE user_id=(SELECT user_id FROM auth_sessions WHERE id=?) AND expires_at>? ORDER BY created_at DESC").bind(&current_id).bind(Utc::now().to_rfc3339()).fetch_all(&state.db).await.unwrap_or_default();
+    let sessions=rows.into_iter().map(|r|AuthSession{id:r.get(0),created_at:r.get(1),expires_at:r.get(2),current:r.get::<String,_>(0)==current_id}).collect::<Vec<_>>();
+    (StatusCode::OK,Json(sessions)).into_response()
+}
+
+pub async fn revoke_all_sessions(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let Some((current_id,_))=current_user(&state,&request).await else { return unauthorized(); };
+    let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&current_id).bind(&current_id).execute(&state.db).await;
+    (StatusCode::OK,Json(serde_json::json!({"status":"revoked"}))).into_response()
 }
