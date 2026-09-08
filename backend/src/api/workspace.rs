@@ -28,12 +28,7 @@ pub async fn workspace_files(Path(id): Path<String>, State(s): State<AppState>) 
             let metadata = entry.metadata().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             if metadata.is_dir() { stack.push(path.clone()); }
             let relative = path.strip_prefix(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.to_string_lossy().replace('\\', "/");
-            out.push(serde_json::json!({
-                "name": entry.file_name().to_string_lossy(),
-                "path": relative,
-                "kind": if metadata.is_dir() { "directory" } else { "file" },
-                "size": metadata.len()
-            }));
+            out.push(serde_json::json!({ "name": entry.file_name().to_string_lossy(), "path": relative, "kind": if metadata.is_dir() { "directory" } else { "file" }, "size": metadata.len() }));
         }
     }
     out.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
@@ -49,7 +44,21 @@ pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): 
 
 pub async fn workspace_diff(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let session = get_session(Path(id), State(s)).await?.0;
-    let output = Command::new("git").arg("-C").arg(&session.workspace).args(["diff", "--no-ext-diff"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let root = workspace_root(&session.workspace).await?;
+    let output = Command::new("git").arg("-C").arg(&root).args(["diff", "--no-ext-diff", "--binary"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     if !output.status.success() { return Err(StatusCode::BAD_GATEWAY); }
-    Ok(Json(serde_json::json!({ "status": "ok", "diff": String::from_utf8_lossy(&output.stdout) })))
+    let mut diff = String::from_utf8_lossy(&output.stdout).into_owned();
+
+    let untracked = Command::new("git").arg("-C").arg(&root).args(["ls-files", "--others", "--exclude-standard"]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if untracked.status.success() {
+        for relative in String::from_utf8_lossy(&untracked.stdout).lines().filter(|line| !line.trim().is_empty()) {
+            let path = root.join(relative);
+            let metadata = match fs::metadata(&path).await { Ok(value) => value, Err(_) => continue };
+            if !metadata.is_file() { continue; }
+            let content = match fs::read_to_string(&path).await { Ok(value) => value, Err(_) => continue };
+            let lines = content.lines().map(|line| format!("+{line}")).collect::<Vec<_>>();
+            diff.push_str(&format!("diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n@@ -0,0 +1,{} @@\n{}\n", lines.len(), lines.join("\n")));
+        }
+    }
+    Ok(Json(serde_json::json!({ "status": "ok", "diff": diff })))
 }
