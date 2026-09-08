@@ -15,6 +15,8 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<()> {
     if !column_exists(pool, "sessions", "native_session_id").await? { sqlx::query("ALTER TABLE sessions ADD COLUMN native_session_id TEXT").execute(pool).await?; }
     if !column_exists(pool, "sessions", "model").await? { sqlx::query("ALTER TABLE sessions ADD COLUMN model TEXT").execute(pool).await?; }
     sqlx::query("CREATE TABLE IF NOT EXISTS auth_sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash)").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)").execute(pool).await?;
     sqlx::query("UPDATE schema_meta SET version=3").execute(pool).await?;
     Ok(())
 }
@@ -45,14 +47,15 @@ fn initial_password() -> String {
     const DIGIT: &[u8] = b"0123456789";
     const SPECIAL: &[u8] = b"!@#$%^&*_-+=?";
     const ALL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*_-+=?";
-    let bytes = *Uuid::new_v4().as_bytes();
-    let pick = |set: &[u8], index: usize| -> char { set[bytes[index] as usize % set.len()] as char };
-    let mut password = vec![pick(UPPER, 0), pick(LOWER, 1), pick(DIGIT, 2), pick(SPECIAL, 3)];
-    for index in 4..12 { password.push(pick(ALL, index)); }
+    let a = *Uuid::new_v4().as_bytes();
+    let b = *Uuid::new_v4().as_bytes();
+    let pick = |set: &[u8], byte: u8| -> char { set[byte as usize % set.len()] as char };
+    let mut password = vec![pick(UPPER, a[0]), pick(LOWER, a[1]), pick(DIGIT, a[2]), pick(SPECIAL, a[3])];
+    for index in 0..8 { password.push(pick(ALL, b[index])); }
+    for index in (1..password.len()).rev() { let swap = b[(index + 4) % b.len()] as usize % (index + 1); password.swap(index, swap); }
     password.into_iter().collect()
 }
 
-/// Create the first admin account on a fresh database.
 pub async fn ensure_default_admin(pool: &SqlitePool) -> Result<Option<String>> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(pool).await?;
     if count > 0 { return Ok(None); }
