@@ -2,10 +2,9 @@ use utoipa::OpenApi;
 
 /// Agent Web HTTP API documentation.
 ///
-/// The handlers are intentionally described here instead of coupling the runtime
-/// API implementation to Swagger annotations. This keeps the API source focused
-/// on behavior while ensuring every public HTTP/WebSocket route is visible in
-/// Swagger UI.
+/// Each HTTP operation has its own Rust helper because utoipa generates an
+/// internal `__path_*` type from the helper name. Keeping operation names unique
+/// avoids collisions when GET/POST share the same URL.
 #[derive(OpenApi)]
 #[openapi(
     info(
@@ -15,18 +14,23 @@ use utoipa::OpenApi;
     ),
     paths(
         health,
-        agents,
+        agents_get,
+        agents_post,
         agent_catalog,
-        runtime_settings,
+        runtime_settings_get,
+        runtime_settings_put,
         node_versions,
         node_install,
         agent_status,
         agent_models,
         agent_install,
-        sessions,
-        session,
+        sessions_get,
+        sessions_post,
+        session_get,
+        session_delete,
         session_model,
-        session_messages,
+        session_messages_get,
+        session_messages_post,
         session_interrupt,
         session_files,
         session_file,
@@ -40,15 +44,19 @@ pub struct ApiDoc;
 fn health() {}
 
 #[utoipa::path(get, path = "/api/agents", tag = "Agents", responses((status = 200, description = "List agents")))]
+fn agents_get() {}
+
 #[utoipa::path(post, path = "/api/agents", tag = "Agents", request_body = serde_json::Value, responses((status = 200, description = "Create agent")))]
-fn agents() {}
+fn agents_post() {}
 
 #[utoipa::path(get, path = "/api/agent-catalog", tag = "Agents", responses((status = 200, description = "Available agent catalog")))]
 fn agent_catalog() {}
 
 #[utoipa::path(get, path = "/api/runtime/settings", tag = "Runtime", responses((status = 200, description = "Runtime settings")))]
+fn runtime_settings_get() {}
+
 #[utoipa::path(put, path = "/api/runtime/settings", tag = "Runtime", request_body = serde_json::Value, responses((status = 200, description = "Updated runtime settings")))]
-fn runtime_settings() {}
+fn runtime_settings_put() {}
 
 #[utoipa::path(get, path = "/api/node/versions", tag = "Runtime", responses((status = 200, description = "Available Node.js versions")))]
 fn node_versions() {}
@@ -66,19 +74,25 @@ fn agent_models() {}
 fn agent_install() {}
 
 #[utoipa::path(get, path = "/api/sessions", tag = "Sessions", responses((status = 200, description = "List sessions")))]
+fn sessions_get() {}
+
 #[utoipa::path(post, path = "/api/sessions", tag = "Sessions", request_body = serde_json::Value, responses((status = 200, description = "Create session")))]
-fn sessions() {}
+fn sessions_post() {}
 
 #[utoipa::path(get, path = "/api/sessions/{id}", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Get session")))]
+fn session_get() {}
+
 #[utoipa::path(delete, path = "/api/sessions/{id}", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 204, description = "Session deleted")))]
-fn session() {}
+fn session_delete() {}
 
 #[utoipa::path(put, path = "/api/sessions/{id}/model", tag = "Models", params(("id" = String, Path, description = "Session id")), request_body = serde_json::Value, responses((status = 200, description = "Session model updated")))]
 fn session_model() {}
 
 #[utoipa::path(get, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Session messages")))]
+fn session_messages_get() {}
+
 #[utoipa::path(post, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session id")), request_body = serde_json::Value, responses((status = 200, description = "Message execution started")))]
-fn session_messages() {}
+fn session_messages_post() {}
 
 #[utoipa::path(post, path = "/api/sessions/{id}/interrupt", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Agent execution interrupted")))]
 fn session_interrupt() {}
