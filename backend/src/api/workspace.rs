@@ -6,6 +6,7 @@ use tokio::{fs, process::Command};
 
 const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_DIFF_TOTAL_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PREVIEW_BYTES: usize = 512 * 1024;
 
 async fn workspace_root(path: &str) -> Result<PathBuf, StatusCode> {
     fs::canonicalize(path).await.map_err(|_| StatusCode::NOT_FOUND)
@@ -61,7 +62,15 @@ pub async fn workspace_files(Path(id): Path<String>, State(s): State<AppState>) 
 pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let session = get_session(Path(id), State(s)).await?.0;
     let file = workspace_file_path(&session.workspace, &path).await?;
-    let content = fs::read_to_string(file).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let metadata = fs::metadata(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if metadata.len() > MAX_PREVIEW_BYTES as u64 {
+        return Ok(Json(serde_json::json!({ "path": path, "content": "[Agent Web] File is too large to preview (limit: 512 KiB)." })));
+    }
+    let bytes = fs::read(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if bytes.contains(&0) {
+        return Ok(Json(serde_json::json!({ "path": path, "content": "[Agent Web] Binary file preview is not supported." })));
+    }
+    let content = String::from_utf8_lossy(&bytes).into_owned();
     Ok(Json(serde_json::json!({ "path": path, "content": content })))
 }
 
