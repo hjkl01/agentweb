@@ -1,6 +1,7 @@
 #[derive(Debug, Clone)]
 pub struct AgentDefinition {
     pub id: &'static str,
+    #[allow(dead_code)]
     pub name: &'static str,
     pub kind: &'static str,
     pub command: &'static str,
