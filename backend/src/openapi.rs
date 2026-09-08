@@ -6,13 +6,14 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Agent Web API", version = "0.1.0", description = "Web API for Agent Web: agent runtimes, models, sessions, workspace files, diffs and streaming events."),
-    paths(health, auth_login, auth_me, agents_get, agents_post, agent_catalog, runtime_settings_get, runtime_settings_put, node_versions, node_install, agent_status, agent_models, agent_install, sessions_get, sessions_post, session_get, session_delete, session_model, session_messages_get, session_messages_post, session_interrupt, session_files, session_file, session_diff, session_events)
+    paths(health, auth_login, auth_me, auth_logout, agents_get, agents_post, agent_catalog, runtime_settings_get, runtime_settings_put, node_versions, node_install, agent_status, agent_models, agent_install, sessions_get, sessions_post, session_get, session_delete, session_model, session_messages_get, session_messages_post, session_interrupt, session_files, session_file, session_diff, session_events)
 )]
 pub struct ApiDoc;
 
 #[utoipa::path(get, path = "/api/health", tag = "System", responses((status = 200, description = "Service health")))] fn health() {}
 #[utoipa::path(post, path = "/api/auth/login", tag = "System", request_body = serde_json::Value, responses((status = 200, description = "Set authentication cookie"), (status = 401, description = "Invalid credentials")))] fn auth_login() {}
 #[utoipa::path(get, path = "/api/auth/me", tag = "System", responses((status = 200, description = "Check current authentication"), (status = 401, description = "Not authenticated")))] fn auth_me() {}
+#[utoipa::path(post, path = "/api/auth/logout", tag = "System", responses((status = 200, description = "Invalidate current session")))] fn auth_logout() {}
 #[utoipa::path(get, path = "/api/agents", tag = "Agents", responses((status = 200, description = "List agents")))] fn agents_get() {}
 #[utoipa::path(post, path = "/api/agents", tag = "Agents", request_body = serde_json::Value, responses((status = 200, description = "Create agent")))] fn agents_post() {}
 #[utoipa::path(get, path = "/api/agent-catalog", tag = "Agents", responses((status = 200, description = "Available agent catalog")))] fn agent_catalog() {}
@@ -32,6 +33,6 @@ pub struct ApiDoc;
 #[utoipa::path(post, path = "/api/sessions/{id}/messages", tag = "Messages", params(("id" = String, Path, description = "Session id")), request_body = serde_json::Value, responses((status = 200, description = "Message execution started")))] fn session_messages_post() {}
 #[utoipa::path(post, path = "/api/sessions/{id}/interrupt", tag = "Sessions", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Agent execution interrupted")))] fn session_interrupt() {}
 #[utoipa::path(get, path = "/api/sessions/{id}/files", tag = "Workspace", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Workspace file tree")))] fn session_files() {}
-#[utoipa::path(get, path = "/api/sessions/{id}/file/{path}", tag = "Workspace", params(("id" = String, Path, description = "Session id"), ("path" = String, Path, description = "Workspace-relative file path")), responses((status = 200, description = "File content")))] fn session_file() {}
+#[utoipa::path(get, path = "/api/sessions/{id}/file/{path}", tag = "Workspace", params(("id" = String, Path, description = "Workspace-relative file path")), responses((status = 200, description = "File content")))] fn session_file() {}
 #[utoipa::path(get, path = "/api/sessions/{id}/diff", tag = "Workspace", params(("id" = String, Path, description = "Session id")), responses((status = 200, description = "Git diff and status")))] fn session_diff() {}
 #[utoipa::path(get, path = "/api/sessions/{id}/events", tag = "Events", params(("id" = String, Path, description = "Session id")), responses((status = 101, description = "WebSocket event stream")))] fn session_events() {}
