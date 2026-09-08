@@ -133,4 +133,26 @@ impl ProcessAdapter {
             Err(anyhow!("agent exited with status {status}"))
         }
     }
+
+    pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
+        let child = self.processes.lock().await.get(session_id).cloned();
+        if let Some(child) = child {
+            self.interrupted.lock().await.insert(session_id.to_owned());
+            child.lock().await.kill().await?;
+        }
+        Ok(())
+    }
 }
+
+#[async_trait]
+impl AgentAdapter for ProcessAdapter {
+    async fn send_message(&self, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
+        self.run(ProcessKind::Generic, config, session_id, message, events).await
+    }
+
+    async fn interrupt(&self, session_id: &str) -> Result<()> {
+        self.interrupt_process(session_id).await
+    }
+}
+
+pub use super::session::run_session;
