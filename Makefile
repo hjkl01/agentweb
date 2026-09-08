@@ -28,9 +28,8 @@ install: ## Install frontend dependencies and fetch Rust dependencies
 
 dev: ## Start backend and frontend development servers
 	@trap 'kill 0' INT TERM EXIT; \
-		(cd backend && cargo run) & \
 		(cd frontend && npm run dev -- --host 127.0.0.1) & \
-		wait
+		cd backend && cargo run
 
 dev-backend: ## Start Rust backend development server
 	@mkdir -p data workspaces runtimes
@@ -82,7 +81,6 @@ docker-restart: ## Restart Docker services
 
 docker-logs: ## Follow Agent Web container logs
 	$(COMPOSE) logs -f agentweb
-
 docker-shell: ## Open a shell inside the Agent Web container
 	$(COMPOSE) exec agentweb /bin/sh
 
