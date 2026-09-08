@@ -1,4 +1,7 @@
-use super::{adapter::{AgentAdapter, AgentConfig, AgentRunResult}, codex_events, event_parser, pi_events, commands::{self, ProcessKind}};
+use super::{
+    adapter::{AgentAdapter, AgentConfig, AgentRunError, AgentRunResult},
+    codex_events, commands::{self, ProcessKind}, event_parser, pi_events,
+};
 use crate::events::{AgentEvent, EventBus};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -17,16 +20,10 @@ impl ProcessAdapter {
 
     fn native_session(kind: ProcessKind, value: &Value) -> Option<String> {
         match kind {
-            ProcessKind::Codex => {
-                if codex_events::is_session_event(value) {
-                    codex_events::native_session_id(value)
-                } else {
-                    None
-                }
-            }
+            ProcessKind::Codex => codex_events::is_session_event(value).then(|| codex_events::native_session_id(value)).flatten(),
             ProcessKind::Pi => {
                 let typ = value.get("type").and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
-                if typ == "session_start" || typ == "session.started" || typ == "session_starting" { event_parser::parsed(value).1 } else { None }
+                if matches!(typ.as_str(), "session_start" | "session.started" | "session_starting") { event_parser::parsed(value).1 } else { None }
             }
             ProcessKind::OpenCode => {
                 let typ = value.get("type").and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
@@ -83,13 +80,18 @@ impl ProcessAdapter {
 
     pub async fn run(&self, kind: ProcessKind, config: &AgentConfig, session_id: &str, message: &str, events: &EventBus) -> Result<AgentRunResult> {
         if self.processes.lock().await.contains_key(session_id) { return Err(anyhow!("session already has a running agent process")); }
-        self.interrupted.lock().await.remove(session_id);
         let mut command = commands::build(kind, config, message)?;
         let mut child_process = command.spawn()?;
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
         let child = Arc::new(Mutex::new(child_process));
         self.processes.lock().await.insert(session_id.to_owned(), child.clone());
+
+        let cancelled_before_start = self.interrupted.lock().await.contains(session_id);
+        if cancelled_before_start {
+            let _ = child.lock().await.kill().await;
+        }
+
         events.publish(AgentEvent::MessageStarted { session_id: session_id.into() });
         let result = Arc::new(Mutex::new(AgentRunResult { native_session_id: config.native_session_id.clone(), ..Default::default() }));
         let sid = session_id.to_owned();
@@ -118,11 +120,11 @@ impl ProcessAdapter {
         out.await??;
         err.await??;
         self.processes.lock().await.remove(session_id);
-        let was_interrupted = self.interrupted.lock().await.remove(session_id);
+        let was_interrupted = self.interrupted.lock().await.remove(session_id).unwrap_or(false);
         let result = result.lock().await.clone();
         if was_interrupted {
             events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
-            return Err(anyhow!("agent process interrupted"));
+            return Err(AgentRunError::Interrupted.into());
         }
         if status.success() {
             events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
@@ -135,11 +137,9 @@ impl ProcessAdapter {
     }
 
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
+        self.interrupted.lock().await.insert(session_id.to_owned());
         let child = self.processes.lock().await.get(session_id).cloned();
-        if let Some(child) = child {
-            self.interrupted.lock().await.insert(session_id.to_owned());
-            child.lock().await.kill().await?;
-        }
+        if let Some(child) = child { child.lock().await.kill().await?; }
         Ok(())
     }
 }
@@ -150,9 +150,7 @@ impl AgentAdapter for ProcessAdapter {
         self.run(ProcessKind::Generic, config, session_id, message, events).await
     }
 
-    async fn interrupt(&self, session_id: &str) -> Result<()> {
-        self.interrupt_process(session_id).await
-    }
+    async fn interrupt(&self, session_id: &str) -> Result<()> { self.interrupt_process(session_id).await }
 }
 
 pub use super::session::run_session;
