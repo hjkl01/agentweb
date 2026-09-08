@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useAgentRuntime } from './hooks/useAgentRuntime';
 import { useAgentInstallation } from './hooks/useAgentInstallation';
 import { useAgentModels } from './hooks/useAgentModels';
 import { useSession } from './hooks/useSession';
 import { useWorkspace } from './hooks/useWorkspace';
+import { useAutoScroll } from './hooks/useAutoScroll';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { WorkspacePanel } from './components/WorkspacePanel';
@@ -30,15 +31,7 @@ export function App({ sessionId, navigate }: Props) {
   const modelState = useAgentModels(current?.agent_id);
   const startupError = agentError || session.error || workspace.error || installation.error;
 
-  useEffect(() => {
-    if (!sessionId && session.sessions[0]) navigate(sessionPath(session.sessions[0].id), true);
-  }, [navigate, sessionId, session.sessions]);
-
-  useEffect(() => {
-    const chat = refs.chat.current;
-    if (!chat) return;
-    requestAnimationFrame(() => chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' }));
-  }, [session.messages, session.stream, session.activity]);
+  useAutoScroll(refs.chat, { contentVersion: `${session.messages.length}:${session.stream.length}:${session.activity.length}:${sessionId || ''}` });
 
   const createChat = async (agentId: string, model?: string) => {
     try {
@@ -51,6 +44,7 @@ export function App({ sessionId, navigate }: Props) {
   const send = async () => {
     if (!sessionId || !input.trim() || current?.status === 'running') return;
     const message = input.trim(); setInput('');
+    session.setActivity([]); session.setActivityOpen(false);
     session.setMessages(items => [...items, { id: crypto.randomUUID(), role: 'user', content: message }]);
     try { await session.sendMessage(sessionId, message); }
     catch (error) { session.setMessages(items => [...items, { id: crypto.randomUUID(), role: 'error', content: error instanceof Error ? error.message : String(error) }]); }
