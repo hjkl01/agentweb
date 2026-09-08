@@ -25,12 +25,8 @@ pub async fn run_session(
     message: String,
     events: EventBus,
 ) {
-    // Agent configuration belongs to the agents table; native session/model
-    // state belongs to this Web Session. Do not read non-existent session
-    // columns from agents, otherwise custom agents silently fall back.
     let row = sqlx::query("SELECT kind,command,working_directory FROM agents WHERE id=?")
         .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
-
     let (kind, command, working_directory) = if let Some(row) = row {
         (row.get(0), row.get(1), row.get(2))
     } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == session.agent_id) {
@@ -39,19 +35,15 @@ pub async fn run_session(
         events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() });
         return;
     };
-
     let config = AgentConfig {
-        id: kind.clone(),
-        command,
+        id: kind.clone(), command,
         working_directory: working_directory.or_else(|| Some(session.workspace.clone())),
         native_session_id: session.native_session_id.clone(),
         runtime_path: runtime_path(&db).await,
         model: session.model.clone(),
     };
-
     let _ = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=?")
         .bind(Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
-
     let adapter = agents.adapter(&kind).await;
     match adapter.send_message(&config, &session.id, &message, &events).await {
         Ok(result) => {
@@ -65,9 +57,13 @@ pub async fn run_session(
             }
         }
         Err(error) => {
-            let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?")
-                .bind(Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
-            events.publish(AgentEvent::Error { session_id: session.id, message: error.to_string() });
+            let message = error.to_string();
+            let status = if message == "agent process interrupted" { "interrupted" } else { "error" };
+            let _ = sqlx::query("UPDATE sessions SET status=?,updated_at=? WHERE id=?")
+                .bind(status).bind(Utc::now().to_rfc3339()).bind(&session.id).execute(&db).await;
+            if status == "error" {
+                events.publish(AgentEvent::Error { session_id: session.id, message });
+            }
         }
     }
 }
