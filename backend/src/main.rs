@@ -11,7 +11,7 @@ use anyhow::Result;
 use axum::{routing::get, Router};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::{net::SocketAddr, path::Path, str::FromStr};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -33,13 +33,14 @@ async fn main() -> Result<()> {
     }
     let state = state::AppState::new(pool);
     let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| "./frontend/dist".into());
+    let index_file = Path::new(&frontend_dir).join("index.html");
     let app = Router::new()
         .route("/api/health", get(api::health))
         .route("/api/agents", get(api::list_agents).post(api::create_agent))
         .route("/api/agent-catalog", get(api::catalog))
         .route("/api/runtime/settings", get(api::get_runtime_settings).put(api::update_runtime_settings))
         .route("/api/node/versions", get(api_node::node_versions))
-        .route("/api/node/install", axum::routing::post(api::install_node))
+        .route("/api/node/install", axum::routing::post(api_node::install_node))
         .route("/api/agents/{id}/status", get(api::agent_status))
         .route("/api/agents/{id}/models", get(api::agent_models))
         .route("/api/agents/{id}/install", axum::routing::post(api::install_agent))
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
         .route("/api/sessions/{id}/diff", get(api::workspace_diff))
         .route("/api/sessions/{id}/events", get(api::ws_events))
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
-        .fallback_service(ServeDir::new(frontend_dir))
+        .fallback_service(ServeDir::new(frontend_dir).not_found_service(ServeFile::new(index_file)))
         .with_state(state);
     let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
