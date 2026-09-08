@@ -88,9 +88,9 @@ pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): 
     };
     let metadata = fs::metadata(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
     if metadata.is_dir() { return Err(StatusCode::BAD_REQUEST); }
-    if metadata.len() > MAX_PREVIEW_BYTES as u64 { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": metadata.len(), "truncated": true, "binary": false, "message": "File is too large to preview (limit: 512 KiB)." })))); }
+    if metadata.len() > MAX_PREVIEW_BYTES as u64 { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": metadata.len(), "truncated": true, "binary": false, "message": "File is too large to preview (limit: 512 KiB)." }))); }
     let bytes = fs::read(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    if bytes.contains(&0) { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": bytes.len(), "truncated": false, "binary": true, "message": "Binary file preview is not supported." })))); }
+    if bytes.contains(&0) { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": bytes.len(), "truncated": false, "binary": true, "message": "Binary file preview is not supported." }))); }
     Ok(Json(serde_json::json!({ "path": path, "content": String::from_utf8_lossy(&bytes).into_owned(), "size": bytes.len(), "truncated": false, "binary": false, "source": "workspace" })))
 }
 
