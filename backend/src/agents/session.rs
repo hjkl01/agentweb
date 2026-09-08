@@ -1,62 +1,31 @@
-use super::{adapter::{AgentConfig, AgentRunError}, definition, AgentManager};
-use crate::{api::Session, events::{AgentEvent, EventBus}, installation::runtime};
+use super::{adapter::AgentRunError, definition, AgentManager};
+use crate::{api::{build_agent_config, Session}, events::{AgentEvent, EventBus}};
 use chrono::Utc;
 use sqlx::Row;
 use std::sync::Arc;
 
-async fn runtime_path(db: &sqlx::SqlitePool) -> Option<String> {
-    if let Ok(Some((version, _))) = runtime::detect_installed_node().await {
-        return Some(runtime::node_bin(&version).to_string_lossy().into_owned());
-    }
-    let configured = sqlx::query("SELECT value FROM runtime_settings WHERE key='node_path'")
-        .fetch_optional(db).await.ok().flatten().map(|row| row.get::<String, _>(0));
-    let path = configured?.trim().to_owned();
-    if path.is_empty() { return None; }
-    let path = std::path::PathBuf::from(path);
-    if path.is_file() { path.parent().map(|p| p.to_string_lossy().into_owned()) }
-    else if path.join("node").is_file() { Some(path.to_string_lossy().into_owned()) }
-    else { None }
-}
-
 async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, status: &str) {
-    let _ = sqlx::query("UPDATE sessions SET status=?,updated_at=? WHERE id=?")
+    let _ = sqlx::query("UPDATE sessions SET status=?,updated_at=? WHERE id=? AND status='running'")
         .bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).execute(db).await;
 }
 
-pub async fn run_session(
-    db: sqlx::SqlitePool,
-    agents: Arc<AgentManager>,
-    session: Session,
-    message: String,
-    events: EventBus,
-) {
-    let row = sqlx::query("SELECT kind,command FROM agents WHERE id=?")
-        .bind(&session.agent_id).fetch_optional(&db).await.ok().flatten();
-    let (kind, command) = if let Some(row) = row {
-        (row.get(0), row.get(1))
-    } else if let Some(def) = definition::BUILT_IN_AGENTS.iter().find(|a| a.id == session.agent_id) {
-        (def.kind.to_owned(), def.command.to_owned())
-    } else {
-        finish_session(&db, &session.id, "error").await;
-        events.publish(AgentEvent::Error { session_id: session.id, message: "agent not found".into() });
-        return;
+pub async fn run_session(db: sqlx::SqlitePool, agents: Arc<AgentManager>, session: Session, message: String, events: EventBus) {
+    let mut config = match build_agent_config(&db, &session.agent_id).await {
+        Ok(config) => config,
+        Err(_) => {
+            finish_session(&db, &session.id, "error").await;
+            events.publish(AgentEvent::Error { session_id: session.id, message: "agent executable not found".into() });
+            return;
+        }
     };
-
-    let config = AgentConfig {
-        id: kind.clone(),
-        command,
-        working_directory: Some(session.workspace.clone()),
-        native_session_id: session.native_session_id.clone(),
-        runtime_path: runtime_path(&db).await,
-        model: session.model.clone(),
-    };
+    config.working_directory = Some(session.workspace.clone());
+    config.native_session_id = session.native_session_id.clone();
+    config.model = session.model.clone();
+    let kind = config.id.clone();
     let adapter = agents.adapter(&kind).await;
     match adapter.send_message(&config, &session.id, &message, &events).await {
         Ok(result) => {
             let now = Utc::now().to_rfc3339();
-            // Only the task that still owns the running state may finalize it.
-            // An explicit interrupt changes the state first, so a late process
-            // completion cannot resurrect an interrupted session as idle.
             let updated = sqlx::query("UPDATE sessions SET native_session_id=?,status='idle',updated_at=? WHERE id=? AND status='running'")
                 .bind(&result.native_session_id).bind(&now).bind(&session.id).execute(&db).await;
             if updated.map(|r| r.rows_affected() == 1).unwrap_or(false) && !result.assistant_text.trim().is_empty() {
@@ -68,9 +37,7 @@ pub async fn run_session(
         Err(error) => {
             let interrupted = error.downcast_ref::<AgentRunError>().is_some();
             finish_session(&db, &session.id, if interrupted { "interrupted" } else { "error" }).await;
-            if !interrupted {
-                events.publish(AgentEvent::Error { session_id: session.id, message: error.to_string() });
-            }
+            if !interrupted { events.publish(AgentEvent::Error { session_id: session.id, message: error.to_string() }); }
         }
     }
 }
