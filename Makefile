@@ -23,7 +23,7 @@ help: ## Show available commands
 
 install: ## Install frontend dependencies and fetch Rust dependencies
 	@mkdir -p data workspaces runtimes
-	cd frontend && npm ci
+	cd frontend && npm install --no-audit --no-fund
 	cd backend && cargo fetch
 
 dev: ## Start backend and frontend development servers
