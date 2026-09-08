@@ -27,7 +27,23 @@ Agent Web Backend
 
 内置 Agent 和用户创建的 Agent 使用统一的 Agent ID。Catalog 负责运行时发现，SQLite `agents` 保存配置和安装状态。初始化数据库时会写入 Codex、Claude Code、Pi、OpenCode、OpenClaw 的内置记录，但使用 `INSERT OR IGNORE`，不会覆盖用户修改。
 
-## 3. Agent Adapter 与事件解析
+## 3. Backend HTTP 分层
+
+HTTP handler 不再全部堆在一个 `api.rs` 中，而按职责拆分：
+
+```text
+api/
+├── mod.rs          # 对外 handler re-export
+├── agents.rs       # Agent CRUD / status / models
+├── runtime.rs      # Node / Agent runtime / installation
+├── sessions.rs     # Session / messages / WebSocket
+├── workspace.rs    # File tree / file content / diff
+└── health.rs       # Health check
+```
+
+每个模块尽量保持单一职责并控制文件大小。新增 API 时优先放入对应模块，不再向一个大型 handler 文件继续追加逻辑。
+
+## 4. Agent Adapter 与事件解析
 
 每个 Agent 独立负责启动参数、native session/thread ID、模型发现、模型选择和原生事件映射。
 
@@ -46,7 +62,7 @@ agents/
 
 `process.rs` 不保存数据库 Session 编排逻辑，也不应该继续堆积 provider-specific 协议。`session.rs` 负责读取 Agent/Session 配置、调用对应 Adapter、保存 native session ID 和最终 assistant message。
 
-## 4. 模型配置与新建对话
+## 5. 模型配置与新建对话
 
 模型配置地址不能假设所有 Agent 相同。每个 Agent 使用自己的配置体系或官方 CLI 能力。
 
@@ -55,9 +71,9 @@ agents/
 - Codex：读取 `CODEX_HOME/config.toml` 或 `~/.codex/config.toml` 中的模型配置。
 - Pi：通过 `pi --list-models` 获取 Agent 自己的 Model Registry，避免复制 Pi 的 provider/model 配置。
 
-Pi 的模型配置本身还支持 `~/.pi/agent/models.json`，因此后端不应自行假设 provider、API URL 或认证方式。citeturn1search1turn1search4
+Pi 的模型配置还支持 `~/.pi/agent/models.json`，因此后端不应自行假设 provider、API URL 或认证方式。
 
-Codex 当前没有可依赖的 `codex models` 官方命令，因此暂时以其配置文件为模型发现来源，而不是伪造一个统一模型列表。citeturn1search5
+Codex 当前没有可依赖的统一 `codex models` 命令，因此暂时以其配置文件为模型发现来源，而不是伪造一个统一模型列表。
 
 ```text
 New Chat
@@ -73,7 +89,7 @@ POST /api/sessions
 
 模型属于 Session 配置，也可以通过 `PUT /api/sessions/{id}/model` 切换。
 
-## 5. Session / Thread
+## 6. Session / Thread
 
 Web Session ID 与 Agent 原生 Session/Thread ID 分离保存。
 
@@ -91,11 +107,15 @@ Web Session
 
 首次运行从 Agent 原生事件获取 native ID；后续消息由对应 Adapter 使用该 ID 恢复原生会话。最终 assistant 文本同时持久化到 `messages`，因此刷新页面不会丢失已经完成的回答。
 
-## 6. 实时事件
+Session 启动时还会把受控 Node runtime 的 `bin` 目录注入 PATH，确保通过 Agent Web 安装的 Codex/Pi/OpenCode/Claude Code 能在后台进程中正常启动，而不是依赖 Web Server 自己的 PATH。
+
+创建 Session 时必须先验证 Agent Registry 中存在对应 Agent，避免产生无法运行的孤立 Session。
+
+## 7. 实时事件
 
 统一事件包括 message、thinking、tool、command、file、error、session 生命周期事件。Session WebSocket 只转发对应 `session_id` 的事件。
 
-## 7. 前端结构
+## 8. 前端结构
 
 ```text
 hooks/
@@ -115,7 +135,7 @@ components/
 
 Activity 按生命周期合并：thinking.delta 更新同一个 Thinking Activity；Tool/Command output 追加到对应 Activity。
 
-## 8. Workspace / Diff
+## 9. Workspace / Diff
 
 Workspace API 对外使用 workspace-relative path，不再把服务器绝对路径直接暴露给前端。
 
@@ -128,23 +148,24 @@ Workspace API 对外使用 workspace-relative path，不再把服务器绝对路
 
 收到 `file.created`、`file.modified`、`file.deleted` 后通过 revision 触发 Workspace refresh；Diff 面板打开时重新请求当前 Session diff。
 
-## 9. Agent 安装
+## 10. Agent 安装
 
 Agent 安装属于 Catalog/Runtime 层，而不是 Agent Adapter。
 
-Codex 当前使用官方 npm 包 `@openai/codex` 安装，安装完成后再检测 `codex --version`。官方同时提供独立安装脚本和 npm 安装方式。citeturn0search0
+Codex 使用官方 npm 包 `@openai/codex` 安装。Node.js Agent 则统一使用受控 Node runtime 的 npm 安装路径，避免依赖宿主机全局 Node。
 
-Node.js Agent 则统一使用受控 Node runtime 的 npm 安装路径，避免依赖宿主机全局 Node。
+安装完成后重新执行 Agent 的 `--version` 检查，并更新 SQLite 中的 installed/version 状态。
 
-## 10. 文件大小控制
+## 11. 文件大小控制
 
 - 每个文件尽量保持单一职责。
 - 超过约 300 行时优先继续拆分。
 - `process.rs` 只处理公共进程生命周期。
 - Agent-specific 事件进入各自模块。
+- HTTP handler 按 agents/runtime/sessions/workspace 分模块。
 - GitHub 修改大文件前先分段读取，禁止盲目覆盖。
 
-## 11. Swagger
+## 12. Swagger
 
 ```text
 http://localhost:8080/docs
@@ -153,7 +174,7 @@ http://localhost:8080/api-doc/openapi.json
 
 所有 HTTP API 都应登记到 OpenAPI；WebSocket endpoint 同样记录用途和路径。
 
-## 12. 当前演进顺序
+## 13. 当前演进顺序
 
 1. 统一 Agent Definition / Catalog
 2. Codex / Pi 独立模型发现
@@ -161,7 +182,7 @@ http://localhost:8080/api-doc/openapi.json
 4. Codex / Pi Session 恢复
 5. Agent Activity 生命周期化
 6. Workspace / Diff 自动刷新
-7. 公共 process 与 provider event parser 拆分
+7. Backend API 按职责拆分
 8. Codex / Pi 安装与运行时隔离
 9. OpenCode 独立事件适配
 10. Claude Code Adapter
