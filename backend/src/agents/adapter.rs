@@ -3,6 +3,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::models::AgentModel;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub id: String,
@@ -10,6 +12,7 @@ pub struct AgentConfig {
     pub working_directory: Option<String>,
     pub native_session_id: Option<String>,
     pub runtime_path: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,4 +32,8 @@ pub trait AgentAdapter: Send + Sync {
     ) -> Result<AgentRunResult>;
 
     async fn interrupt(&self, session_id: &str) -> Result<()>;
+
+    async fn list_models(&self, config: &AgentConfig) -> Result<Vec<AgentModel>> {
+        crate::agents::models::discover(&config.id, config).await
+    }
 }
