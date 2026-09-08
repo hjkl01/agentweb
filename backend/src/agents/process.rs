@@ -87,8 +87,7 @@ impl ProcessAdapter {
         let child = Arc::new(Mutex::new(child_process));
         self.processes.lock().await.insert(session_id.to_owned(), child.clone());
 
-        let cancelled_before_start = self.interrupted.lock().await.contains(session_id);
-        if cancelled_before_start {
+        if self.interrupted.lock().await.contains(session_id) {
             let _ = child.lock().await.kill().await;
         }
 
@@ -120,7 +119,7 @@ impl ProcessAdapter {
         out.await??;
         err.await??;
         self.processes.lock().await.remove(session_id);
-        let was_interrupted = self.interrupted.lock().await.remove(session_id).unwrap_or(false);
+        let was_interrupted = self.interrupted.lock().await.remove(session_id);
         let result = result.lock().await.clone();
         if was_interrupted {
             events.publish(AgentEvent::MessageCompleted { session_id: session_id.into() });
