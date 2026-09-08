@@ -36,8 +36,10 @@ export type NodeInfo = {
 };
 
 export type FileItem = {
+  name: string;
   path: string;
-  kind: string;
+  kind: 'file' | 'directory' | string;
+  size: number;
 };
 
 export type WorkspaceFile = {
@@ -46,6 +48,7 @@ export type WorkspaceFile = {
 };
 
 export type WorkspaceDiff = {
+  status?: string;
   diff?: string;
   [key: string]: unknown;
 };
