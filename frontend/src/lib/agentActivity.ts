@@ -7,20 +7,18 @@ export function applyAgentEvent(items: ActivityItem[], event: AgentEvent): Activ
   const id = activityKey(event, data);
   const detail = detailFor(event, data);
   const label = labelFor(event, data);
-
-  if (isAppendEvent(event.type)) {
-    const index = items.findIndex(item => item.key === id && item.type.startsWith(baseType(event.type)));
-    if (index >= 0) {
-      const next = [...items];
-      next[index] = { ...next[index], type: event.type, detail: `${next[index].detail || ''}${detail || ''}` };
-      return next;
-    }
-  }
-
   const existing = items.findIndex(item => item.key === id && item.type.startsWith(baseType(event.type)));
+
   if (existing >= 0) {
     const next = [...items];
-    next[existing] = { ...next[existing], type: event.type, label, detail: detail || next[existing].detail };
+    const previous = next[existing];
+    const append = isAppendEvent(event.type) || event.type.startsWith('thinking.');
+    next[existing] = {
+      ...previous,
+      type: event.type,
+      label,
+      detail: append ? `${previous.detail || ''}${detail || ''}` : detail || previous.detail,
+    };
     return next;
   }
 
@@ -29,7 +27,7 @@ export function applyAgentEvent(items: ActivityItem[], event: AgentEvent): Activ
 
 function activityKey(event: AgentEvent, data: Record<string, any>) {
   if (event.type.startsWith('thinking.')) return 'thinking';
-  return String(data.activity_id || data.item_id || data.call_id || data.command_id || data.tool_call_id || event.type);
+  return String(data.activity_id || data.item_id || data.call_id || data.command_id || data.tool_call_id || `${event.type}:${crypto.randomUUID()}`);
 }
 
 function isAppendEvent(type: string) {
