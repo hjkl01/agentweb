@@ -9,13 +9,21 @@ export function useSession(active?: string) {
   const [stream, setStream] = useState('');
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [error, setError] = useState<string>();
 
   const refreshSessions = useCallback(async () => {
-    setSessions(await api<Session[]>('/sessions'));
+    try {
+      setSessions(await api<Session[]>('/sessions'));
+      setError(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load sessions:', error);
+      setError(message);
+    }
   }, []);
 
   useEffect(() => {
-    refreshSessions().catch(() => {});
+    refreshSessions();
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -30,13 +38,37 @@ export function useSession(active?: string) {
     ]).then(([loadedMessages, loadedFiles]) => {
       setMessages(loadedMessages);
       setFiles(loadedFiles);
-    }).catch(() => {});
+      setError(undefined);
+    }).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load session:', error);
+      setError(message);
+    });
 
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${protocol}://${location.host}/api/sessions/${active}/events`);
 
+    ws.onerror = () => {
+      const message = 'WebSocket 连接失败，请确认后端正在运行。';
+      console.error(message);
+      setError(message);
+    };
+
+    ws.onclose = event => {
+      if (!event.wasClean) {
+        console.warn('Agent event WebSocket closed unexpectedly:', event.code);
+      }
+    };
+
     ws.onmessage = event => {
-      const ev = JSON.parse(event.data) as AgentEvent;
+      let ev: AgentEvent;
+      try {
+        ev = JSON.parse(event.data) as AgentEvent;
+      } catch (error) {
+        console.error('Invalid Agent event:', event.data, error);
+        return;
+      }
+
       const data = ev.data || {};
       const addActivity = (label: string, detail?: string) => {
         setActivity(items => [...items, { id: crypto.randomUUID(), type: ev.type, label, detail }].slice(-40));
@@ -66,9 +98,9 @@ export function useSession(active?: string) {
       if (ev.type === 'agent.error' || ev.type === 'error') addActivity('Agent error', data.message);
 
       if (ev.type === 'session.completed' || ev.type === 'session.error') {
-        api<ChatMessage[]>(`/sessions/${active}/messages`).then(setMessages).catch(() => {});
-        api<FileItem[]>(`/sessions/${active}/files`).then(setFiles).catch(() => {});
-        refreshSessions().catch(() => {});
+        api<ChatMessage[]>(`/sessions/${active}/messages`).then(setMessages).catch(console.error);
+        api<FileItem[]>(`/sessions/${active}/files`).then(setFiles).catch(console.error);
+        refreshSessions().catch(console.error);
       }
     };
 
@@ -100,6 +132,6 @@ export function useSession(active?: string) {
   return {
     sessions, setSessions, messages, setMessages, files, setFiles, stream,
     activity, activityOpen, setActivityOpen, refreshSessions,
-    createSession, sendMessage, deleteSession,
+    createSession, sendMessage, deleteSession, error,
   };
 }
