@@ -11,6 +11,23 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::query("CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL)").execute(pool).await?;
     sqlx::query("CREATE TABLE IF NOT EXISTS runtime_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").execute(pool).await?;
     sqlx::query("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(pool).await?;
+    seed_builtin_agents(pool).await?;
+    Ok(())
+}
+
+async fn seed_builtin_agents(pool: &SqlitePool) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let agents = [
+        ("codex", "Codex", "codex", "codex"),
+        ("pi", "Pi", "pi", "pi"),
+        ("opencode", "OpenCode", "opencode", "opencode"),
+        ("openclaw", "OpenClaw", "openclaw", "openclaw"),
+        ("claude-code", "Claude Code", "claude-code", "claude"),
+    ];
+    for (id, name, kind, command) in agents {
+        sqlx::query("INSERT OR IGNORE INTO agents(id,name,kind,command,installed,created_at,updated_at) VALUES(?,?,?,?,0,?,?)")
+            .bind(id).bind(name).bind(kind).bind(command).bind(&now).bind(&now).execute(pool).await?;
+    }
     Ok(())
 }
 
