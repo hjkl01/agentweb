@@ -46,9 +46,10 @@ pub async fn basic_auth(State(state): State<AppState>, request: Request<Body>, n
 }
 
 pub async fn me(State(state): State<AppState>, request: Request<Body>) -> Response {
-    let authenticated = cookie_token(&request).map(|token| valid_session(&state, &token)).unwrap_or_else(|| Box::pin(async { false }));
-    if authenticated.await { (StatusCode::OK, Json(serde_json::json!({ "authenticated": true }))).into_response() }
-    else { unauthorized() }
+    if let Some(token) = cookie_token(&request) {
+        if valid_session(&state, &token).await { return (StatusCode::OK, Json(serde_json::json!({ "authenticated": true }))).into_response(); }
+    }
+    unauthorized()
 }
 
 #[derive(Deserialize)]
