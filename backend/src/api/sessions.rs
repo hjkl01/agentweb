@@ -40,9 +40,7 @@ async fn create_workspace(session_id: &str, requested: Option<&str>) -> Result<S
     let name = requested.unwrap_or("").trim();
     let relative = if name.is_empty() || name == "." { session_id.to_owned() } else { name.to_owned() };
     let relative_path = FsPath::new(&relative);
-    if relative_path.is_absolute() || relative_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    if relative_path.is_absolute() || relative_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err(StatusCode::BAD_REQUEST); }
     let workspace = base.join(relative_path);
     fs::create_dir_all(&workspace).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let canonical = fs::canonicalize(&workspace).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -63,13 +61,16 @@ pub async fn create_session(State(s): State<AppState>, Json(v): Json<CreateSessi
     Ok(Json(Session { id, agent_id: v.agent_id, title, workspace, status: "idle".into(), native_session_id: None, model: v.model }))
 }
 
-pub async fn get_session(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Session>, StatusCode> {
-    Ok(Json(load_session(&s.db, &id).await?))
-}
+pub async fn get_session(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Session>, StatusCode> { Ok(Json(load_session(&s.db, &id).await?)) }
 
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
-    let _ = s.agents.interrupt(&id).await;
-    match sqlx::query("DELETE FROM sessions WHERE id=?").bind(id).execute(&s.db).await { Ok(_) => StatusCode::NO_CONTENT, Err(_) => StatusCode::INTERNAL_SERVER_ERROR }
+    let session = match load_session(&s.db, &id).await { Ok(session) => session, Err(status) => return status };
+    if session.status == "running" { let _ = s.agents.interrupt(&id).await; }
+    match sqlx::query("DELETE FROM sessions WHERE id=?").bind(&id).execute(&s.db).await {
+        Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT,
+        Ok(_) => StatusCode::NOT_FOUND,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 #[derive(Deserialize)]
@@ -83,8 +84,7 @@ pub async fn set_session_model(Path(id): Path<String>, State(s): State<AppState>
 }
 
 pub async fn list_messages(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at")
-        .bind(id).fetch_all(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at").bind(id).fetch_all(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows.into_iter().map(|r| serde_json::json!({"id":r.get::<String,_>(0),"role":r.get::<String,_>(1),"content":r.get::<String,_>(2),"created_at":r.get::<String,_>(3)})).collect()))
 }
 
@@ -96,50 +96,34 @@ pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Jso
     let now = Utc::now().to_rfc3339();
     let claimed = sqlx::query("UPDATE sessions SET status='running',updated_at=? WHERE id=? AND status!='running'")
         .bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if claimed.rows_affected() == 0 {
-        let _ = load_session(&s.db, &id).await?;
-        return Err(StatusCode::CONFLICT);
-    }
+    if claimed.rows_affected() == 0 { let _ = load_session(&s.db, &id).await?; return Err(StatusCode::CONFLICT); }
     let session = load_session(&s.db, &id).await?;
-    if let Err(_) = sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)")
-        .bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(&now).execute(&s.db).await
-    {
-        let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=?")
-            .bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await;
+    if sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(&now).execute(&s.db).await.is_err() {
+        let _ = sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=? AND status='running'").bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let events = s.events.clone();
-    let db = s.db.clone();
-    let agents = s.agents.clone();
+    let events = s.events.clone(); let db = s.db.clone(); let agents = s.agents.clone();
     tokio::spawn(async move { crate::agents::process::run_session(db, agents, session, v.message, events).await; });
     Ok(Json(serde_json::json!({"status":"started"})))
 }
 
 pub async fn interrupt(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let session = load_session(&s.db, &id).await?;
-    if session.status != "running" { return Ok(Json(serde_json::json!({"status":session.status}))); }
+    let now = Utc::now().to_rfc3339();
+    let changed = sqlx::query("UPDATE sessions SET status='interrupted',updated_at=? WHERE id=? AND status='running'")
+        .bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if changed.rows_affected() == 0 { return Ok(Json(serde_json::json!({"status":load_session(&s.db, &id).await?.status}))); }
     s.agents.interrupt(&id).await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(serde_json::json!({"status":"interrupted"})))
 }
 
 fn event_session_id(event: &AgentEvent) -> Option<&str> {
     match event {
-        AgentEvent::SessionStarted { session_id } | AgentEvent::MessageStarted { session_id } |
-        AgentEvent::MessageDelta { session_id, .. } | AgentEvent::MessageCompleted { session_id } |
-        AgentEvent::ThinkingStarted { session_id } | AgentEvent::ThinkingDelta { session_id, .. } |
-        AgentEvent::ThinkingCompleted { session_id } | AgentEvent::ToolStarted { session_id, .. } |
-        AgentEvent::ToolOutput { session_id, .. } | AgentEvent::ToolCompleted { session_id, .. } |
-        AgentEvent::FileCreated { session_id, .. } | AgentEvent::FileModified { session_id, .. } |
-        AgentEvent::FileDeleted { session_id, .. } | AgentEvent::CommandStarted { session_id, .. } |
-        AgentEvent::CommandOutput { session_id, .. } | AgentEvent::CommandCompleted { session_id } |
-        AgentEvent::Error { session_id, .. } | AgentEvent::SessionCompleted { session_id } => Some(session_id),
+        AgentEvent::SessionStarted { session_id } | AgentEvent::MessageStarted { session_id } | AgentEvent::MessageDelta { session_id, .. } | AgentEvent::MessageCompleted { session_id } | AgentEvent::ThinkingStarted { session_id } | AgentEvent::ThinkingDelta { session_id, .. } | AgentEvent::ThinkingCompleted { session_id } | AgentEvent::ToolStarted { session_id, .. } | AgentEvent::ToolOutput { session_id, .. } | AgentEvent::ToolCompleted { session_id, .. } | AgentEvent::FileCreated { session_id, .. } | AgentEvent::FileModified { session_id, .. } | AgentEvent::FileDeleted { session_id, .. } | AgentEvent::CommandStarted { session_id, .. } | AgentEvent::CommandOutput { session_id, .. } | AgentEvent::CommandCompleted { session_id } | AgentEvent::Error { session_id, .. } | AgentEvent::SessionCompleted { session_id } => Some(session_id),
         AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
     }
 }
 
-pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| websocket(socket, s, id))
-}
+pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse { ws.on_upgrade(move |socket| websocket(socket, s, id)) }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
     let mut rx = s.events.subscribe();
