@@ -5,6 +5,7 @@ import './style.css';
 import './styles/workspace.css';
 import './styles/responsive.css';
 import './styles/code-preview.css';
+import './styles/mentions.css';
 
 const favicon = document.createElement('link');
 favicon.rel = 'icon';
