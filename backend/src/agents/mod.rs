@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod codex;
 pub mod codex_events;
+pub mod commands;
 pub mod definition;
 pub mod event_parser;
 pub mod generic;
@@ -41,10 +42,6 @@ impl AgentManager {
         adapter
     }
 
-    /// A Web Session only exposes its session id, not the provider kind.
-    /// Ask every instantiated adapter to interrupt; only the adapter owning
-    /// the process will find and kill it. This also keeps the HTTP layer
-    /// independent from provider-specific process registries.
     pub async fn interrupt(&self, session_id: &str) -> Result<()> {
         let adapters = self.adapters.lock().await.values().cloned().collect::<Vec<_>>();
         for adapter in adapters { adapter.interrupt(session_id).await?; }
