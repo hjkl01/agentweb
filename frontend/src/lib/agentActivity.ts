@@ -4,20 +4,20 @@ const MAX_ITEMS = 40;
 
 export function applyAgentEvent(items: ActivityItem[], event: AgentEvent): ActivityItem[] {
   const data = event.data || {};
-  const id = String(data.activity_id || data.item_id || data.call_id || data.command_id || data.tool_call_id || event.type);
+  const id = activityKey(event, data);
   const detail = detailFor(event, data);
   const label = labelFor(event, data);
 
-  if (event.type.endsWith('.delta') || event.type === 'tool.output' || event.type === 'command.output') {
-    const index = items.findIndex(item => item.key === id && item.type === baseType(event.type));
+  if (isAppendEvent(event.type)) {
+    const index = items.findIndex(item => item.key === id && item.type.startsWith(baseType(event.type)));
     if (index >= 0) {
       const next = [...items];
-      next[index] = { ...next[index], detail: `${next[index].detail || ''}${detail || ''}` };
+      next[index] = { ...next[index], type: event.type, detail: `${next[index].detail || ''}${detail || ''}` };
       return next;
     }
   }
 
-  const existing = items.findIndex(item => item.key === id && item.type === baseType(event.type));
+  const existing = items.findIndex(item => item.key === id && item.type.startsWith(baseType(event.type)));
   if (existing >= 0) {
     const next = [...items];
     next[existing] = { ...next[existing], type: event.type, label, detail: detail || next[existing].detail };
@@ -25,6 +25,15 @@ export function applyAgentEvent(items: ActivityItem[], event: AgentEvent): Activ
   }
 
   return [...items, { id: crypto.randomUUID(), key: id, type: event.type, label, detail }].slice(-MAX_ITEMS);
+}
+
+function activityKey(event: AgentEvent, data: Record<string, any>) {
+  if (event.type.startsWith('thinking.')) return 'thinking';
+  return String(data.activity_id || data.item_id || data.call_id || data.command_id || data.tool_call_id || event.type);
+}
+
+function isAppendEvent(type: string) {
+  return type.endsWith('.delta') || type === 'tool.output' || type === 'command.output';
 }
 
 function baseType(type: string) {
