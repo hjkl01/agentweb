@@ -18,7 +18,13 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
 }
 
 #[derive(Deserialize)] pub struct InstallNodeRequest { pub version: String }
-pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, axum::http::StatusCode> { runtime::install_node(&v.version, |_| {}).await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?; Ok(Json(serde_json::json!({ "status": "installed", "version": v.version }))) }
+pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let requested = v.version.trim();
+    let available = runtime::available_node_versions().await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let version = available.iter().find(|item| *item == requested || item.starts_with(&format!("{requested}."))).cloned().ok_or(axum::http::StatusCode::BAD_REQUEST)?;
+    runtime::install_node(&version, |_| {}).await.map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    Ok(Json(serde_json::json!({ "status": "installed", "version": version })))
+}
 
 #[derive(Serialize)] pub struct CatalogItem { pub id: &'static str, pub name: &'static str, pub description: &'static str, pub installed: bool, pub requirements: Vec<&'static str>, pub install_command: &'static str }
 
@@ -38,7 +44,7 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
     let mut result = Vec::with_capacity(AGENTS.len());
     for (id, name, description, install_command, requirements) in AGENTS {
         let binary = match *id { "qwen-code" => "qwen", "gemini-cli" => "gemini", other => other };
-        result.push(CatalogItem { id, name, description, installed: command_exists(binary).await, requirements: requirements.to_vec(), install_command });
+        result.push(CatalogItem { id: *id, name: *name, description: *description, installed: command_exists(binary).await, requirements: requirements.to_vec(), install_command: *install_command });
     }
     Json(result)
 }
