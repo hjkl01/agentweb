@@ -11,17 +11,10 @@ use tokio::{
 };
 
 #[derive(Clone, Copy)]
-pub enum ProcessKind {
-    Codex,
-    OpenCode,
-    Pi,
-    Generic,
-}
+pub enum ProcessKind { Codex, OpenCode, Pi, Generic }
 
 #[derive(Default)]
-pub struct ProcessAdapter {
-    processes: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
-}
+pub struct ProcessAdapter { processes: Mutex<HashMap<String, Arc<Mutex<Child>>>> }
 
 impl ProcessAdapter {
     pub fn new() -> Self { Self::default() }
@@ -40,9 +33,7 @@ impl ProcessAdapter {
             ProcessKind::Codex => {
                 args = if let Some(id) = &config.native_session_id {
                     vec!["exec".into(), "resume".into(), id.clone(), "--json".into()]
-                } else {
-                    vec!["exec".into(), "--json".into()]
-                };
+                } else { vec!["exec".into(), "--json".into()] };
                 if let Some(model) = &config.model { args.extend(["--model".into(), model.clone()]); }
                 args.push(message.into());
             }
@@ -77,62 +68,125 @@ impl ProcessAdapter {
         objects.iter().find_map(|o| v.get(*o).and_then(|x| Self::string(x, keys)))
     }
 
+    fn item_type(v: &Value) -> String {
+        Self::nested_string(v, &["item", "message", "assistantMessageEvent"], &["type", "kind"])
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    }
+
     fn parsed(v: &Value) -> (String, Option<String>, Option<String>, Option<String>) {
         let typ = Self::string(v, &["type", "event", "method"]).unwrap_or_default();
         let sid = Self::string(v, &["thread_id", "session_id", "sessionId", "sessionID"]).or_else(|| {
             Self::nested_string(v, &["properties", "session", "context"], &["sessionID", "sessionId", "id"])
         });
-        let text = Self::string(v, &["delta", "text", "message", "output", "content"]).or_else(|| {
-            Self::nested_string(v, &["item", "part", "message", "content"], &["delta", "text", "output"])
-        });
-        let name = Self::string(v, &["tool", "tool_name", "toolName", "name", "command"]).or_else(|| {
-            Self::nested_string(v, &["tool", "item", "part"], &["name", "toolName", "command"])
-        });
+        let text = Self::string(v, &["delta", "text", "message", "output", "content"])
+            .or_else(|| Self::nested_string(v, &["item", "part", "message", "content"], &["delta", "text", "output", "content"]))
+            .or_else(|| Self::nested_string(v, &["assistantMessageEvent"], &["delta", "content"]));
+        let name = Self::string(v, &["tool", "tool_name", "toolName", "name", "command"])
+            .or_else(|| Self::nested_string(v, &["tool", "item", "part"], &["name", "toolName", "command"]))
+            .or_else(|| Self::string(v, &["toolName"]));
         (typ, sid, text, name)
     }
 
     fn native_session_event(kind: ProcessKind, value: &Value, typ: &str) -> bool {
         let t = typ.to_ascii_lowercase();
         match kind {
-            ProcessKind::Codex => t == "thread.started" || t == "thread_start" || value.get("thread_id").is_some() && t.contains("thread"),
-            ProcessKind::Pi => t == "session_start" || t == "session.started" || t == "session_starting" || value.get("session_id").is_some() && t.contains("session"),
-            ProcessKind::OpenCode => t == "session.created" || t == "session.created" || (value.get("sessionID").is_some() && t.contains("session")),
+            ProcessKind::Codex => t == "thread.started" || t == "thread_start" || (value.get("thread_id").is_some() && t.contains("thread")),
+            ProcessKind::Pi => t == "session_start" || t == "session.started" || t == "session_starting" || (value.get("session_id").is_some() && t.contains("session")),
+            ProcessKind::OpenCode => t == "session.created" || (value.get("sessionID").is_some() && t.contains("session")),
             ProcessKind::Generic => false,
         }
+    }
+
+    fn text_from_json(v: &Value) -> Option<String> {
+        if let Some(s) = v.as_str() { return Some(s.to_owned()); }
+        if let Some(s) = Self::string(v, &["text", "content", "delta", "output"]) { return Some(s); }
+        if let Some(content) = v.get("content").and_then(Value::as_array) {
+            let text = content.iter().filter_map(Self::text_from_json).collect::<Vec<_>>().join("");
+            if !text.is_empty() { return Some(text); }
+        }
+        None
     }
 
     fn normalize(session_id: &str, v: &Value, line: &str, events: &EventBus) -> Option<String> {
         let (typ, _, text, name) = Self::parsed(v);
         let t = typ.to_ascii_lowercase();
-        let start = t.contains("start") || t == "turn.started";
-        let done = t.contains("complete") || t.contains("finish") || t == "turn.completed";
-        let tool = name.unwrap_or_else(|| "tool".into());
-        if t.contains("tool") {
+        let nested = Self::item_type(v);
+        let combined = format!("{t} {nested}");
+        let start = t.contains("start") || t == "turn.started" || t == "turn_start";
+        let done = t.contains("complete") || t.contains("finish") || t == "turn.completed" || t == "turn_end";
+
+        // Pi JSON mode: message_update carries the actual assistant event in
+        // assistantMessageEvent, including text_delta and thinking_delta.
+        if t == "message_update" {
+            if let Some(kind) = v.get("assistantMessageEvent").and_then(|x| x.get("type")).and_then(Value::as_str) {
+                match kind {
+                    "text_delta" => return v.get("assistantMessageEvent").and_then(|x| x.get("delta")).and_then(Value::as_str).map(str::to_owned),
+                    "thinking_delta" => {
+                        if let Some(x) = v.get("assistantMessageEvent").and_then(|x| x.get("delta")).and_then(Value::as_str) {
+                            events.publish(AgentEvent::ThinkingDelta { session_id: session_id.into(), text: x.to_owned() });
+                        }
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Pi tool execution events.
+        if t == "tool_execution_start" {
+            let tool = Self::string(v, &["toolName", "tool_name", "name"]).unwrap_or_else(|| "tool".into());
+            events.publish(AgentEvent::ToolStarted { session_id: session_id.into(), tool });
+            return None;
+        }
+        if t == "tool_execution_update" {
+            let tool = Self::string(v, &["toolName", "tool_name", "name"]).unwrap_or_else(|| "tool".into());
+            if let Some(x) = v.get("partialResult").and_then(Self::text_from_json) {
+                events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool, output: x });
+            }
+            return None;
+        }
+        if t == "tool_execution_end" {
+            let tool = Self::string(v, &["toolName", "tool_name", "name"]).unwrap_or_else(|| "tool".into());
+            if let Some(x) = v.get("result").and_then(Self::text_from_json) {
+                events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool: tool.clone(), output: x });
+            }
+            events.publish(AgentEvent::ToolCompleted { session_id: session_id.into(), tool });
+            return None;
+        }
+
+        // Codex JSON mode represents commands and tools as thread items.
+        if combined.contains("commandexecution") || combined.contains("command_execution") {
+            let command = Self::string(v, &["command"]).or_else(|| Self::nested_string(v, &["item"], &["command"])).unwrap_or_else(|| "command".into());
+            if start { events.publish(AgentEvent::CommandStarted { session_id: session_id.into(), command }); }
+            if let Some(x) = v.get("aggregated_output").and_then(Value::as_str).or_else(|| v.get("item").and_then(|i| i.get("aggregated_output")).and_then(Value::as_str)) {
+                events.publish(AgentEvent::CommandOutput { session_id: session_id.into(), output: x.to_owned() });
+            }
+            if done { events.publish(AgentEvent::CommandCompleted { session_id: session_id.into() }); }
+            return None;
+        }
+        if combined.contains("mcp_tool_call") || combined.contains("toolcall") || combined.contains("tool_call") || t.contains("tool") {
+            let tool = name.unwrap_or_else(|| "tool".into());
             if start { events.publish(AgentEvent::ToolStarted { session_id: session_id.into(), tool: tool.clone() }); }
             if let Some(x) = text.clone() { events.publish(AgentEvent::ToolOutput { session_id: session_id.into(), tool: tool.clone(), output: x }); }
             if done { events.publish(AgentEvent::ToolCompleted { session_id: session_id.into(), tool }); }
             return None;
         }
-        if t.contains("command") || t.contains("shell") || t.contains("exec") {
-            if start { events.publish(AgentEvent::CommandStarted { session_id: session_id.into(), command: tool.clone() }); }
-            if let Some(x) = text.clone() { events.publish(AgentEvent::CommandOutput { session_id: session_id.into(), output: x }); }
-            if done { events.publish(AgentEvent::CommandCompleted { session_id: session_id.into() }); }
-            return None;
-        }
-        if t.contains("reason") || t.contains("think") || t.contains("thought") {
+        if t.contains("reason") || t.contains("think") || t.contains("thought") || nested.contains("reasoning") {
             if start { events.publish(AgentEvent::ThinkingStarted { session_id: session_id.into() }); }
             if let Some(x) = text.clone() { events.publish(AgentEvent::ThinkingDelta { session_id: session_id.into(), text: x }); }
             if done { events.publish(AgentEvent::ThinkingCompleted { session_id: session_id.into() }); }
             return None;
         }
         if t.contains("file") {
-            if let Some(path) = Self::string(v, &["path", "file_path", "filePath"]) {
+            if let Some(path) = Self::string(v, &["path", "file_path", "filePath"]).or_else(|| Self::nested_string(v, &["item"], &["path", "file_path", "filePath"])) {
                 events.publish(if t.contains("creat") { AgentEvent::FileCreated { session_id: session_id.into(), path } } else if t.contains("delet") { AgentEvent::FileDeleted { session_id: session_id.into(), path } } else { AgentEvent::FileModified { session_id: session_id.into(), path } });
             }
             return None;
         }
         if t == "error" || t.contains("failed") || t.contains("failure") {
             events.publish(AgentEvent::Error { session_id: session_id.into(), message: Self::string(v, &["message", "error"]).unwrap_or_else(|| line.to_owned()) });
+            return None;
         }
         text
     }
@@ -156,16 +210,16 @@ impl ProcessAdapter {
                 while let Some(line) = lines.next_line().await? {
                     if let Ok(v) = serde_json::from_str::<Value>(&line) {
                         let (typ, native, _, _) = Self::parsed(&v);
-                        // Only persist the native conversation identifier emitted by
-                        // an explicit session/thread lifecycle event. Once captured,
-                        // later tool/message objects cannot overwrite it with an
-                        // unrelated id field.
                         if rr.lock().await.native_session_id.is_none() && native.is_some() && Self::native_session_event(kind, &v, &typ) {
-                            rr.lock().await.native_session_id = native;
+                            let native = native.unwrap();
+                            rr.lock().await.native_session_id = Some(native.clone());
+                            ev.publish(AgentEvent::SessionStarted { session_id: sid.clone() });
                         }
                         if let Some(text) = Self::normalize(&sid, &v, &line, &ev) {
                             let typ = Self::parsed(&v).0.to_ascii_lowercase();
-                            if typ.contains("agent_message") || typ.contains("assistant") || typ.contains("text") || typ == "item.completed" || typ == "message_update" || typ == "message.part.updated" {
+                            let nested = Self::item_type(&v);
+                            let is_assistant = typ.contains("agent_message") || typ.contains("assistant") || typ.contains("text") || typ == "item.completed" || typ == "message_update" || typ == "message_end" || nested.contains("agentmessage") || nested.contains("assistant");
+                            if is_assistant {
                                 rr.lock().await.assistant_text.push_str(&text);
                                 ev.publish(AgentEvent::MessageDelta { session_id: sid.clone(), text });
                             }
@@ -179,10 +233,16 @@ impl ProcessAdapter {
             }
             Ok::<(), anyhow::Error>(())
         });
+        let err_sid = sid.clone();
+        let err_ev = ev.clone();
         let err = tokio::spawn(async move {
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
-                while lines.next_line().await?.is_some() {}
+                while let Some(line) = lines.next_line().await? {
+                    if !line.trim().is_empty() {
+                        err_ev.publish(AgentEvent::ToolOutput { session_id: err_sid.clone(), tool: "stderr".into(), output: line });
+                    }
+                }
             }
             Ok::<(), anyhow::Error>(())
         });
@@ -196,6 +256,7 @@ impl ProcessAdapter {
             events.publish(AgentEvent::SessionCompleted { session_id: session_id.into() });
             Ok(result)
         } else {
+            events.publish(AgentEvent::Error { session_id: session_id.into(), message: format!("agent exited with status {status}") });
             Err(anyhow!("agent exited with status {status}"))
         }
     }
