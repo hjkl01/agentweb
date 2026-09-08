@@ -16,6 +16,13 @@ pub async fn list_messages(Path(id): Path<String>, State(s): State<AppState>) ->
 #[derive(Deserialize)]
 pub struct SendMessage { pub message: String }
 
+fn build_title(message: &str) -> String {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut title = normalized.chars().take(40).collect::<String>();
+    if normalized.chars().count() > 40 { title.push('…'); }
+    if title.is_empty() { "New Chat".into() } else { title }
+}
+
 pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<SendMessage>) -> Result<Json<serde_json::Value>, StatusCode> {
     if v.message.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let now=Utc::now().to_rfc3339();
@@ -26,9 +33,18 @@ pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Jso
         let _=sqlx::query("UPDATE sessions SET status='error',updated_at=? WHERE id=? AND status='running'").bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    let title = if session.title.trim().is_empty() || session.title == "New Chat" {
+        let title = build_title(&v.message);
+        sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
+            .bind(&title).bind(&now).bind(&id).execute(&s.db).await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        title
+    } else { session.title.clone() };
+
     let events=s.events.clone(); let db=s.db.clone(); let agents=s.agents.clone();
     tokio::spawn(async move { crate::agents::process::run_session(db,agents,session,v.message,events).await; });
-    Ok(Json(serde_json::json!({"status":"started"})))
+    Ok(Json(serde_json::json!({"status":"started", "title":title})))
 }
 
 pub async fn interrupt(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
