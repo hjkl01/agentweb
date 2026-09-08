@@ -27,13 +27,6 @@ pub fn parsed(value: &Value) -> (String, Option<String>, Option<String>, Option<
     (typ, sid, text, name)
 }
 
-pub fn text(value: &Value) -> Option<String> {
-    if let Some(s) = value.as_str() { return Some(s.to_owned()); }
-    if let Some(s) = string(value, &["text", "content", "delta", "output"]) { return Some(s); }
-    value.get("content").and_then(Value::as_array).map(|items| items.iter().filter_map(text).collect::<Vec<_>>().join(""))
-        .filter(|s| !s.is_empty())
-}
-
 pub fn emit_generic(session_id: &str, value: &Value, line: &str, events: &EventBus) -> Option<String> {
     let (typ, _, output, name) = parsed(value);
     let t = typ.to_ascii_lowercase();
