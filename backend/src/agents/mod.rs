@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod codex;
 pub mod generic;
+pub mod models;
 pub mod openclaw;
 pub mod opencode;
 pub mod pi;
