@@ -66,15 +66,32 @@ pub async fn workspace_files(Path(id): Path<String>, State(s): State<AppState>) 
     Ok(Json(out))
 }
 
+async fn git_file(root: &PathBuf, path: &str) -> Result<(String, usize), StatusCode> {
+    if ignored_relative(path) { return Err(StatusCode::FORBIDDEN); }
+    let output = Command::new("git").arg("-C").arg(root).args(["show", &format!("HEAD:{path}")]).output().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !output.status.success() { return Err(StatusCode::NOT_FOUND); }
+    if output.stdout.len() > MAX_PREVIEW_BYTES { return Err(StatusCode::PAYLOAD_TOO_LARGE); }
+    if output.stdout.contains(&0) { return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE); }
+    Ok((String::from_utf8_lossy(&output.stdout).into_owned(), output.stdout.len()))
+}
+
 pub async fn workspace_file(Path((id, path)): Path<(String, String)>, State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let session = get_session(Path(id), State(s)).await?.0;
-    let file = workspace_file_path(&session.workspace, &path).await?;
+    let file = match workspace_file_path(&session.workspace, &path).await {
+        Ok(file) => file,
+        Err(StatusCode::NOT_FOUND) => {
+            let root = workspace_root(&session.workspace).await?;
+            let (content, size) = git_file(&root, &path).await?;
+            return Ok(Json(serde_json::json!({ "path": path, "content": content, "size": size, "truncated": false, "binary": false, "source": "git" })));
+        }
+        Err(status) => return Err(status),
+    };
     let metadata = fs::metadata(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
     if metadata.is_dir() { return Err(StatusCode::BAD_REQUEST); }
     if metadata.len() > MAX_PREVIEW_BYTES as u64 { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": metadata.len(), "truncated": true, "binary": false, "message": "File is too large to preview (limit: 512 KiB)." })))); }
     let bytes = fs::read(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
     if bytes.contains(&0) { return Ok(Json(serde_json::json!({ "path": path, "content": "", "size": bytes.len(), "truncated": false, "binary": true, "message": "Binary file preview is not supported." })))); }
-    Ok(Json(serde_json::json!({ "path": path, "content": String::from_utf8_lossy(&bytes).into_owned(), "size": bytes.len(), "truncated": false, "binary": false })))
+    Ok(Json(serde_json::json!({ "path": path, "content": String::from_utf8_lossy(&bytes).into_owned(), "size": bytes.len(), "truncated": false, "binary": false, "source": "workspace" })))
 }
 
 fn append_diff(diff: &mut String, block: &str) -> bool {
