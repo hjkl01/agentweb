@@ -133,3 +133,4 @@ impl ProcessAdapter {
             Err(anyhow!("agent exited with status {status}"))
         }
     }
+}
