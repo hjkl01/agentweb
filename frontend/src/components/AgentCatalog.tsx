@@ -11,25 +11,16 @@ type Props = {
 export function AgentCatalog({ open, agents, node, nodeVersion, installingNode, installingAgent, nodeInstallFeedback, onClose, onNodeVersionChange, onInstallNode, onInstallAgent, onInstallCustomAgent }: Props) {
   const [customCommand, setCustomCommand] = useState('');
   if (!open) return null;
-  const installed = new Set(node?.installed || []);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="agent-panel" onClick={event => event.stopPropagation()}>
         <div className="modal-head"><div><h3>Agents & runtimes</h3><p>Node.js 和 Agent 都按需安装，安装结果保存在 /data。</p></div><button className="icon-button" onClick={onClose}><X size={16} /></button></div>
         <div className="runtime-card">
-          <div className="card-title"><div><strong>Node.js</strong><span>可用版本 / 已安装版本</span></div><span>{node?.active || 'not installed'}</span></div>
-          <div className="runtime-row"><input value={nodeVersion} onChange={event => onNodeVersionChange(event.target.value)} placeholder="输入版本，例如 22.16.0 或 22" /><button onClick={() => onInstallNode()} disabled={!nodeVersion.trim() || installingNode}>{installingNode ? 'Installing…' : '安装输入版本'}</button></div>
-          <div className="node-version-list">
-            {!node?.available?.length && <span className="installed-note">正在获取可用 Node.js 版本…</span>}
-            {node?.available?.map(version => {
-              const isInstalled = installed.has(version);
-              const isInstalling = installingNode && nodeVersion === version;
-              return <div className={`node-version-row ${isInstalled ? 'installed' : ''}`} key={version}>
-                <span className="node-version-name">Node.js {version}</span>
-                {isInstalled ? <span className="node-status"><CheckCircle2 size={14} />已安装</span> : <button className="node-install-button" disabled={installingNode} onClick={() => { onNodeVersionChange(version); onInstallNode(version); }}>{isInstalling ? <><LoaderCircle size={13} className="spin" />安装中…</> : <><Download size={13} />安装</>}</button>}
-              </div>;
-            })}
+          <div className="card-title"><div><strong>Node.js</strong><span>已安装版本</span></div><span>{node?.active || 'not installed'}</span></div>
+          <div className="runtime-row"><input value={nodeVersion} onChange={event => onNodeVersionChange(event.target.value)} placeholder="输入版本，例如 22.16.0 或 22" /><button onClick={() => onInstallNode()} disabled={!nodeVersion.trim() || installingNode}>{installingNode ? 'Installing…' : '安装'}</button></div>
+          <div className="installed-node-list">
+            {node?.installed?.length ? node.installed.map(version => <div className="node-version-row installed" key={version}><span className="node-version-name">Node.js {version}</span><span className="node-status"><CheckCircle2 size={14} />已安装</span></div>) : <span className="installed-note">暂无已安装的 Node.js 版本。</span>}
           </div>
           {nodeInstallFeedback && <div className={`node-install-feedback ${nodeInstallFeedback.state}`} role="status"><CheckCircle2 size={15} /><span>{nodeInstallFeedback.message}</span></div>}
         </div>
