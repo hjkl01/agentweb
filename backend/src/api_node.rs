@@ -33,11 +33,10 @@ fn error_response(status: StatusCode, code: &str, message: impl Into<String>) ->
 const AGENTS: &[(&str, &str, &str, &str, &[&str])] = &[
     ("codex", "Codex", "OpenAI coding agent", "npm install -g @openai/codex", &["Node.js"]),
     ("claude-code", "Claude Code", "Anthropic coding agent", "npm install -g @anthropic-ai/claude-code", &["Node.js"]),
-    ("qwen-code", "Qwen Code", "Alibaba Qwen coding agent", "npm install -g @qwen-code/qwen-code", &["Node.js"]),
     ("gemini-cli", "Gemini CLI", "Google Gemini coding agent", "npm install -g @google/gemini-cli", &["Node.js"]),
     ("opencode", "OpenCode", "Open-source coding agent", "npm install -g opencode-ai", &["Node.js"]),
     ("pi", "Pi", "Pi coding agent", "npm install -g @mariozechner/pi-coding-agent", &["Node.js"]),
-    ("openclaw", "OpenClaw", "General purpose agent", "npm install -g openclaw", &["Node.js"]),
+    ("qwen-code", "Qwen Code", "Alibaba Qwen coding agent", "npm install -g @qwen-code/qwen-code", &["Node.js"]),
 ];
 async fn command_exists(command: &str) -> bool { Command::new("which").arg(command).output().await.map(|o| o.status.success()).unwrap_or(false) }
 async fn agent_installed(command: &str) -> bool {
@@ -57,10 +56,6 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
 pub async fn install_custom_agent(State(s): State<AppState>, Json(v): Json<CustomAgentInstall>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let command = v.command.trim().to_owned();
     if command.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "INSTALL_COMMAND_REQUIRED", "install command is required")); }
-
-    // Managed Node.js is installed under AGENTWEB_RUNTIME_DIR, not /usr/bin.
-    // Resolve the selected Node installation explicitly so shell commands such as
-    // `npm install -g ...` do not depend on the container's system PATH.
     let configured = sqlx::query("SELECT value FROM runtime_settings WHERE key=?")
         .bind("node_path").fetch_optional(&s.db).await.ok().flatten()
         .map(|row| row.get::<String, _>(0)).filter(|p| !p.trim().is_empty());
@@ -70,18 +65,15 @@ pub async fn install_custom_agent(State(s): State<AppState>, Json(v): Json<Custo
     } else {
         runtime::installed_versions().await.ok().and_then(|versions| versions.first().cloned()).map(|version| runtime::node_bin(&version))
     }.ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_RUNTIME_UNAVAILABLE", "Node.js runtime is not configured or installed"))?;
-
     let npm = node_bin.join("npm");
     if !node_bin.join("node").is_file() || !npm.is_file() {
         return Err(error_response(StatusCode::BAD_REQUEST, "NPM_NOT_FOUND", format!("managed Node.js is incomplete: npm was not found at {}", npm.display())));
     }
-
     let mut process = Command::new("sh");
     process.args(["-lc", &command]);
     let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
     let prefix = node_bin.parent().unwrap_or(node_bin.as_path());
     process.env("PATH", path).env("NPM_CONFIG_PREFIX", prefix);
-
     let output = process.output().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "AGENT_INSTALL_START_FAILED", format!("failed to start install command: {error:#}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().chars().take(3000).collect::<String>();
