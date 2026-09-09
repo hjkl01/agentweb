@@ -10,8 +10,9 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
+      # - /home/user/project/:/home/agentweb/project
     environment:
-      - HOME=/data/home
+      - HOME=/home/agentweb
       - XDG_CONFIG_HOME=/data/home/.config
       - XDG_DATA_HOME=/data/home/.local/share
       - XDG_CACHE_HOME=/data/home/.cache
