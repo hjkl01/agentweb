@@ -1,44 +1,21 @@
 import { Bot, CheckCircle2, Download, FileCog, Terminal, X } from 'lucide-react';
-import { useState } from 'react';
-import type { Agent, NodeInfo } from '../types';
+import { useEffect, useState } from 'react';
+import type { Agent, AgentModel, NodeInfo } from '../types';
+import { api } from '../lib/api';
 
 type Feedback = { version: string; state: 'success' | 'error'; message: string };
-type Props = {
-  open: boolean; agents: Agent[]; node?: NodeInfo; nodeVersion: string; installingNode: boolean; installingAgent?: string; nodeInstallFeedback?: Feedback;
-  onClose: () => void; onNodeVersionChange: (version: string) => void; onInstallNode: (version?: string) => void; onInstallAgent: (id: string) => void; onInstallCustomAgent: (command: string) => void; onConfigureAgent?: (agent: Agent) => void;
-};
+type Props = { open:boolean; agents:Agent[]; node?:NodeInfo; nodeVersion:string; installingNode:boolean; installingAgent?:string; nodeInstallFeedback?:Feedback; defaultAgentId?:string; defaultModel?:string; onDefaultChange:(agentId?:string,model?:string)=>void; onClose:()=>void; onNodeVersionChange:(version:string)=>void; onInstallNode:(version?:string)=>void; onInstallAgent:(id:string)=>void; onInstallCustomAgent:(command:string)=>void; onConfigureAgent?:(agent:Agent)=>void };
 
-export function AgentCatalog({ open, agents, node, nodeVersion, installingNode, installingAgent, nodeInstallFeedback, onClose, onNodeVersionChange, onInstallNode, onInstallAgent, onInstallCustomAgent, onConfigureAgent }: Props) {
-  const [customCommand, setCustomCommand] = useState('');
-  if (!open) return null;
-  const installBusy = Boolean(installingAgent);
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="agent-panel" onClick={event => event.stopPropagation()}>
-        <div className="modal-head"><div><h3>Agents & runtimes</h3><p>Node.js 和 Agent 都按需安装，安装结果保存在 /data。</p></div><button className="icon-button" onClick={onClose}><X size={16} /></button></div>
-        <div className="runtime-card">
-          <div className="card-title"><div><strong>Node.js</strong><span>已安装版本</span></div><span>{node?.active || 'not installed'}</span></div>
-          <div className="runtime-row"><input value={nodeVersion} onChange={event => onNodeVersionChange(event.target.value)} placeholder="输入版本，例如 22.16.0 或 22" /><button onClick={() => onInstallNode()} disabled={!nodeVersion.trim() || installingNode || installBusy}>{installingNode ? 'Installing…' : '安装'}</button></div>
-          <div className="installed-node-list">
-            {node?.installed?.length ? node.installed.map(version => <div className="node-version-row installed" key={version}><span className="node-version-name">Node.js {version}</span><span className="node-status"><CheckCircle2 size={14} />已安装</span></div>) : <span className="installed-note">暂无已安装的 Node.js 版本。</span>}
-          </div>
-          {nodeInstallFeedback && <div className={`node-install-feedback ${nodeInstallFeedback.state}`} role="status"><CheckCircle2 size={15} /><span>{nodeInstallFeedback.message}</span></div>}
-        </div>
-        <div className="modal-head"><div><h3>热门 Agent</h3><p>安装过程中会锁定所有安装按钮，避免同时修改同一个 Node 环境。</p></div></div>
-        <div className="agent-list">
-          {agents.map(agent => <div className="agent-card" key={agent.id}>
-            <div className="agent-icon"><Bot size={17} /></div>
-            <div className="agent-info"><div className="agent-name">{agent.name} {agent.installed && <CheckCircle2 size={14} />}</div><p>{agent.description || 'No description'}</p>{agent.install_command && <code>{agent.install_command}</code>}</div>
-            {agent.installed ? <div className="agent-actions">{onConfigureAgent && <button onClick={() => onConfigureAgent(agent)}><FileCog size={14} />配置</button>}<span className="badge installed">Installed</span></div> : <button onClick={() => onInstallAgent(agent.id)} disabled={installBusy}><Download size={14} />{installingAgent === agent.id ? 'Installing…' : '一键安装'}</button>}
-          </div>)}
-        </div>
-        <div className="custom-agent-card">
-          <div className="card-title"><div><strong>自定义 Agent</strong><span>输入任意安装命令</span></div><Terminal size={17} /></div>
-          <p>例如 npm、pnpm、bun、pip、curl 等命令都可以直接执行。</p>
-          <div className="runtime-row"><input value={customCommand} onChange={event => setCustomCommand(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (!installBusy) onInstallCustomAgent(customCommand); } }} placeholder="例如 npm install -g @qwen-code/qwen-code" /><button onClick={() => onInstallCustomAgent(customCommand)} disabled={!customCommand.trim() || installBusy}>{installingAgent === 'custom' ? 'Installing…' : '安装'}</button></div>
-        </div>
-      </div>
-    </div>
-  );
+export function AgentCatalog({open,agents,node,nodeVersion,installingNode,installingAgent,nodeInstallFeedback,defaultAgentId,defaultModel,onDefaultChange,onClose,onNodeVersionChange,onInstallNode,onInstallAgent,onInstallCustomAgent,onConfigureAgent}:Props){
+ const [customCommand,setCustomCommand]=useState(''); const [models,setModels]=useState<AgentModel[]>([]); const [modelLoading,setModelLoading]=useState(false); const installed=agents.filter(a=>a.installed); const installBusy=Boolean(installingAgent);
+ useEffect(()=>{if(!open||!defaultAgentId){setModels([]);return}let cancelled=false;setModelLoading(true);api<AgentModel[]>(`/agents/${defaultAgentId}/models`).then(value=>{if(!cancelled)setModels(value)}).catch(()=>{if(!cancelled)setModels([])}).finally(()=>{if(!cancelled)setModelLoading(false)});return()=>{cancelled=true}},[open,defaultAgentId]);
+ if(!open)return null;
+ const chooseDefaultAgent=(id:string)=>onDefaultChange(id||undefined,undefined); const chooseDefaultModel=(value:string)=>onDefaultChange(defaultAgentId,value||undefined);
+ return <div className="modal-backdrop" onClick={onClose}><div className="agent-panel" onClick={event=>event.stopPropagation()}>
+  <div className="modal-head"><div><h3>Agents & runtimes</h3><p>Node.js 和 Agent 都按需安装，安装结果保存在 /data。</p></div><button className="icon-button" onClick={onClose}><X size={16}/></button></div>
+  <div className="runtime-card"><div className="card-title"><div><strong>Node.js</strong><span>已安装版本</span></div><span>{node?.active||'not installed'}</span></div><div className="runtime-row"><input value={nodeVersion} onChange={event=>onNodeVersionChange(event.target.value)} placeholder="输入版本，例如 22.16.0 或 22"/><button onClick={()=>onInstallNode()} disabled={!nodeVersion.trim()||installingNode||installBusy}>{installingNode?'Installing…':'安装'}</button></div><div className="installed-node-list">{node?.installed?.length?node.installed.map(version=><div className="node-version-row installed" key={version}><span className="node-version-name">Node.js {version}</span><span className="node-status"><CheckCircle2 size={14}/>已安装</span></div>):<span className="installed-note">暂无已安装的 Node.js 版本。</span>}</div>{nodeInstallFeedback&&<div className={`node-install-feedback ${nodeInstallFeedback.state}`} role="status"><CheckCircle2 size={15}/><span>{nodeInstallFeedback.message}</span></div>}</div>
+  <div className="runtime-card"><div className="card-title"><div><strong>默认 Agent</strong><span>用于新建对话</span></div></div><div className="runtime-row"><select value={defaultAgentId||''} onChange={event=>chooseDefaultAgent(event.target.value)}><option value="">未设置默认 Agent</option>{installed.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}</select><select value={defaultModel||''} onChange={event=>chooseDefaultModel(event.target.value)} disabled={!defaultAgentId||modelLoading}><option value="">{modelLoading?'正在加载模型…':models.length?'未设置默认模型':'该 Agent 暂无可列出的模型'}</option>{models.map(model=><option key={model.id} value={model.id}>{model.name}{model.provider?` · ${model.provider}`:''}</option>)}</select></div><p>默认模型始终从当前默认 Agent 的模型列表中选择。</p></div>
+  <div className="modal-head"><div><h3>热门 Agent</h3><p>安装过程中会锁定所有安装按钮，避免同时修改同一个 Node 环境。</p></div></div><div className="agent-list">{agents.map(agent=><div className="agent-card" key={agent.id}><div className="agent-icon"><Bot size={17}/></div><div className="agent-info"><div className="agent-name">{agent.name} {agent.installed&&<CheckCircle2 size={14}/>}</div><p>{agent.description||'No description'}</p>{agent.install_command&&<code>{agent.install_command}</code>}</div>{agent.installed?<div className="agent-actions">{onConfigureAgent&&<button onClick={()=>onConfigureAgent(agent)}><FileCog size={14}/>配置</button>}<span className="badge installed">Installed</span></div>:<button onClick={()=>onInstallAgent(agent.id)} disabled={installBusy}><Download size={14}/>{installingAgent===agent.id?'Installing…':'一键安装'}</button>}</div>)}</div>
+  <div className="custom-agent-card"><div className="card-title"><div><strong>自定义 Agent</strong><span>输入任意安装命令</span></div><Terminal size={17}/></div><p>例如 npm、pnpm、bun、pip、curl 等命令都可以直接执行。</p><div className="runtime-row"><input value={customCommand} onChange={event=>setCustomCommand(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();if(!installBusy)onInstallCustomAgent(customCommand)}}} placeholder="例如 npm install -g @qwen-code/qwen-code"/><button onClick={()=>onInstallCustomAgent(customCommand)} disabled={!customCommand.trim()||installBusy}>{installingAgent==='custom'?'Installing…':'安装'}</button></div></div>
+ </div></div>;
 }
