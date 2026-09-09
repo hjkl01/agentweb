@@ -12,7 +12,7 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
 
   const installNode = async (requestedVersion?: string) => {
     const version = (requestedVersion || nodeVersion).trim();
-    if (!version || installingNode) return;
+    if (!version || installingNode || installingAgent) return;
     setInstallingNode(true);
     setError(undefined);
     setNodeInstallFeedback(undefined);
@@ -31,6 +31,7 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
   };
 
   const installAgent = async (id: string) => {
+    if (installingAgent || installingNode) return;
     const agent = agents.find(item => item.id === id);
     if (!agent?.install_command) return;
     if (agent.requirements.includes('Node.js') && !(node?.installed || []).length) {
@@ -41,9 +42,6 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
     setInstallingAgent(id);
     setError(undefined);
     try {
-      // Built-in Agents use the dedicated backend installer. It invokes the
-      // npm binary from the selected/managed Node.js installation directly,
-      // rather than relying on the container's system PATH.
       await api(`/agents/${encodeURIComponent(id)}/install`, { method: 'POST' });
       await refreshAgents?.();
     } catch (error) {
@@ -57,7 +55,7 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
 
   const installCustomAgent = async (command: string) => {
     const value = command.trim();
-    if (!value) return;
+    if (!value || installingAgent || installingNode) return;
     setInstallingAgent('custom');
     setError(undefined);
     try {
