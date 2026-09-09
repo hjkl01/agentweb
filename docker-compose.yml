@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    image: agentweb
     restart: unless-stopped
     init: true
     stop_grace_period: 10s
@@ -10,14 +11,14 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-      # - /home/user/project/:/home/agentweb/project
+      - /home/user/workspaces/:/workspaces
     environment:
-      - HOME=/home/agentweb
+      - HOME=/data/home/
       - XDG_CONFIG_HOME=/data/home/.config
       - XDG_DATA_HOME=/data/home/.local/share
       - XDG_CACHE_HOME=/data/home/.cache
       - DATABASE_URL=sqlite:///data/agentweb.db
-      - AGENTWEB_WORKSPACE_DIR=/data/workspaces
+      - AGENTWEB_WORKSPACE_DIR=/workspaces
       - AGENTWEB_RUNTIME_DIR=/data/runtimes/node
       - AGENTWEB_FRONTEND_DIR=/app/frontend
       - RUST_LOG=info
