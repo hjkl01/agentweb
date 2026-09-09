@@ -14,13 +14,16 @@ use anyhow::Result;
 use axum::{middleware, routing::get, Router};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::{path::Path, str::FromStr};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
+use tracing::Level;
+use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main()->Result<()>{
- tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+ let filter=EnvFilter::try_from_default_env().unwrap_or_else(|_|EnvFilter::new("info"));
+ tracing_subscriber::fmt().with_env_filter(filter).init();
  let db_url=std::env::var("DATABASE_URL").unwrap_or_else(|_|"sqlite://./data/agentweb.db".into());
  if let Some(path)=db_url.strip_prefix("sqlite://"){let path=path.split('?').next().unwrap_or(path);if let Some(parent)=Path::new(path).parent(){if !parent.as_os_str().is_empty(){tokio::fs::create_dir_all(parent).await?;}}}
  let db_options=SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true); let pool:SqlitePool=SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
@@ -35,6 +38,6 @@ async fn main()->Result<()>{
   .route("/sessions/{id}/messages",get(api::list_messages).post(api::send_message)).route("/sessions/{id}/interrupt",axum::routing::post(api::interrupt)).route("/sessions/{id}/files",get(api::workspace_files)).route("/sessions/{id}/file/{*path}",get(api::workspace_file)).route("/sessions/{id}/diff",get(api::workspace_diff)).route("/sessions/{id}/events",get(api::ws_events))
   .layer(middleware::from_fn_with_state(state.clone(),auth::basic_auth));
  let api_routes=Router::new().route("/health",get(api::health)).route("/auth/login",axum::routing::post(auth::login)).route("/auth/me",get(auth::me)).route("/auth/logout",axum::routing::post(auth::logout)).merge(protected_api).layer(middleware::from_fn(api_error::normalize));
- let app=Router::new().nest("/api",api_routes).merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json",openapi::ApiDoc::openapi())).fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file))).with_state(state);
+ let app=Router::new().nest("/api",api_routes).merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json",openapi::ApiDoc::openapi())).fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file))).layer(TraceLayer::new_for_http()).with_state(state);
  let listener=tokio::net::TcpListener::bind("0.0.0.0:8080").await?; axum::serve(listener,app).await?; Ok(())
 }
