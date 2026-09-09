@@ -2,90 +2,13 @@ use serde::Serialize;
 use std::{env, fs, path::{Path, PathBuf}};
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AgentCapabilities {
-    pub models: bool,
-    pub native_config: bool,
-    pub skills: bool,
-    pub agents_md: bool,
-}
-
+pub struct AgentCapabilities { pub models: bool, pub native_config: bool, pub skills: bool, pub agents_md: bool }
 #[derive(Debug, Clone, Serialize)]
-pub struct AgentConfigFile {
-    pub path: String,
-    pub exists: bool,
-    pub content: String,
-    pub editable: bool,
-}
-
-pub fn capabilities(kind: &str) -> AgentCapabilities {
-    match kind {
-        "codex" | "pi" => AgentCapabilities { models: true, native_config: true, skills: true, agents_md: true },
-        _ => AgentCapabilities { models: false, native_config: true, skills: false, agents_md: true },
-    }
-}
-
-pub fn known_paths(kind: &str) -> Vec<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/data"));
-    match kind {
-        "codex" => {
-            let mut paths = Vec::new();
-            if let Some(custom) = env::var_os("CODEX_HOME") { paths.push(PathBuf::from(custom).join("config.toml")); }
-            paths.push(home.join(".codex/config.toml"));
-            paths
-        }
-        "pi" => vec![home.join(".pi/agent/models.json")],
-        // These are common native config locations; they are suggestions only.
-        // The user can replace the path before saving if their Agent uses another layout.
-        "opencode" => vec![home.join(".config/opencode/opencode.json"), home.join(".config/opencode/opencode.jsonc")],
-        "claude-code" => vec![home.join(".claude/settings.json")],
-        "gemini-cli" => vec![home.join(".gemini/settings.json")],
-        "qwen-code" => vec![home.join(".qwen/settings.json")],
-        "openclaw" => vec![home.join(".openclaw/openclaw.json")],
-        _ => Vec::new(),
-    }
-}
-
-pub fn suggested_path(kind: &str) -> PathBuf {
-    known_paths(kind).into_iter().next().unwrap_or_else(|| {
-        env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/data")).join(".agentweb/agent-config.json")
-    })
-}
-
-pub fn load(kind: &str, requested: Option<&str>) -> anyhow::Result<AgentConfigFile> {
-    let path = resolve_path(kind, requested)?;
-    let exists = path.is_file();
-    let content = if exists { fs::read_to_string(&path)? } else { String::new() };
-    Ok(AgentConfigFile { path: path.to_string_lossy().into_owned(), exists, content, editable: true })
-}
-
-pub fn save(kind: &str, requested: &str, content: &str) -> anyhow::Result<AgentConfigFile> {
-    let path = resolve_path(kind, Some(requested))?;
-    if content.len() > 1024 * 1024 { anyhow::bail!("configuration file is too large (max 1 MiB)"); }
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-    fs::write(&path, content)?;
-    load(kind, Some(requested))
-}
-
-fn resolve_path(kind: &str, requested: Option<&str>) -> anyhow::Result<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/data"));
-    let raw = requested.map(str::trim).filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| suggested_path(kind));
-    let path = if raw.is_absolute() { raw } else { home.join(raw) };
-    let normalized = normalize(&path)?;
-    let home_normalized = normalize(&home)?;
-    if !normalized.starts_with(&home_normalized) { anyhow::bail!("configuration path must stay inside HOME"); }
-    Ok(normalized)
-}
-
-fn normalize(path: &Path) -> anyhow::Result<PathBuf> {
-    if path.exists() { return Ok(path.canonicalize()?); }
-    let mut existing = path.to_path_buf();
-    let mut tail = Vec::new();
-    while !existing.exists() {
-        let name = existing.file_name().ok_or_else(|| anyhow::anyhow!("invalid configuration path"))?.to_os_string();
-        tail.push(name);
-        existing.pop();
-    }
-    let mut result = existing.canonicalize()?;
-    for name in tail.into_iter().rev() { result.push(name); }
-    Ok(result)
-}
+pub struct AgentConfigFile { pub path: String, pub exists: bool, pub content: String, pub editable: bool }
+pub fn capabilities(kind: &str) -> AgentCapabilities { match kind { "codex" | "pi" => AgentCapabilities { models: true, native_config: true, skills: true, agents_md: true }, _ => AgentCapabilities { models: false, native_config: true, skills: false, agents_md: true } } }
+pub fn known_paths(kind: &str) -> Vec<PathBuf> { let home=env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("/data")); match kind { "codex"=>{let mut paths=Vec::new();if let Some(custom)=env::var_os("CODEX_HOME"){paths.push(PathBuf::from(custom).join("config.toml"));}paths.push(home.join(".codex/config.toml"));paths}, "pi"=>vec![home.join(".pi/agent/models.json")], "opencode"=>vec![home.join(".config/opencode/opencode.json"),home.join(".config/opencode/opencode.jsonc")], "claude-code"=>vec![home.join(".claude/settings.json")], "gemini-cli"=>vec![home.join(".gemini/settings.json")], "qwen-code"=>vec![home.join(".qwen/settings.json")], _=>Vec::new() } }
+pub fn suggested_path(kind: &str) -> PathBuf { known_paths(kind).into_iter().next().unwrap_or_else(||env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("/data")).join(".agentweb/agent-config.json")) }
+pub fn load(kind: &str, requested: Option<&str>) -> anyhow::Result<AgentConfigFile> { let path=resolve_path(kind,requested)?;let exists=path.is_file();let content=if exists{fs::read_to_string(&path)?}else{String::new()};Ok(AgentConfigFile{path:path.to_string_lossy().into_owned(),exists,content,editable:true}) }
+pub fn save(kind: &str, requested: &str, content: &str) -> anyhow::Result<AgentConfigFile> { let path=resolve_path(kind,Some(requested))?;if content.len()>1024*1024{anyhow::bail!("configuration file is too large (max 1 MiB)");}if let Some(parent)=path.parent(){fs::create_dir_all(parent)?;}fs::write(&path,content)?;load(kind,Some(requested)) }
+fn resolve_path(kind: &str, requested: Option<&str>) -> anyhow::Result<PathBuf> { let home=env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from("/data"));let raw=requested.map(str::trim).filter(|v|!v.is_empty()).map(PathBuf::from).unwrap_or_else(||suggested_path(kind));let path=if raw.is_absolute(){raw}else{home.join(raw)};let normalized=normalize(&path)?;let home_normalized=normalize(&home)?;if !normalized.starts_with(&home_normalized){anyhow::bail!("configuration path must stay inside HOME");}Ok(normalized) }
+fn normalize(path:&Path)->anyhow::Result<PathBuf>{if path.exists(){return Ok(path.canonicalize()?)}let mut existing=path.to_path_buf();let mut tail=Vec::new();while !existing.exists(){let name=existing.file_name().ok_or_else(||anyhow::anyhow!("invalid configuration path"))?.to_os_string();tail.push(name);existing.pop();}let mut result=existing.canonicalize()?;for name in tail.into_iter().rev(){result.push(name);}Ok(result)}
