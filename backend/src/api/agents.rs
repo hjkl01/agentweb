@@ -20,10 +20,27 @@ pub struct Agent {
 pub async fn list_agents(State(s): State<AppState>) -> Json<Vec<Agent>> {
     let rows = sqlx::query("SELECT id,name,kind,command,working_directory,installed,version FROM agents ORDER BY name")
         .fetch_all(&s.db).await.unwrap_or_default();
-    Json(rows.into_iter().map(|r| Agent {
-        id: r.get(0), name: r.get(1), kind: r.get(2), command: r.get(3),
-        working_directory: r.get(4), installed: r.get::<i64, _>(5) != 0, version: r.get(6),
-    }).collect())
+    let mut agents = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: String = r.get(0);
+        let db_installed = r.get::<i64, _>(5) != 0;
+        let db_version: Option<String> = r.get(6);
+        let detected = resolve_agent_binary(&s.db, &id).await;
+        let detected_version = match detected.as_deref() {
+            Some(path) => detect_agent_version(path).await,
+            None => None,
+        };
+        agents.push(Agent {
+            id,
+            name: r.get(1),
+            kind: r.get(2),
+            command: r.get(3),
+            working_directory: r.get(4),
+            installed: db_installed || detected_version.is_some(),
+            version: detected_version.or(db_version),
+        });
+    }
+    Json(agents)
 }
 
 #[derive(Deserialize)]
