@@ -7,7 +7,6 @@ pub mod definition;
 pub mod event_parser;
 pub mod generic;
 pub mod models;
-pub mod openclaw;
 pub mod opencode;
 pub mod pi;
 pub mod pi_events;
@@ -17,7 +16,6 @@ pub mod session;
 pub use adapter::{AgentAdapter, AgentConfig};
 use codex::CodexAdapter;
 use generic::GenericAdapter;
-use openclaw::OpenClawAdapter;
 use opencode::OpenCodeAdapter;
 use pi::PiAdapter;
 use anyhow::Result;
@@ -36,7 +34,6 @@ impl AgentManager {
             "codex" => Arc::new(CodexAdapter::new()),
             "opencode" => Arc::new(OpenCodeAdapter::new()),
             "pi" => Arc::new(PiAdapter::new()),
-            "openclaw" => Arc::new(OpenClawAdapter::new()),
             _ => Arc::new(GenericAdapter::new()),
         };
         map.insert(kind.to_owned(), adapter.clone());
