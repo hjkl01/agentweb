@@ -15,7 +15,6 @@ use axum::{middleware, routing::get, Router};
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use std::{path::Path, str::FromStr};
 use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
-use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
