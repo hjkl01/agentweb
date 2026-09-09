@@ -28,10 +28,29 @@ pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Opt
 pub(crate) async fn detect_agent_version(binary: &FsPath) -> Option<String> { let out = Command::new(binary).arg("--version").output().await.ok()?; if !out.status.success() { return None; } let version = String::from_utf8_lossy(&out.stdout).trim().trim_start_matches('v').to_owned(); (!version.is_empty()).then_some(version) }
 pub(crate) async fn agent_runtime_label(id: &str, db: &sqlx::SqlitePool) -> Option<String> { if matches!(id, "codex" | "claude-code" | "qwen-code" | "gemini-cli" | "opencode" | "pi") { if let Ok(Some((version, _))) = runtime::detect_installed_node().await { return Some(format!("Node {version}")); } return node_bin_dir(db).await.and_then(|p| p.join("node").exists().then(|| format!("Node ({})", p.display()))); } None }
 
-#[derive(Serialize)] pub struct RuntimeSettings { pub node_path: Option<String>, pub agent_paths: HashMap<String, String> }
-pub async fn get_runtime_settings(State(s): State<AppState>) -> Json<RuntimeSettings> { let paths = setting(&s.db, "agent_paths").await.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(); Json(RuntimeSettings { node_path: setting(&s.db, "node_path").await, agent_paths: paths }) }
-#[derive(Deserialize)] pub struct UpdateRuntimeSettings { pub node_path: Option<String>, pub agent_paths: HashMap<String, String> }
-pub async fn update_runtime_settings(State(s): State<AppState>, Json(v): Json<UpdateRuntimeSettings>) -> Result<Json<RuntimeSettings>, StatusCode> { let node_path = v.node_path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()); let paths = v.agent_paths.into_iter().filter_map(|(k, p)| { let p = p.trim().to_owned(); (!k.trim().is_empty() && !p.is_empty()).then_some((k, p)) }).collect::<HashMap<_, _>>(); save_setting(&s.db, "node_path", node_path.as_deref().unwrap_or("")).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?; save_setting(&s.db, "agent_paths", &serde_json::to_string(&paths).map_err(|_| StatusCode::BAD_REQUEST)?).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?; Ok(Json(RuntimeSettings { node_path, agent_paths: paths })) }
+#[derive(Serialize)] pub struct RuntimeSettings { pub node_path: Option<String>, pub agent_paths: HashMap<String, String>, pub default_agent_id: Option<String>, pub default_model: Option<String> }
+pub async fn get_runtime_settings(State(s): State<AppState>) -> Json<RuntimeSettings> {
+    let paths = setting(&s.db, "agent_paths").await.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    let default_agent_id = setting(&s.db, "default_agent_id").await.filter(|v| !v.trim().is_empty());
+    let default_model = setting(&s.db, "default_model").await.filter(|v| !v.trim().is_empty());
+    Json(RuntimeSettings { node_path: setting(&s.db, "node_path").await, agent_paths: paths, default_agent_id, default_model })
+}
+#[derive(Deserialize)] pub struct UpdateRuntimeSettings { pub node_path: Option<String>, pub agent_paths: HashMap<String, String>, pub default_agent_id: Option<String>, pub default_model: Option<String> }
+pub async fn update_runtime_settings(State(s): State<AppState>, Json(v): Json<UpdateRuntimeSettings>) -> Result<Json<RuntimeSettings>, StatusCode> {
+    let node_path = v.node_path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
+    let paths = v.agent_paths.into_iter().filter_map(|(k, p)| { let p = p.trim().to_owned(); (!k.trim().is_empty() && !p.is_empty()).then_some((k, p)) }).collect::<HashMap<_, _>>();
+    let default_agent_id = v.default_agent_id.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    let default_model = v.default_model.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    if let Some(agent_id) = &default_agent_id {
+        let exists = sqlx::query("SELECT 1 FROM agents WHERE id=?").bind(agent_id).fetch_optional(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.is_some();
+        if !exists { return Err(StatusCode::NOT_FOUND); }
+    }
+    save_setting(&s.db, "node_path", node_path.as_deref().unwrap_or("")).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    save_setting(&s.db, "agent_paths", &serde_json::to_string(&paths).map_err(|_| StatusCode::BAD_REQUEST)?).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    save_setting(&s.db, "default_agent_id", default_agent_id.as_deref().unwrap_or("")).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    save_setting(&s.db, "default_model", default_model.as_deref().unwrap_or("")).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(RuntimeSettings { node_path, agent_paths: paths, default_agent_id, default_model }))
+}
 pub async fn install_agent(Path(id): Path<String>, State(s): State<AppState>) -> Json<serde_json::Value> { let events = s.events.clone(); let db = s.db.clone(); let id2 = id.clone(); tokio::spawn(async move { let success = install_agent_inner(&db, &id2, &events).await; events.publish(AgentEvent::InstallCompleted { agent_id: id2, success }); }); Json(serde_json::json!({ "status": "started", "agent_id": id })) }
 async fn install_agent_inner(db: &sqlx::SqlitePool, id: &str, events: &crate::events::EventBus) -> bool {
     let node_bin = match node_bin_dir(db).await { Some(path) => path, None => { events.publish(AgentEvent::InstallOutput { agent_id: id.to_string(), text: "Please install or configure Node.js first.".into() }); return false; } };
