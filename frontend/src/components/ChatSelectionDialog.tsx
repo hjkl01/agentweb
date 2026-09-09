@@ -1,0 +1,14 @@
+import { Bot, Settings, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { Agent, AgentModel } from '../types';
+import { api } from '../lib/api';
+
+type Props={open:boolean;agents:Agent[];onClose:()=>void;onCreate:(agentId?:string,model?:string)=>void;defaultAgentId?:string;defaultModel?:string;onDefaultChange:(agentId?:string,model?:string)=>void;onManageAgents:()=>void};
+export function ChatSelectionDialog({open,agents,onClose,onCreate,defaultAgentId,defaultModel,onDefaultChange,onManageAgents}:Props){
+ const installed=agents.filter(a=>a.installed); const [agentId,setAgentId]=useState(defaultAgentId||''); const [model,setModel]=useState(defaultModel||''); const [models,setModels]=useState<AgentModel[]>([]); const [loading,setLoading]=useState(false);
+ useEffect(()=>{if(open){setAgentId(defaultAgentId||'');setModel(defaultModel||'')}},[open,defaultAgentId,defaultModel]);
+ useEffect(()=>{if(!open||!agentId){setModels([]);return}let cancelled=false;setLoading(true);api<AgentModel[]>(`/agents/${agentId}/models`).then(value=>{if(!cancelled)setModels(value)}).catch(()=>{if(!cancelled)setModels([])}).finally(()=>{if(!cancelled)setLoading(false)});return()=>{cancelled=true}},[open,agentId]);
+ if(!open)return null;
+ const chooseAgent=(id:string)=>{setAgentId(id);setModel('')}; const canCreate=!!agentId;
+ return <div className="modal-backdrop" onClick={onClose}><div className="modal new-chat-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>New chat</h3><p>选择 Agent 后，只显示该 Agent 可用的模型。</p></div><button className="icon-button" onClick={onClose}><X size={16}/></button></div><div className="model-picker"><label className="model-picker-label">Agent</label><select value={agentId} onChange={e=>chooseAgent(e.target.value)}><option value="">请选择已安装 Agent</option>{installed.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select><label className="model-picker-label">Model</label><select value={model} onChange={e=>setModel(e.target.value)} disabled={!agentId||loading}><option value="">{loading?'正在加载模型…':models.length?'请选择模型（使用 Agent 默认）':'该 Agent 暂无可列出的模型'}</option>{models.map(item=><option key={item.id} value={item.id}>{item.name}{item.provider?` · ${item.provider}`:''}</option>)}</select>{defaultAgentId===agentId&&defaultModel===model&&agentId&&<div className="modal-empty"><p>当前选择为系统默认 Agent + 模型。</p></div>}<button className="primary-button create-chat-button" disabled={!canCreate} onClick={()=>onCreate(agentId,model||undefined)}><Bot size={15}/> 开始对话</button>{!defaultAgentId&&<button className="primary-button" onClick={()=>onDefaultChange(agentId||undefined,model||undefined)} disabled={!canCreate}><Settings size={15}/> 设为默认</button>}{!installed.length&&<><div className="modal-empty"><p>还没有安装 Agent。</p></div><button className="primary-button" onClick={onManageAgents}><Settings size={15}/> 管理 Agent</button></>}</div></div></div>
+}
