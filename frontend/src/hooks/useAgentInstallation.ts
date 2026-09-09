@@ -33,7 +33,7 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
   const installAgent = async (id: string) => {
     const agent = agents.find(item => item.id === id);
     if (!agent?.install_command) return;
-    if (agent.requirements.includes('Node.js') && !(node?.installed || []).includes(nodeVersion)) {
+    if (agent.requirements.includes('Node.js') && !(node?.installed || []).length) {
       const message = '请先安装 Node.js；安装后再点击 Agent 的安装按钮。';
       setError(message);
       throw new Error(message);
@@ -41,7 +41,10 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
     setInstallingAgent(id);
     setError(undefined);
     try {
-      await api('/agents/custom/install', { method: 'POST', body: JSON.stringify({ command: agent.install_command }) });
+      // Built-in Agents use the dedicated backend installer. It invokes the
+      // npm binary from the selected/managed Node.js installation directly,
+      // rather than relying on the container's system PATH.
+      await api(`/agents/${encodeURIComponent(id)}/install`, { method: 'POST' });
       await refreshAgents?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
