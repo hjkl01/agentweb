@@ -2,6 +2,7 @@ pub mod adapter;
 pub mod codex;
 pub mod codex_events;
 pub mod commands;
+pub mod config;
 pub mod definition;
 pub mod event_parser;
 pub mod generic;
