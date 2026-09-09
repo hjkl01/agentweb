@@ -1,24 +1,30 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
-import type { Agent } from '../types';
+import type { Agent, NodeInfo } from '../types';
 
-export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?: { installed: string[] }, refreshAgents?: () => Promise<void>) {
+type InstallFeedback = { version: string; state: 'success' | 'error'; message: string };
+
+export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?: NodeInfo, refreshAgents?: () => Promise<void>) {
   const [installingNode, setInstallingNode] = useState(false);
   const [installingAgent, setInstallingAgent] = useState<string>();
   const [error, setError] = useState<string>();
+  const [nodeInstallFeedback, setNodeInstallFeedback] = useState<InstallFeedback>();
 
-  const installNode = async () => {
-    const version = nodeVersion.trim();
-    if (!version) return;
+  const installNode = async (requestedVersion?: string) => {
+    const version = (requestedVersion || nodeVersion).trim();
+    if (!version || installingNode) return;
     setInstallingNode(true);
     setError(undefined);
+    setNodeInstallFeedback(undefined);
     try {
-      await api('/node/install', { method: 'POST', body: JSON.stringify({ version }) });
+      const result = await api<{ status:string; version:string }>('/node/install', { method: 'POST', body: JSON.stringify({ version }) });
+      const installedVersion = result.version || version;
+      setNodeInstallFeedback({ version: installedVersion, state: 'success', message: `Node.js ${installedVersion} 安装成功` });
       await refreshAgents?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(message);
-      throw new Error(message);
+      setNodeInstallFeedback({ version, state: 'error', message: `Node.js ${version} 安装失败：${message}` });
     } finally {
       setInstallingNode(false);
     }
@@ -63,5 +69,5 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
     }
   };
 
-  return { installingNode, installingAgent, error, installNode, installAgent, installCustomAgent };
+  return { installingNode, installingAgent, error, nodeInstallFeedback, installNode, installAgent, installCustomAgent };
 }
