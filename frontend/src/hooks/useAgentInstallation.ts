@@ -1,14 +1,74 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { Agent, NodeInfo } from '../types';
 
 type InstallFeedback = { version: string; state: 'success' | 'error'; message: string };
+type AgentInstallFeedback = { agentId: string; state: 'success' | 'error' | 'running'; message: string };
+
+type InstallEvent = {
+  type: 'install.output' | 'install.completed';
+  data: { agent_id: string; text?: string; success?: boolean };
+};
 
 export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?: NodeInfo, refreshAgents?: () => Promise<void>) {
   const [installingNode, setInstallingNode] = useState(false);
   const [installingAgent, setInstallingAgent] = useState<string>();
   const [error, setError] = useState<string>();
   const [nodeInstallFeedback, setNodeInstallFeedback] = useState<InstallFeedback>();
+  const [agentInstallFeedback, setAgentInstallFeedback] = useState<AgentInstallFeedback>();
+  const installTimeout = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    let disposed = false;
+    let ws: WebSocket | undefined;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 500;
+
+    const connect = () => {
+      if (disposed) return;
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${location.host}/api/events`);
+      ws.onopen = () => { delay = 500; };
+      ws.onmessage = event => {
+        let value: InstallEvent;
+        try { value = JSON.parse(event.data) as InstallEvent; } catch { return; }
+        const data = value.data || {};
+        if (!data.agent_id) return;
+        if (value.type === 'install.output') {
+          setAgentInstallFeedback(current => current?.agentId === data.agent_id
+            ? { ...current, state: 'running', message: data.text || current.message }
+            : current);
+          return;
+        }
+        if (value.type === 'install.completed') {
+          if (installTimeout.current) clearTimeout(installTimeout.current);
+          setInstallingAgent(undefined);
+          if (data.success) {
+            setAgentInstallFeedback({ agentId: data.agent_id, state: 'success', message: `${data.agent_id} 安装成功` });
+            setError(undefined);
+          } else {
+            const message = '安装失败，请查看安装输出。';
+            setAgentInstallFeedback({ agentId: data.agent_id, state: 'error', message });
+            setError(message);
+          }
+          refreshAgents?.().catch(console.error);
+        }
+      };
+      ws.onerror = () => ws?.close();
+      ws.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 8000);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (installTimeout.current) clearTimeout(installTimeout.current);
+      ws?.close();
+    };
+  }, [refreshAgents]);
 
   const installNode = async (requestedVersion?: string) => {
     const version = (requestedVersion || nodeVersion).trim();
@@ -41,15 +101,23 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
     }
     setInstallingAgent(id);
     setError(undefined);
+    setAgentInstallFeedback({ agentId: id, state: 'running', message: `正在安装 ${agent.name}…` });
     try {
       await api(`/agents/${encodeURIComponent(id)}/install`, { method: 'POST' });
-      await refreshAgents?.();
+      // The backend installation is asynchronous. Do not clear installingAgent here;
+      // install.completed is the authoritative success/failure signal.
+      installTimeout.current = setTimeout(() => {
+        setInstallingAgent(current => current === id ? undefined : current);
+        setAgentInstallFeedback(current => current?.agentId === id && current.state === 'running'
+          ? { ...current, state: 'error', message: '安装超时，请检查后端安装日志。' }
+          : current);
+      }, 5 * 60 * 1000);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(message);
-      throw new Error(message);
-    } finally {
+      setAgentInstallFeedback({ agentId: id, state: 'error', message: `安装失败：${message}` });
       setInstallingAgent(undefined);
+      throw new Error(message);
     }
   };
 
@@ -59,16 +127,18 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
     setInstallingAgent('custom');
     setError(undefined);
     try {
-      await api('/agents/custom/install', { method: 'POST', body: JSON.stringify({ command: value }) });
+      const result = await api<{ output?: string }>('/agents/custom/install', { method: 'POST', body: JSON.stringify({ command: value }) });
+      setAgentInstallFeedback({ agentId: 'custom', state: 'success', message: result.output ? `安装成功：${result.output}` : '自定义 Agent 安装成功' });
       await refreshAgents?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(message);
+      setAgentInstallFeedback({ agentId: 'custom', state: 'error', message: `安装失败：${message}` });
       throw new Error(message);
     } finally {
       setInstallingAgent(undefined);
     }
   };
 
-  return { installingNode, installingAgent, error, nodeInstallFeedback, installNode, installAgent, installCustomAgent };
+  return { installingNode, installingAgent, error, nodeInstallFeedback, agentInstallFeedback, installNode, installAgent, installCustomAgent };
 }
