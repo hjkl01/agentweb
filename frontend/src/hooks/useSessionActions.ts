@@ -3,51 +3,28 @@ import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../lib/api';
 import type { Session } from '../types';
 
-type Options = {
-  setSessions: Dispatch<SetStateAction<Session[]>>;
-};
-
+type Options = { setSessions: Dispatch<SetStateAction<Session[]>> };
 export function useSessionActions({ setSessions }: Options) {
-  const createSession = useCallback(async (agentId: string, model?: string) => {
+  const createSession = useCallback(async (agentId?: string, model?: string) => {
     const session = await api<Session>('/sessions', { method: 'POST', body: JSON.stringify({ agent_id: agentId, title: 'New Chat', model }) });
-    setSessions(items => [session, ...items]);
-    return session;
+    setSessions(items => [session, ...items]); return session;
   }, [setSessions]);
-
   const setModel = useCallback(async (sessionId: string, model?: string) => {
     const session = await api<Session>(`/sessions/${sessionId}/model`, { method: 'PUT', body: JSON.stringify({ model: model || null }) });
-    setSessions(items => items.map(item => item.id === sessionId ? session : item));
-    return session;
+    setSessions(items => items.map(item => item.id === sessionId ? session : item)); return session;
   }, [setSessions]);
-
+  const setAgent = useCallback(async (sessionId: string, agentId: string) => {
+    const session = await api<Session>(`/sessions/${sessionId}/agent`, { method: 'PUT', body: JSON.stringify({ agent_id: agentId }) });
+    setSessions(items => items.map(item => item.id === sessionId ? session : item)); return session;
+  }, [setSessions]);
   const sendMessage = useCallback(async (sessionId: string, message: string) => {
     const result = await api<{ status?: string; error?: string; title?: string }>(`/sessions/${sessionId}/messages`, { method: 'POST', body: JSON.stringify({ message }) });
     if (result.error) throw new Error(result.error);
-    setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: 'running', ...(result.title ? { title: result.title } : {}) } : item));
-    return result;
+    setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: 'running', ...(result.title ? { title: result.title } : {}) } : item)); return result;
   }, [setSessions]);
-
-  const renameSession = useCallback(async (sessionId: string, title: string) => {
-    const session = await api<Session>(`/sessions/${sessionId}/title`, { method: 'PUT', body: JSON.stringify({ title }) });
-    setSessions(items => items.map(item => item.id === sessionId ? session : item));
-    return session;
-  }, [setSessions]);
-
-  const togglePin = useCallback(async (sessionId: string) => {
-    const session = await api<Session>(`/sessions/${sessionId}/pin`, { method: 'PUT' });
-    setSessions(items => [...items.map(item => item.id === sessionId ? session : item)].sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned)));
-    return session;
-  }, [setSessions]);
-
-  const deleteSession = useCallback(async (sessionId: string) => {
-    await api(`/sessions/${sessionId}`, { method: 'DELETE' });
-    setSessions(items => items.filter(item => item.id !== sessionId));
-  }, [setSessions]);
-
-  const interrupt = useCallback(async (sessionId: string) => {
-    const result = await api<{ status?: string }>(`/sessions/${sessionId}/interrupt`, { method: 'POST' });
-    setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: result.status || 'interrupted' } : item));
-  }, [setSessions]);
-
-  return { createSession, setModel, sendMessage, renameSession, togglePin, deleteSession, interrupt };
+  const renameSession = useCallback(async (sessionId: string, title: string) => { const session = await api<Session>(`/sessions/${sessionId}/title`, { method: 'PUT', body: JSON.stringify({ title }) }); setSessions(items => items.map(item => item.id === sessionId ? session : item)); return session; }, [setSessions]);
+  const togglePin = useCallback(async (sessionId: string) => { const session = await api<Session>(`/sessions/${sessionId}/pin`, { method: 'PUT' }); setSessions(items => [...items.map(item => item.id === sessionId ? session : item)].sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned))); return session; }, [setSessions]);
+  const deleteSession = useCallback(async (sessionId: string) => { await api(`/sessions/${sessionId}`, { method: 'DELETE' }); setSessions(items => items.filter(item => item.id !== sessionId)); }, [setSessions]);
+  const interrupt = useCallback(async (sessionId: string) => { const result = await api<{ status?: string }>(`/sessions/${sessionId}/interrupt`, { method: 'POST' }); setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: result.status || 'interrupted' } : item)); }, [setSessions]);
+  return { createSession, setModel, setAgent, sendMessage, renameSession, togglePin, deleteSession, interrupt };
 }
