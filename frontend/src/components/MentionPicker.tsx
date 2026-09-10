@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, File, Folder, FolderOpen, LoaderCircle, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 
 type Item = { name: string; path: string; kind: string; size: number };
@@ -33,20 +33,28 @@ export function MentionPicker({ open, query, sessionId, onSelect, onClose }: Pro
   const [root, setRoot] = useState<Item[]>([]);
   const [results, setResults] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
+  const searchRequest = useRef(0);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     setLoading(true);
     api<Item[]>(`/sessions/${sessionId}/filesystem/tree`)
-      .then(setRoot).catch(() => setRoot([])).finally(() => setLoading(false));
+      .then(items => { if (!cancelled) setRoot(items); })
+      .catch(() => { if (!cancelled) setRoot([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [open, sessionId]);
 
   useEffect(() => {
     if (!open || !query.trim()) { setResults([]); return; }
+    const requestId = ++searchRequest.current;
     const timer = window.setTimeout(() => {
       setLoading(true);
       api<Item[]>(`/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query.trim())}`)
-        .then(setResults).catch(() => setResults([])).finally(() => setLoading(false));
+        .then(items => { if (requestId === searchRequest.current) setResults(items); })
+        .catch(() => { if (requestId === searchRequest.current) setResults([]); })
+        .finally(() => { if (requestId === searchRequest.current) setLoading(false); });
     }, 120);
     return () => window.clearTimeout(timer);
   }, [open, query, sessionId]);
