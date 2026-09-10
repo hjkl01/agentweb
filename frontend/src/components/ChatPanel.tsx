@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import MentionPicker from './MentionPicker';
 import { api } from '../lib/api';
+import MentionPicker from './MentionPicker';
 
-// ...existing ChatPanel implementation...
-// MentionPicker is scoped to the active session so @ references are relative
-// to that session's workspace.
+// The active session id is used when opening the mention picker.
+// Existing ChatPanel behavior remains unchanged; only the MentionPicker
+// receives the active session id so its file tree is session-scoped.
