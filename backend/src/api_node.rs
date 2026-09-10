@@ -69,6 +69,8 @@ pub async fn install_custom_agent(State(s): State<AppState>, Json(v): Json<Custo
     if !node_bin.join("node").is_file() || !npm.is_file() {
         return Err(error_response(StatusCode::BAD_REQUEST, "NPM_NOT_FOUND", format!("managed Node.js is incomplete: npm was not found at {}", npm.display())));
     }
+    let runtime_name = node_bin.parent().and_then(|path| path.file_name()).and_then(|name| name.to_str()).unwrap_or("default");
+    let _lock = runtime::acquire_install_lock(&format!("agent-{runtime_name}")).await.map_err(|error| error_response(StatusCode::CONFLICT, "AGENT_INSTALL_BUSY", format!("failed to acquire agent installation lock: {error:#}")))?;
     let mut process = Command::new("sh");
     process.args(["-lc", &command]);
     let path = format!("{}:{}", node_bin.display(), std::env::var("PATH").unwrap_or_default());
