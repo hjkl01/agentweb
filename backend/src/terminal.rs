@@ -1,4 +1,4 @@
-use axum::{extract::ws::{Message, WebSocket, WebSocketUpgrade}, response::Response, extract::Query, http::StatusCode};
+use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query}, response::Response};
 use futures::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Deserialize;
@@ -35,19 +35,12 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
     if !workspace.is_dir() {
         warn!(path = ?workspace, "terminal workspace does not exist");
         let mut socket = socket;
-        let _ = socket
-            .send(Message::Text("Terminal workspace does not exist.".into()))
-            .await;
+        let _ = socket.send(Message::Text("Terminal workspace does not exist.".into())).await;
         return;
     }
 
     let pty_system = native_pty_system();
-    let pair = match pty_system.openpty(PtySize {
-        rows,
-        cols,
-        pixel_width: 0,
-        pixel_height: 0,
-    }) {
+    let pair = match pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
         Ok(pair) => pair,
         Err(error) => {
             warn!(%error, "failed to create PTY");
@@ -64,6 +57,7 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
     command.env("COLORTERM", "truecolor");
     command.env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/data/home".into()));
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
+    command.env("SHELL", &shell);
 
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
@@ -92,8 +86,8 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
             return;
         }
     };
-
     let master = pair.master;
+
     let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(64);
     std::thread::spawn(move || {
         use std::io::Read;
@@ -102,9 +96,7 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    if output_tx.blocking_send(buffer[..size].to_vec()).is_err() {
-                        break;
-                    }
+                    if output_tx.blocking_send(buffer[..size].to_vec()).is_err() { break; }
                 }
                 Err(_) => break,
             }
@@ -113,46 +105,41 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
 
     let (mut sender, mut receiver) = socket.split();
     let mut writer = writer;
-    let mut child_finished = false;
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
 
     loop {
         tokio::select! {
-            Some(output) = output_rx.recv() => {
-                if sender.send(Message::Binary(output.into())).await.is_err() {
-                    break;
+            _ = ticker.tick() => {
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        let _ = sender.send(Message::Text("\r\n[process exited]\r\n".into())).await;
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
                 }
+            }
+            Some(output) = output_rx.recv() => {
+                if sender.send(Message::Binary(output.into())).await.is_err() { break; }
             }
             Some(message) = receiver.next() => {
                 match message {
-                    Ok(Message::Text(text)) => {
-                        match serde_json::from_str::<ClientMessage>(&text) {
-                            Ok(ClientMessage::Input { data }) => {
-                                use std::io::Write;
-                                if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() {
-                                    break;
-                                }
-                            }
-                            Ok(ClientMessage::Resize { cols, rows }) => {
-                                let _ = master.resize(PtySize {
-                                    rows: rows.clamp(5, 200),
-                                    cols: cols.clamp(20, 500),
-                                    pixel_width: 0,
-                                    pixel_height: 0,
-                                });
-                            }
-                            Err(_) => {
-                                use std::io::Write;
-                                if writer.write_all(text.as_bytes()).and_then(|_| writer.write_all(b"\n")).and_then(|_| writer.flush()).is_err() {
-                                    break;
-                                }
-                            }
+                    Ok(Message::Text(text)) => match serde_json::from_str::<ClientMessage>(&text) {
+                        Ok(ClientMessage::Input { data }) => {
+                            use std::io::Write;
+                            if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; }
                         }
-                    }
+                        Ok(ClientMessage::Resize { cols, rows }) => {
+                            let _ = master.resize(PtySize { rows: rows.clamp(5, 200), cols: cols.clamp(20, 500), pixel_width: 0, pixel_height: 0 });
+                        }
+                        Err(_) => {
+                            use std::io::Write;
+                            if writer.write_all(text.as_bytes()).and_then(|_| writer.write_all(b"\n")).and_then(|_| writer.flush()).is_err() { break; }
+                        }
+                    },
                     Ok(Message::Binary(data)) => {
                         use std::io::Write;
-                        if writer.write_all(&data).and_then(|_| writer.flush()).is_err() {
-                            break;
-                        }
+                        if writer.write_all(&data).and_then(|_| writer.flush()).is_err() { break; }
                     }
                     Ok(Message::Close(_)) | Err(_) => break,
                     _ => {}
@@ -160,25 +147,9 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
             }
             else => break,
         }
-
-        if !child_finished {
-            match child.try_wait() {
-                Ok(Some(_status)) => {
-                    child_finished = true;
-                    let _ = sender.send(Message::Text("\r\n[process exited]\r\n".into())).await;
-                }
-                Ok(None) => {}
-                Err(_) => child_finished = true,
-            }
-        }
     }
 
     let _ = child.kill();
     let _ = child.wait();
     info!("browser terminal session closed");
-}
-
-#[allow(dead_code)]
-fn _status_code_for_invalid_terminal() -> StatusCode {
-    StatusCode::BAD_REQUEST
 }
