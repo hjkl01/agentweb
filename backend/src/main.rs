@@ -42,5 +42,6 @@ async fn main()->Result<()>{
   .layer(middleware::from_fn_with_state(state.clone(),auth::basic_auth));
  let api_routes=Router::new().route("/health",get(api::health)).route("/auth/login",axum::routing::post(auth::login)).route("/auth/me",get(auth::me)).route("/auth/logout",axum::routing::post(auth::logout)).merge(protected_api).layer(middleware::from_fn(api_error::normalize));
  let app=Router::new().nest("/api",api_routes).merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json",openapi::ApiDoc::openapi())).fallback_service(ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file))).layer(TraceLayer::new_for_http()).with_state(state);
- let listener=tokio::net::TcpListener::bind("0.0.0.0:8080").await?; axum::serve(listener,app).await?; Ok(())
+ let bind_addr=std::env::var("AGENTWEB_BIND_ADDR").unwrap_or_else(|_|"0.0.0.0:8080".into());
+ let listener=tokio::net::TcpListener::bind(&bind_addr).await?; tracing::info!("Agent Web listening on {bind_addr}"); axum::serve(listener,app).await?; Ok(())
 }
