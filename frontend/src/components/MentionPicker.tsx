@@ -95,7 +95,7 @@ export function MentionPicker({ open, query, onSelect, onClose }: Props) {
       <div className="mention-picker-head">
         <div>
           <strong>选择文件或文件夹</strong>
-          <small>从 HOME 开始，按需展开</small>
+          <small>从 /workspace 开始，按需展开</small>
         </div>
         <button onClick={onClose}>Esc</button>
       </div>
@@ -105,7 +105,7 @@ export function MentionPicker({ open, query, onSelect, onClose }: Props) {
       </div>
       <div className="mention-tree">
         {loading ? (
-          <div className="mention-loading"><LoaderCircle size={16} className="spin" />加载 HOME…</div>
+          <div className="mention-loading"><LoaderCircle size={16} className="spin" />加载 /workspace…</div>
         ) : visible.length ? (
           visible.map(item => <TreeNode key={item.path} item={item} depth={0} onSelect={onSelect} />)
         ) : (
