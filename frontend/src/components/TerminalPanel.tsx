@@ -13,9 +13,8 @@ function websocketUrl() {
 
 export function TerminalPanel({ onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal>();
-  const socketRef = useRef<WebSocket>();
-  const fitRef = useRef<FitAddon>();
+  const terminalRef = useRef<Terminal | undefined>(undefined);
+  const socketRef = useRef<WebSocket | undefined>(undefined);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -36,7 +35,6 @@ export function TerminalPanel({ onClose }: Props) {
     fit.fit();
     terminal.focus();
     terminalRef.current = terminal;
-    fitRef.current = fit;
 
     const socket = new WebSocket(websocketUrl());
     socket.binaryType = 'arraybuffer';
@@ -53,7 +51,7 @@ export function TerminalPanel({ onClose }: Props) {
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     window.addEventListener('resize', resize);
-    return () => { observer.disconnect(); window.removeEventListener('resize', resize); input.dispose(); socket.close(); terminal.dispose(); socketRef.current = undefined; terminalRef.current = undefined; fitRef.current = undefined; };
+    return () => { observer.disconnect(); window.removeEventListener('resize', resize); input.dispose(); socket.close(); terminal.dispose(); socketRef.current = undefined; terminalRef.current = undefined; };
   }, [sendResize]);
 
   return <main className="terminal-panel">
