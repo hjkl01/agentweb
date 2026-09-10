@@ -9,6 +9,7 @@ use tracing::{info, warn};
 pub struct TerminalQuery {
     cols: Option<u16>,
     rows: Option<u16>,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,13 +25,24 @@ pub async fn ws_terminal(
 ) -> Response {
     let cols = query.cols.unwrap_or(120).clamp(20, 500);
     let rows = query.rows.unwrap_or(32).clamp(5, 200);
-    ws.on_upgrade(move |socket| run_terminal(socket, cols, rows))
+    ws.on_upgrade(move |socket| run_terminal(socket, cols, rows, query.session_id))
 }
 
-async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
-    let workspace = std::env::var_os("AGENTWEB_WORKSPACE_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/workspace"));
+async fn run_terminal(socket: WebSocket, cols: u16, rows: u16, session_id: Option<String>) {
+    let workspace = if let Some(session_id) = session_id {
+        match crate::api::load_session(&crate::state::AppState::new_unavailable_for_terminal(), &session_id).await {
+            Ok(session) => std::path::PathBuf::from(session.workspace),
+            Err(_) => {
+                let mut socket = socket;
+                let _ = socket.send(Message::Text("Session not found.".into())).await;
+                return;
+            }
+        }
+    } else {
+        std::env::var_os("AGENTWEB_WORKSPACE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/workspace"))
+    };
 
     if !workspace.is_dir() {
         warn!(path = ?workspace, "terminal workspace does not exist");
@@ -151,5 +163,5 @@ async fn run_terminal(socket: WebSocket, cols: u16, rows: u16) {
 
     let _ = child.kill();
     let _ = child.wait();
-    info!("browser terminal session closed");
+    info!(workspace = %workspace.display(), "browser terminal session closed");
 }
