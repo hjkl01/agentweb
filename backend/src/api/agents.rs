@@ -51,7 +51,7 @@ pub struct CreateAgent {
     pub working_directory: Option<String>,
 }
 
-pub async fn create_agent(State(s: State<AppState>, Json(v): Json<CreateAgent>) -> Result<Json<Agent>, StatusCode> {
+pub async fn create_agent(State(s): State<AppState>, Json(v): Json<CreateAgent>) -> Result<Json<Agent>, StatusCode> {
     if v.name.trim().is_empty() || v.kind.trim().is_empty() || v.command.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
