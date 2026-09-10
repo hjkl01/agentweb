@@ -10,7 +10,7 @@ const SESSION_LEASE_SECONDS: i64 = 30;
 
 pub async fn list_messages(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     load_session(&s.db, &id).await?;
-    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at")
+    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at, rowid")
         .bind(&id).fetch_all(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows.into_iter().map(|r| serde_json::json!({"id":r.get::<String,_>(0),"role":r.get::<String,_>(1),"content":r.get::<String,_>(2),"created_at":r.get::<String,_>(3)})).collect()))
 }
