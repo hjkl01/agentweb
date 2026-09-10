@@ -14,6 +14,6 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(db: SqlitePool) -> Self {
-        Self { db, events: EventBus::new(), agents: Arc::new(AgentManager::new()), login_failures: Arc::new(Mutex::new(HashMap::new())) }
+        Self { events: EventBus::new(db.clone()), db, agents: Arc::new(AgentManager::new()), login_failures: Arc::new(Mutex::new(HashMap::new())) }
     }
 }
