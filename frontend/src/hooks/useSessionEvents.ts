@@ -13,7 +13,6 @@ export function useSessionEvents(options: Options) {
     let disposed = false;
     let ws: WebSocket | undefined;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
     let reconnectDelay = 500;
     options.setStream(''); options.setActivity([]); options.setActivityOpen(false);
 
@@ -22,7 +21,7 @@ export function useSessionEvents(options: Options) {
       if (disposed) return;
       options.setMessages(messages); options.setFiles(files); options.setStream(''); options.setError(undefined);
     };
-    const pollMessages = async () => {
+    const syncMessages = async () => {
       try { const messages = await api<ChatMessage[]>(`/sessions/${active}/messages`); if (!disposed) options.setMessages(messages); }
       catch (error) { if (!disposed) options.setError(error instanceof Error ? error.message : String(error)); }
     };
@@ -40,10 +39,8 @@ export function useSessionEvents(options: Options) {
       ws.onmessage = event => handleEvent(event.data, active, options);
     };
 
-    // WebSocket provides realtime activity; polling persisted messages is a fallback
-    // so backend responses remain visible if a frame is missed or a proxy drops it.
-    loadState().then(() => { if (!disposed) { connect(); pollTimer = setInterval(pollMessages, 500); } }).catch(error => { if (!disposed) options.setError(error instanceof Error ? error.message : String(error)); });
-    return () => { disposed = true; if (reconnectTimer) clearTimeout(reconnectTimer); if (pollTimer) clearInterval(pollTimer); ws?.close(); };
+    loadState().then(() => { if (!disposed) connect(); }).catch(error => { if (!disposed) options.setError(error instanceof Error ? error.message : String(error)); });
+    return () => { disposed = true; if (reconnectTimer) clearTimeout(reconnectTimer); ws?.close(); };
   }, [active]);
 }
 
@@ -62,5 +59,5 @@ function handleEvent(raw: string, active: string, options: Options) {
   const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'message.completed' || event.type === 'agent.error' || event.type === 'error';
   if (activityEvent) { options.setActivity(items => applyAgentEvent(items, event)); options.setActivityOpen(true); }
   if (event.type.startsWith('file.')) options.setWorkspaceRevision(value => value + 1);
-  if (event.type === 'session.completed' || event.type === 'agent.error') { api<ChatMessage[]>(`/sessions/${active}/messages`).then(options.setMessages).catch(console.error); options.setWorkspaceRevision(value => value + 1); options.refreshSessions().catch(console.error); }
+  if (event.type === 'session.completed' || event.type === 'agent.error') { syncMessages(); options.setWorkspaceRevision(value => value + 1); options.refreshSessions().catch(console.error); }
 }
