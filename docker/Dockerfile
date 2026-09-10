@@ -13,31 +13,30 @@ COPY backend ./backend
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://mirrors.cernet.edu.cn/crates.io-index/
 RUN cd backend && cargo build --release
 
-FROM debian:bookworm-slim
-RUN sed -i \
-  -e 's@deb.debian.org@mirrors.aliyun.com@g' \
-  -e 's@security.debian.org@mirrors.aliyun.com@g' \
-  /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends \
-  ca-certificates \
-  curl \
-  xz-utils \
-  tar \
-  git \
-  procps \
-  util-linux \
-  bash \
-  coreutils \
-  grep \
-  sed \
-  gawk \
-  findutils \
-  openssh-client \
-  ripgrep \
-  fd-find \
-  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
-  && rm -rf /var/lib/apt/lists/*
+FROM archlinux:base
+RUN sed -i 's/^#\?Server = .*/Server = https:\/\/geo.mirror.pkgbuild.com\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
+  && pacman -Syu --noconfirm \
+    ca-certificates \
+    curl \
+    xz \
+    tar \
+    git \
+    procps-ng \
+    util-linux \
+    bash \
+    coreutils \
+    grep \
+    sed \
+    gawk \
+    findutils \
+    openssh \
+    ripgrep \
+    fd \
+    unzip \
+    which \
+    base-devel \
+    python \
+  && pacman -Scc --noconfirm
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
 RUN mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents
