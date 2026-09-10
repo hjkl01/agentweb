@@ -36,10 +36,14 @@ RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/
     which \
     base-devel \
     python \
+    nginx \
   && pacman -Scc --noconfirm
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
-RUN mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents
+COPY docker/nginx.conf /etc/agentweb/nginx.conf.template
+COPY docker/entrypoint.sh /usr/local/bin/agentweb-entrypoint
+RUN chmod +x /usr/local/bin/agentweb-entrypoint \
+  && mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents /etc/agentweb
 ENV HOME=/data/home
 ENV XDG_CONFIG_HOME=/data/home/.config
 ENV XDG_DATA_HOME=/data/home/.local/share
@@ -48,6 +52,7 @@ ENV DATABASE_URL=sqlite:///data/agentweb.db
 ENV AGENTWEB_WORKSPACE_DIR=/workspaces
 ENV AGENTWEB_RUNTIME_DIR=/data/runtimes/node
 ENV AGENTWEB_FRONTEND_DIR=/app/frontend
+ENV AGENTWEB_WORKERS=1
 ENV RUST_LOG=info
 EXPOSE 8080
-CMD ["/usr/local/bin/agentweb"]
+ENTRYPOINT ["/usr/local/bin/agentweb-entrypoint"]
