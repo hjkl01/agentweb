@@ -24,7 +24,11 @@ pub enum AgentEvent {
     #[serde(rename = "tool.started")]
     ToolStarted { session_id: String, tool: String },
     #[serde(rename = "tool.output")]
-    ToolOutput { session_id: String, tool: String, output: String },
+    ToolOutput {
+        session_id: String,
+        tool: String,
+        output: String,
+    },
     #[serde(rename = "tool.completed")]
     ToolCompleted { session_id: String, tool: String },
     #[serde(rename = "file.created")]
@@ -46,7 +50,7 @@ pub enum AgentEvent {
     #[serde(rename = "install.output")]
     InstallOutput { agent_id: String, text: String },
     #[serde(rename = "install.completed")]
-    InstallCompleted { agent_id: String, success: bool, output: String },
+    InstallCompleted { agent_id: String, success: bool },
 }
 
 impl EventBus {
