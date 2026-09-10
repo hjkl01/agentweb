@@ -1,12 +1,64 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tokio::{fs, process::Command};
+use tokio::{fs, process::Command, time::{sleep, Duration as TokioDuration}};
 
 pub fn runtime_root() -> PathBuf {
     std::env::var("AGENTWEB_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("./data/runtimes/node"))
+}
+
+pub struct InstallLock {
+    path: PathBuf,
+}
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Acquire a cross-process installation lock on the shared runtime directory.
+/// The lock uses atomic file creation, so separate Agent Web workers cannot
+/// install/update the same Node/npm runtime concurrently.
+pub async fn acquire_install_lock(key: &str) -> Result<InstallLock> {
+    let root = runtime_root();
+    fs::create_dir_all(&root).await?;
+    let safe_key: String = key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .collect();
+    let path = root.join(format!(".install-{safe_key}.lock"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10 * 60);
+
+    loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                use std::io::Write;
+                let mut file = file;
+                let _ = writeln!(file, "pid={}", std::process::id());
+                return Ok(InstallLock { path });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A crashed worker can leave the lock behind. Treat a lock
+                // older than 30 minutes as stale and recover it.
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if modified.elapsed().unwrap_or_default() > std::time::Duration::from_secs(30 * 60) {
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(anyhow!("timed out waiting for runtime installation lock"));
+                }
+                sleep(TokioDuration::from_millis(250)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +292,11 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
     let arch = platform_arch()?;
     let root = runtime_root();
     let home = node_home(version);
+    if home.join("bin/node").exists() {
+        return Ok(());
+    }
+    let _lock = acquire_install_lock(&format!("node-{version}")) .await?;
+    // Re-check after waiting for another worker's installation to finish.
     if home.join("bin/node").exists() {
         return Ok(());
     }
