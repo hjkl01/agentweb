@@ -1,6 +1,7 @@
 mod agent_config;
 mod agents;
 mod events_websocket;
+mod filesystem;
 mod health;
 mod runtime;
 mod sessions;
@@ -11,6 +12,7 @@ mod workspace;
 pub use agent_config::{get_agent_config, save_agent_config};
 pub use agents::{agent_models, agent_status, create_agent, list_agents};
 pub use events_websocket::ws_events as ws_install_events;
+pub use filesystem::tree as filesystem_tree;
 pub use health::health;
 pub use runtime::{get_runtime_settings, install_agent, update_runtime_settings};
 pub(crate) use runtime::build_agent_config;
