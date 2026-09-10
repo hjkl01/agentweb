@@ -73,24 +73,19 @@ clean: ## Remove local build artifacts
 
 docker-build: ## Build the Docker image
 	$(COMPOSE) build
-
 docker-up: ## Build and start Docker services
 	$(COMPOSE) up -d
-
 docker-down: ## Stop Docker services
 	$(COMPOSE) down
-
 docker-restart: ## Restart Docker services
 	$(COMPOSE) restart
 docker-logs: ## Follow Agent Web container logs
 	$(COMPOSE) logs -f agentweb
 docker-shell: ## Open a shell inside the Agent Web container
-	$(COMPOSE) exec agentweb /bin/sh
-
+	$(COMPOSE) exec agentweb /bin/bash
 docker-pull: ## Pull Docker base images
 	docker pull node:22-bookworm
 	docker pull rust:1.88-bookworm
-	docker pull debian:bookworm-slim
-
+	docker pull archlinux:base
 docker-clean: ## Stop services and remove local Docker images
 	$(COMPOSE) down --rmi local --remove-orphans
