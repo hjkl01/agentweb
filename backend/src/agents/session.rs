@@ -1,7 +1,7 @@
 use super::{adapter::AgentRunError, AgentManager};
 use crate::{api::{build_agent_config, Session}, events::{AgentEvent, EventBus}};
 use chrono::Utc;
-use std::{path::{Component, Path, PathBuf}, sync::Arc};
+use std::{collections::HashSet, path::{Component, Path, PathBuf}, sync::Arc};
 use tokio::{fs, time::{self, Duration}};
 
 const MAX_REFERENCE_FILES: usize = 100;
@@ -47,7 +47,7 @@ fn mention_paths(message: &str) -> Vec<String> {
     for token in message.split_whitespace() {
         let Some(path) = token.strip_prefix('@') else { continue };
         let path = path.trim_matches(|c: char| matches!(c, ',' | '.' | ':' | ';' | ')' | ']' | '}'));
-        if path.is_empty() || path == "@" || path.starts_with('@') || path.contains('\0') { continue; }
+        if path.is_empty() || path.starts_with('@') || path.contains('\0') { continue; }
         if !paths.iter().any(|existing| existing == path) { paths.push(path.to_owned()); }
     }
     paths
@@ -59,38 +59,40 @@ fn safe_relative(path: &str) -> Option<PathBuf> {
     for component in path.components() {
         match component {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
-            Component::CurDir => {}
-            Component::Normal(_) => {}
+            Component::CurDir | Component::Normal(_) => {}
         }
     }
     Some(path.to_path_buf())
 }
 
 async fn collect_reference_files(root: &Path, path: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    if files.len() >= MAX_REFERENCE_FILES { return Ok(()); }
-    let candidate = root.join(path);
-    let canonical = fs::canonicalize(&candidate).await?;
-    if !canonical.starts_with(root) { return Ok(()); }
-    let metadata = fs::metadata(&canonical).await?;
-    if metadata.is_file() {
-        files.push(canonical);
-        return Ok(());
-    }
-    if !metadata.is_dir() { return Ok(()); }
-    let mut entries = fs::read_dir(&canonical).await?;
-    while let Some(entry) = entries.next_entry().await? {
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(relative) = pending.pop() {
         if files.len() >= MAX_REFERENCE_FILES { break; }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if matches!(name.as_str(), ".git" | "node_modules" | "target") { continue; }
-        let child = entry.path();
-        let child_canonical = match fs::canonicalize(&child).await { Ok(p) => p, Err(_) => continue };
-        if !child_canonical.starts_with(root) { continue; }
-        let child_meta = match fs::metadata(&child_canonical).await { Ok(m) => m, Err(_) => continue };
-        if child_meta.is_file() {
-            files.push(child_canonical);
-        } else if child_meta.is_dir() {
-            let relative = match child_canonical.strip_prefix(root) { Ok(p) => p, Err(_) => continue };
-            collect_reference_files(root, relative, files).await?;
+        let candidate = root.join(&relative);
+        let canonical = match fs::canonicalize(&candidate).await { Ok(p) => p, Err(_) => continue };
+        if !canonical.starts_with(root) { continue; }
+        let metadata = match fs::metadata(&canonical).await { Ok(m) => m, Err(_) => continue };
+        if metadata.is_file() {
+            files.push(canonical);
+            continue;
+        }
+        if !metadata.is_dir() { continue; }
+        let mut entries = fs::read_dir(&canonical).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if files.len() >= MAX_REFERENCE_FILES { break; }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if matches!(name.as_str(), ".git" | "node_modules" | "target") { continue; }
+            let child = entry.path();
+            let child_canonical = match fs::canonicalize(&child).await { Ok(p) => p, Err(_) => continue };
+            if !child_canonical.starts_with(root) { continue; }
+            let child_meta = match fs::metadata(&child_canonical).await { Ok(m) => m, Err(_) => continue };
+            if child_meta.is_file() {
+                files.push(child_canonical);
+            } else if child_meta.is_dir() {
+                let child_relative = match child_canonical.strip_prefix(root) { Ok(p) => p.to_path_buf(), Err(_) => continue };
+                pending.push(child_relative);
+            }
         }
     }
     Ok(())
@@ -105,7 +107,7 @@ async fn expand_mentions(message: &str, workspace: &str) -> String {
     output.push_str("\n\n<agentweb_file_context>\n");
     let mut total_bytes = 0usize;
     let mut total_files = 0usize;
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
 
     for mention in mentions {
         let Some(relative) = safe_relative(&mention) else { continue };
@@ -117,8 +119,8 @@ async fn expand_mentions(message: &str, workspace: &str) -> String {
             let metadata = match fs::metadata(&file).await { Ok(m) => m, Err(_) => continue };
             if metadata.len() > MAX_REFERENCE_FILE_BYTES { continue; }
             let content = match fs::read_to_string(&file).await { Ok(c) => c, Err(_) => continue };
-            let remaining = MAX_REFERENCE_TOTAL_BYTES - total_bytes;
             let bytes = content.as_bytes();
+            let remaining = MAX_REFERENCE_TOTAL_BYTES - total_bytes;
             if bytes.len() > remaining { continue; }
             let relative_display = match file.strip_prefix(&root) {
                 Ok(p) => p.to_string_lossy().replace('\\', "/"),
