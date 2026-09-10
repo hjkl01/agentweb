@@ -1,4 +1,5 @@
-use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query}, response::Response};
+use crate::state::AppState;
+use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State}, response::Response};
 use futures::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Deserialize;
@@ -22,15 +23,22 @@ enum ClientMessage {
 pub async fn ws_terminal(
     ws: WebSocketUpgrade,
     Query(query): Query<TerminalQuery>,
+    State(state): State<AppState>,
 ) -> Response {
     let cols = query.cols.unwrap_or(120).clamp(20, 500);
     let rows = query.rows.unwrap_or(32).clamp(5, 200);
-    ws.on_upgrade(move |socket| run_terminal(socket, cols, rows, query.session_id))
+    ws.on_upgrade(move |socket| run_terminal(socket, cols, rows, query.session_id, state))
 }
 
-async fn run_terminal(socket: WebSocket, cols: u16, rows: u16, session_id: Option<String>) {
+async fn run_terminal(
+    socket: WebSocket,
+    cols: u16,
+    rows: u16,
+    session_id: Option<String>,
+    state: AppState,
+) {
     let workspace = if let Some(session_id) = session_id {
-        match crate::api::load_session(&crate::state::AppState::new_unavailable_for_terminal(), &session_id).await {
+        match crate::api::load_session(&state.db, &session_id).await {
             Ok(session) => std::path::PathBuf::from(session.workspace),
             Err(_) => {
                 let mut socket = socket;
