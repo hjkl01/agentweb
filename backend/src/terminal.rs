@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 #[derive(Debug, Deserialize)]
-struct TerminalQuery {
+pub struct TerminalQuery {
     cols: Option<u16>,
     rows: Option<u16>,
 }
