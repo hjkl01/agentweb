@@ -14,7 +14,7 @@ ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://mirrors.cernet.edu.cn/crates
 RUN cd backend && cargo build --release
 
 FROM archlinux:base
-RUN sed -i 's/^#\?Server = .*/Server = https:\/\/geo.mirror.pkgbuild.com\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
+RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
   && pacman -Syu --noconfirm \
     ca-certificates \
     curl \
