@@ -4,14 +4,15 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
-type Props = { onClose: () => void };
+type Props = { onClose: () => void; sessionId?: string };
 
-function websocketUrl() {
+function websocketUrl(sessionId?: string) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/api/terminal/ws`;
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  return `${protocol}//${window.location.host}/api/terminal/ws${query}`;
 }
 
-export function TerminalPanel({ onClose }: Props) {
+export function TerminalPanel({ onClose, sessionId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -41,7 +42,7 @@ export function TerminalPanel({ onClose }: Props) {
     };
     requestAnimationFrame(fitAndResize);
 
-    const socket = new WebSocket(websocketUrl());
+    const socket = new WebSocket(websocketUrl(sessionId));
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
     socket.onopen = () => { setConnected(true); setError(undefined); fitAndResize(); terminal.focus(); };
@@ -68,7 +69,7 @@ export function TerminalPanel({ onClose }: Props) {
       socketRef.current = null;
       terminalRef.current = null;
     };
-  }, [sendResize]);
+  }, [sendResize, sessionId]);
 
   return <main className="terminal-panel">
     <header className="terminal-header">
