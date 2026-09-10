@@ -17,7 +17,7 @@ pub struct Agent {
     pub version: Option<String>,
 }
 
-pub async fn list_agents(State(s: State<AppState>)) -> Json<Vec<Agent>> {
+pub async fn list_agents(State(s): State<AppState>) -> Json<Vec<Agent>> {
     let rows = sqlx::query("SELECT id,name,kind,command,working_directory,installed,version FROM agents ORDER BY name")
         .fetch_all(&s.db).await.unwrap_or_default();
     let mut agents = Vec::with_capacity(rows.len());
