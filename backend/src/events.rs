@@ -1,8 +1,13 @@
+use chrono::Utc;
 use serde::Serialize;
+use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
-pub struct EventBus(broadcast::Sender<AgentEvent>);
+pub struct EventBus {
+    sender: broadcast::Sender<AgentEvent>,
+    db: SqlitePool,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
@@ -24,11 +29,7 @@ pub enum AgentEvent {
     #[serde(rename = "tool.started")]
     ToolStarted { session_id: String, tool: String },
     #[serde(rename = "tool.output")]
-    ToolOutput {
-        session_id: String,
-        tool: String,
-        output: String,
-    },
+    ToolOutput { session_id: String, tool: String, output: String },
     #[serde(rename = "tool.completed")]
     ToolCompleted { session_id: String, tool: String },
     #[serde(rename = "file.created")]
@@ -54,13 +55,48 @@ pub enum AgentEvent {
 }
 
 impl EventBus {
-    pub fn new() -> Self {
-        Self(broadcast::channel(512).0)
+    pub fn new(db: SqlitePool) -> Self {
+        Self { sender: broadcast::channel(512).0, db }
     }
+
     pub fn publish(&self, event: AgentEvent) {
-        let _ = self.0.send(event);
+        let _ = self.sender.send(event.clone());
+        let Ok(payload) = serde_json::to_string(&event) else { return; };
+        let session_id = match &event {
+            AgentEvent::SessionStarted { session_id }
+            | AgentEvent::MessageStarted { session_id }
+            | AgentEvent::MessageDelta { session_id, .. }
+            | AgentEvent::MessageCompleted { session_id }
+            | AgentEvent::ThinkingStarted { session_id }
+            | AgentEvent::ThinkingDelta { session_id, .. }
+            | AgentEvent::ThinkingCompleted { session_id }
+            | AgentEvent::ToolStarted { session_id, .. }
+            | AgentEvent::ToolOutput { session_id, .. }
+            | AgentEvent::ToolCompleted { session_id, .. }
+            | AgentEvent::FileCreated { session_id, .. }
+            | AgentEvent::FileModified { session_id, .. }
+            | AgentEvent::FileDeleted { session_id, .. }
+            | AgentEvent::CommandStarted { session_id, .. }
+            | AgentEvent::CommandOutput { session_id, .. }
+            | AgentEvent::CommandCompleted { session_id }
+            | AgentEvent::Error { session_id, .. }
+            | AgentEvent::SessionCompleted { session_id } => Some(session_id.clone()),
+            AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
+        };
+        let event_type = payload.split('"').nth(3).unwrap_or_default().to_owned();
+        let db = self.db.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query("INSERT INTO agent_events(session_id,event_type,payload,created_at) VALUES(?,?,?,?)")
+                .bind(session_id)
+                .bind(event_type)
+                .bind(payload)
+                .bind(Utc::now().to_rfc3339())
+                .execute(&db)
+                .await;
+        });
     }
+
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
-        self.0.subscribe()
+        self.sender.subscribe()
     }
 }
