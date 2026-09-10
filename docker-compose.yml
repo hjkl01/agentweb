@@ -21,6 +21,7 @@ services:
       - AGENTWEB_WORKSPACE_DIR=/workspaces
       - AGENTWEB_RUNTIME_DIR=/data/runtimes/node
       - AGENTWEB_FRONTEND_DIR=/app/frontend
+      - AGENTWEB_WORKERS=${AGENTWEB_WORKERS:-1}
       - RUST_LOG=${RUST_LOG:-info}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
