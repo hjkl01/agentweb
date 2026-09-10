@@ -36,5 +36,6 @@ fn initial_password()->String{
 pub async fn ensure_default_admin(pool:&SqlitePool)->Result<Option<String>>{
     let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(pool).await?; if count>0{return Ok(None)};
     let password=initial_password(); let password_hash=format!("{:x}",Sha256::digest(password.as_bytes())); let now=chrono::Utc::now().to_rfc3339();
-    sqlx::query("INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind("admin").bind(password_hash).bind(&now).bind(&now).execute(pool).await?; Ok(Some(password))
+    let result=sqlx::query("INSERT OR IGNORE INTO users(id,username,password_hash,created_at,updated_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind("admin").bind(password_hash).bind(&now).bind(&now).execute(pool).await?;
+    if result.rows_affected()==1 { Ok(Some(password)) } else { Ok(None) }
 }
