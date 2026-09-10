@@ -12,8 +12,8 @@ mod terminal;
 
 use anyhow::Result;
 use axum::{middleware, routing::get, Router};
-use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions}, SqlitePool};
-use std::{path::Path, str::FromStr, time::Duration};
+use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
+use std::{path::Path, str::FromStr};
 use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
@@ -25,10 +25,10 @@ async fn main()->Result<()>{
  tracing_subscriber::fmt().with_env_filter(filter).init();
  let db_url=std::env::var("DATABASE_URL").unwrap_or_else(|_|"sqlite://./data/agentweb.db".into());
  if let Some(path)=db_url.strip_prefix("sqlite://"){let path=path.split('?').next().unwrap_or(path);if let Some(parent)=Path::new(path).parent(){if !parent.as_os_str().is_empty(){tokio::fs::create_dir_all(parent).await?;}}}
- let db_options=SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true).journal_mode(SqliteJournalMode::Wal).busy_timeout(Duration::from_secs(5));
- let pool:SqlitePool=SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
+ let db_options=SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true).journal_mode(sqlx::sqlite::SqliteJournalMode::Wal).busy_timeout(std::time::Duration::from_secs(5)); let pool:SqlitePool=SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
  db::init(&pool).await?;
- if let Some(password)=db::ensure_default_admin(&pool).await?{eprintln!("\n============================================================");eprintln!(" Agent Web 首次启动，已创建默认管理员账号");eprintln!(" 用户名: admin");eprintln!(" 密码:   {password}");eprintln!(" 请立即保存密码；删除数据库后会重新生成新的密码。");eprintln!("============================================================\n");}
+ if let Some(password)=db::ensure_default_admin(&pool).await?{eprintln!("\n============================================================");eprintln!(" Agent Web首次启动，已创建默认管理员账号");eprintln!(" 用户名: admin");eprintln!(" 密码:   {password}");eprintln!(" 请立即保存密码；删除数据库后会重新生成新的密码。");eprintln!("============================================================\n");}
+ let cleanup_db=pool.clone(); tokio::spawn(async move { let mut ticker=tokio::time::interval(std::time::Duration::from_secs(3600)); loop { ticker.tick().await; let _=sqlx::query("DELETE FROM agent_events WHERE created_at < datetime('now','-1 day') AND session_id IN (SELECT id FROM sessions WHERE status != 'running')").execute(&cleanup_db).await; } });
  let state=state::AppState::new(pool); let frontend_dir=std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_|"./frontend/dist".into()); let index_file=Path::new(&frontend_dir).join("index.html");
  let protected_api=Router::new()
   .route("/auth/password",axum::routing::put(auth::change_password)).route("/auth/sessions",get(auth::list_sessions)).route("/auth/sessions/revoke-all",axum::routing::post(auth::revoke_all_sessions))
