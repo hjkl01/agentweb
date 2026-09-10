@@ -8,14 +8,28 @@ pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): S
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
-    let mut cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM agent_events")
-        .fetch_one(&s.db).await.unwrap_or(0);
+    let mut cursor = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(e.id), 0)
+         FROM agent_events e
+         JOIN sessions s ON s.id=e.session_id
+         WHERE e.session_id=? AND e.worker_id=s.worker_id"
+    )
+    .bind(&session_id)
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
     let mut ticker = time::interval(Duration::from_millis(100));
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let rows = sqlx::query("SELECT e.id,e.payload FROM agent_events e JOIN sessions s ON s.id=e.session_id WHERE e.id>? AND e.session_id=? AND e.worker_id=s.worker_id ORDER BY e.id LIMIT 256")
+                let rows = sqlx::query(
+                    "SELECT e.id,e.payload
+                     FROM agent_events e
+                     JOIN sessions s ON s.id=e.session_id
+                     WHERE e.id>? AND e.session_id=? AND e.worker_id=s.worker_id
+                     ORDER BY e.id LIMIT 256"
+                )
                     .bind(cursor).bind(&session_id).fetch_all(&s.db).await;
                 let Ok(rows) = rows else { continue; };
                 for row in rows {
