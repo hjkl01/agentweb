@@ -28,13 +28,18 @@ async fn locked(state: &AppState, ip: &str) -> bool {
 
 async fn record_failure(state: &AppState, ip: &str) {
     let now = Utc::now();
-    let _ = sqlx::query(
-        "INSERT INTO login_failures(client_ip,failures,locked_until,updated_at) VALUES(?,1,0,?) \
-         ON CONFLICT(client_ip) DO UPDATE SET \
-         failures=login_failures.failures+1, \
-         locked_until=CASE WHEN login_failures.failures+1>=? THEN unixepoch('now')+? ELSE login_failures.locked_until END, \
-         updated_at=excluded.updated_at"
-    )
+    let _ = sqlx::query(r#"
+        INSERT INTO login_failures(client_ip, failures, locked_until, updated_at)
+        VALUES(?, 1, 0, ?)
+        ON CONFLICT(client_ip) DO UPDATE SET
+            failures = login_failures.failures + 1,
+            locked_until = CASE
+                WHEN login_failures.failures + 1 >= ?
+                THEN unixepoch('now') + ?
+                ELSE login_failures.locked_until
+            END,
+            updated_at = excluded.updated_at
+    "#)
     .bind(ip)
     .bind(now.to_rfc3339())
     .bind(MAX_FAILURES)
