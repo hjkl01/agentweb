@@ -1,6 +1,5 @@
 use crate::state::AppState;
 use axum::{extract::{ws::{Message, WebSocket}, Path, State, WebSocketUpgrade}, response::IntoResponse};
-use futures_util::StreamExt;
 use sqlx::Row;
 use tokio::time::{self, Duration};
 
@@ -26,7 +25,7 @@ async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
                     if socket.send(Message::Text(payload.into())).await.is_err() { return; }
                 }
             }
-            message = socket.next() => {
+            message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Close(_))) | None => return,
                     Some(Ok(_)) => {},
