@@ -35,7 +35,7 @@ pub async fn send_message(Path(id): Path<String>, State(s): State<AppState>, Jso
     if claimed.rows_affected()==0 { load_session(&s.db,&id).await?; return Err(StatusCode::CONFLICT); }
     let session=load_session(&s.db,&id).await?;
     if sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind(&id).bind("user").bind(&v.message).bind(&now_text).execute(&s.db).await.is_err() {
-        let _=sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(Utc::now().to_rfc3339()).bind(&id).bind(&s.worker_id).execute(&s.db).await;
+        let _=sqlx::query("UPDATE sessions SET status='error',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(Utc::now().to_rfc3339()).bind(&id).bind(&s.worker_id).execute(&s.db).await;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
