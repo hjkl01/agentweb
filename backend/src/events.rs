@@ -95,16 +95,21 @@ impl EventBus {
         let worker_id = self.worker_id.clone();
         let db = self.db.clone();
         tokio::spawn(async move {
-            if let Err(error) = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) VALUES(?,?,?,?,?)")
-                .bind(session_id)
-                .bind(worker_id)
-                .bind(event_type)
-                .bind(payload)
-                .bind(Utc::now().to_rfc3339())
-                .execute(&db)
-                .await
-            {
-                tracing::warn!(%error, "failed to persist agent event");
+            if let Some(session_id) = session_id {
+                // The worker may still emit events while another worker deletes the session.
+                // Guard the write so a late event cannot create an orphan row.
+                let result = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=?)")
+                    .bind(&session_id)
+                    .bind(worker_id)
+                    .bind(event_type)
+                    .bind(payload)
+                    .bind(Utc::now().to_rfc3339())
+                    .bind(&session_id)
+                    .execute(&db)
+                    .await;
+                if let Err(error) = result {
+                    tracing::warn!(%error, "failed to persist agent event");
+                }
             }
         });
     }
