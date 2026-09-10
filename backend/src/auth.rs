@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
-const MAX_FAILURES: u32 = 3;
+const MAX_FAILURES: i64 = 3;
 const LOCK_SECONDS: i64 = 30 * 60;
 
 fn hash(value: &str) -> String { format!("{:x}", Sha256::digest(value.as_bytes())) }
@@ -15,9 +15,41 @@ fn cookie_token_from_headers(headers: &HeaderMap) -> Option<String> { headers.ge
 fn cookie_token(request: &Request<Body>) -> Option<String> { cookie_token_from_headers(request.headers()) }
 fn client_ip(headers: &HeaderMap) -> String { headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.split(',').next()).map(str::trim).filter(|v| !v.is_empty()).or_else(|| headers.get("x-real-ip").and_then(|v|v.to_str().ok())).unwrap_or("unknown").to_owned() }
 
-async fn locked(state: &AppState, ip: &str) -> bool { let mut map = state.login_failures.lock().await; if let Some((_, until)) = map.get(ip).copied() { if until > Utc::now().timestamp() { return true; } map.remove(ip); } false }
-async fn record_failure(state: &AppState, ip: &str) { let mut map = state.login_failures.lock().await; let entry = map.entry(ip.to_owned()).or_insert((0, 0)); entry.0 += 1; if entry.0 >= MAX_FAILURES { entry.1 = Utc::now().timestamp() + LOCK_SECONDS; } }
-async fn clear_failures(state: &AppState, ip: &str) { state.login_failures.lock().await.remove(ip); }
+async fn locked(state: &AppState, ip: &str) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT locked_until FROM login_failures WHERE client_ip=?")
+        .bind(ip)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|until| until > Utc::now().timestamp())
+        .unwrap_or(false)
+}
+
+async fn record_failure(state: &AppState, ip: &str) {
+    let now = Utc::now();
+    let _ = sqlx::query(
+        "INSERT INTO login_failures(client_ip,failures,locked_until,updated_at) VALUES(?,1,0,?) \
+         ON CONFLICT(client_ip) DO UPDATE SET \
+         failures=login_failures.failures+1, \
+         locked_until=CASE WHEN login_failures.failures+1>=? THEN unixepoch('now')+? ELSE login_failures.locked_until END, \
+         updated_at=excluded.updated_at"
+    )
+    .bind(ip)
+    .bind(now.to_rfc3339())
+    .bind(MAX_FAILURES)
+    .bind(LOCK_SECONDS)
+    .execute(&state.db)
+    .await;
+}
+
+async fn clear_failures(state: &AppState, ip: &str) {
+    let _ = sqlx::query("DELETE FROM login_failures WHERE client_ip=?")
+        .bind(ip)
+        .execute(&state.db)
+        .await;
+}
+
 async fn verify_password(state: &AppState, username: &str, password: &str) -> Option<String> { let row = sqlx::query("SELECT id, password_hash FROM users WHERE username=?").bind(username).fetch_optional(&state.db).await.ok().flatten()?; if hash(password) == row.get::<String,_>(1) { Some(row.get::<String,_>(0)) } else { None } }
 async fn valid_session(state: &AppState, token: &str) -> Option<(String, String)> { let row = sqlx::query("SELECT s.id, u.username FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? LIMIT 1").bind(hash(token)).bind(Utc::now().to_rfc3339()).fetch_optional(&state.db).await.ok().flatten()?; Some((row.get(0), row.get(1))) }
 
