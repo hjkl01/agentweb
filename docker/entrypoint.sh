@@ -13,6 +13,7 @@ for port in $(seq 8081 $((8080 + workers))); do
   upstream_servers+="        server 127.0.0.1:${port};\n"
 done
 sed "s|__UPSTREAM_SERVERS__|${upstream_servers}|" /etc/agentweb/nginx.conf.template > "$nginx_conf"
+nginx -t -c "$nginx_conf"
 
 pids=()
 cleanup() {
@@ -33,8 +34,8 @@ for port in $(seq 8081 $((8080 + workers))); do
 done
 
 nginx -c "$nginx_conf" -g 'daemon off;' &
-nginx_pid=$!
-pids+=("$nginx_pid")
+pids+=("$!")
 
-wait "$nginx_pid"
-exit $?
+wait -n "${pids[@]}"
+status=$?
+exit "$status"
