@@ -7,6 +7,7 @@ use tokio::sync::broadcast;
 pub struct EventBus {
     sender: broadcast::Sender<AgentEvent>,
     db: SqlitePool,
+    worker_id: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -56,7 +57,11 @@ pub enum AgentEvent {
 
 impl EventBus {
     pub fn new(db: SqlitePool) -> Self {
-        Self { sender: broadcast::channel(512).0, db }
+        Self { sender: broadcast::channel(512).0, db, worker_id: None }
+    }
+
+    pub fn for_worker(&self, worker_id: String) -> Self {
+        Self { sender: self.sender.clone(), db: self.db.clone(), worker_id: Some(worker_id) }
     }
 
     pub fn publish(&self, event: AgentEvent) {
@@ -84,10 +89,12 @@ impl EventBus {
             AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
         };
         let event_type = payload.split('"').nth(3).unwrap_or_default().to_owned();
+        let worker_id = self.worker_id.clone();
         let db = self.db.clone();
         tokio::spawn(async move {
-            let _ = sqlx::query("INSERT INTO agent_events(session_id,event_type,payload,created_at) VALUES(?,?,?,?)")
+            let _ = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) VALUES(?,?,?,?,?)")
                 .bind(session_id)
+                .bind(worker_id)
                 .bind(event_type)
                 .bind(payload)
                 .bind(Utc::now().to_rfc3339())
