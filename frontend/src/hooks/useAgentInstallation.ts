@@ -10,6 +10,15 @@ type InstallEvent = {
   data: { agent_id: string; text?: string; success?: boolean };
 };
 
+const appendInstallOutput = (current: AgentInstallFeedback | undefined, agentId: string, text: string) => {
+  if (!text) return current;
+  const previous = current?.agentId === agentId ? current.message : '';
+  const output = [previous, text].filter(Boolean).join('\n');
+  // Keep the UI useful even when npm emits a very large log.
+  const trimmed = output.length > 6000 ? output.slice(-6000) : output;
+  return { agentId, state: 'running' as const, message: trimmed };
+};
+
 export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?: NodeInfo, refreshAgents?: () => Promise<void>) {
   const [installingNode, setInstallingNode] = useState(false);
   const [installingAgent, setInstallingAgent] = useState<string>();
@@ -35,21 +44,30 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
         const data = value.data || {};
         if (!data.agent_id) return;
         if (value.type === 'install.output') {
-          setAgentInstallFeedback(current => current?.agentId === data.agent_id
-            ? { ...current, state: 'running', message: data.text || current.message }
-            : current);
+          setAgentInstallFeedback(current => appendInstallOutput(current, data.agent_id, data.text || ''));
           return;
         }
         if (value.type === 'install.completed') {
           if (installTimeout.current) clearTimeout(installTimeout.current);
           setInstallingAgent(undefined);
           if (data.success) {
-            setAgentInstallFeedback({ agentId: data.agent_id, state: 'success', message: `${data.agent_id} 安装成功` });
+            setAgentInstallFeedback(current => ({
+              agentId: data.agent_id,
+              state: 'success',
+              message: current?.agentId === data.agent_id && current.message
+                ? `安装成功\n\n${current.message}`
+                : `${data.agent_id} 安装成功`,
+            }));
             setError(undefined);
           } else {
-            const message = '安装失败，请查看安装输出。';
-            setAgentInstallFeedback({ agentId: data.agent_id, state: 'error', message });
-            setError(message);
+            setAgentInstallFeedback(current => ({
+              agentId: data.agent_id,
+              state: 'error',
+              message: current?.agentId === data.agent_id && current.message
+                ? `安装失败，后端返回的详细错误：\n\n${current.message}`
+                : '安装失败，但没有收到后端的详细错误输出。',
+            }));
+            setError(current => current || `Agent ${data.agent_id} 安装失败`);
           }
           refreshAgents?.().catch(console.error);
         }
@@ -109,13 +127,13 @@ export function useAgentInstallation(agents: Agent[], nodeVersion: string, node?
       installTimeout.current = setTimeout(() => {
         setInstallingAgent(current => current === id ? undefined : current);
         setAgentInstallFeedback(current => current?.agentId === id && current.state === 'running'
-          ? { ...current, state: 'error', message: '安装超时，请检查后端安装日志。' }
+          ? { ...current, state: 'error', message: `安装超时。最近的后端输出：\n\n${current.message}` }
           : current);
       }, 5 * 60 * 1000);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(message);
-      setAgentInstallFeedback({ agentId: id, state: 'error', message: `安装失败：${message}` });
+      setAgentInstallFeedback({ agentId: id, state: 'error', message: `安装请求失败：${message}` });
       setInstallingAgent(undefined);
       throw new Error(message);
     }
