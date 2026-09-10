@@ -17,7 +17,7 @@ pub struct Agent {
     pub version: Option<String>,
 }
 
-pub async fn list_agents(State(s): State<AppState>) -> Json<Vec<Agent>> {
+pub async fn list_agents(State(s: State<AppState>)) -> Json<Vec<Agent>> {
     let rows = sqlx::query("SELECT id,name,kind,command,working_directory,installed,version FROM agents ORDER BY name")
         .fetch_all(&s.db).await.unwrap_or_default();
     let mut agents = Vec::with_capacity(rows.len());
@@ -36,7 +36,7 @@ pub async fn list_agents(State(s): State<AppState>) -> Json<Vec<Agent>> {
             kind: r.get(2),
             command: r.get(3),
             working_directory: r.get(4),
-            installed: db_installed || detected_version.is_some(),
+            installed: db_installed || detected.is_some(),
             version: detected_version.or(db_version),
         });
     }
@@ -51,7 +51,7 @@ pub struct CreateAgent {
     pub working_directory: Option<String>,
 }
 
-pub async fn create_agent(State(s): State<AppState>, Json(v): Json<CreateAgent>) -> Result<Json<Agent>, StatusCode> {
+pub async fn create_agent(State(s: State<AppState>, Json(v): Json<CreateAgent>) -> Result<Json<Agent>, StatusCode> {
     if v.name.trim().is_empty() || v.kind.trim().is_empty() || v.command.trim().is_empty() { return Err(StatusCode::BAD_REQUEST); }
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -73,8 +73,8 @@ pub struct AgentStatus {
 pub async fn agent_status(Path(id): Path<String>, State(s): State<AppState>) -> Json<AgentStatus> {
     let binary = resolve_agent_binary(&s.db, &id).await;
     let version = match binary.as_deref() { Some(path) => detect_agent_version(path).await, None => None };
-    let runtime = if version.is_some() { agent_runtime_label(&id, &s.db).await } else { None };
-    Json(AgentStatus { id, installed: version.is_some(), version, path: binary.map(|p| p.to_string_lossy().into_owned()), runtime })
+    let runtime = if binary.is_some() { agent_runtime_label(&id, &s.db).await } else { None };
+    Json(AgentStatus { id, installed: binary.is_some(), version, path: binary.map(|p| p.to_string_lossy().into_owned()), runtime })
 }
 
 pub async fn agent_models(Path(id): Path<String>, State(s): State<AppState>) -> Result<Json<Vec<AgentModel>>, StatusCode> {
