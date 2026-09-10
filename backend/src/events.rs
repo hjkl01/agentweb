@@ -88,18 +88,24 @@ impl EventBus {
             | AgentEvent::SessionCompleted { session_id } => Some(session_id.clone()),
             AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
         };
-        let event_type = payload.split('"').nth(3).unwrap_or_default().to_owned();
+        let event_type = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|value| value.get("type").and_then(|value| value.as_str()).map(str::to_owned))
+            .unwrap_or_default();
         let worker_id = self.worker_id.clone();
         let db = self.db.clone();
         tokio::spawn(async move {
-            let _ = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) VALUES(?,?,?,?,?)")
+            if let Err(error) = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) VALUES(?,?,?,?,?)")
                 .bind(session_id)
                 .bind(worker_id)
                 .bind(event_type)
                 .bind(payload)
                 .bind(Utc::now().to_rfc3339())
                 .execute(&db)
-                .await;
+                .await
+            {
+                tracing::warn!(%error, "failed to persist agent event");
+            }
         });
     }
 
