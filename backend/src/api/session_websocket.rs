@@ -15,8 +15,8 @@ async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let rows = sqlx::query("SELECT e.id,e.payload FROM agent_events e WHERE e.id>? AND e.session_id=? AND (e.worker_id IS NULL OR e.worker_id=(SELECT worker_id FROM sessions WHERE id=?)) ORDER BY e.id LIMIT 256")
-                    .bind(cursor).bind(&session_id).bind(&session_id).fetch_all(&s.db).await;
+                let rows = sqlx::query("SELECT e.id,e.payload FROM agent_events e JOIN sessions s ON s.id=e.session_id WHERE e.id>? AND e.session_id=? AND e.worker_id=s.worker_id ORDER BY e.id LIMIT 256")
+                    .bind(cursor).bind(&session_id).fetch_all(&s.db).await;
                 let Ok(rows) = rows else { continue; };
                 for row in rows {
                     let id = row.get::<i64,_>(0);
