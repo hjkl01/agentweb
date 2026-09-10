@@ -1,22 +1,38 @@
-use crate::{events::AgentEvent, state::AppState};
+use crate::state::AppState;
 use axum::{extract::{ws::{Message, WebSocket}, Path, State, WebSocketUpgrade}, response::IntoResponse};
-
-fn event_session_id(event: &AgentEvent) -> Option<&str> {
-    match event {
-        AgentEvent::SessionStarted { session_id } | AgentEvent::MessageStarted { session_id } | AgentEvent::MessageDelta { session_id, .. } | AgentEvent::MessageCompleted { session_id } | AgentEvent::ThinkingStarted { session_id } | AgentEvent::ThinkingDelta { session_id, .. } | AgentEvent::ThinkingCompleted { session_id } | AgentEvent::ToolStarted { session_id, .. } | AgentEvent::ToolOutput { session_id, .. } | AgentEvent::ToolCompleted { session_id, .. } | AgentEvent::FileCreated { session_id, .. } | AgentEvent::FileModified { session_id, .. } | AgentEvent::FileDeleted { session_id, .. } | AgentEvent::CommandStarted { session_id, .. } | AgentEvent::CommandOutput { session_id, .. } | AgentEvent::CommandCompleted { session_id } | AgentEvent::Error { session_id, .. } | AgentEvent::SessionCompleted { session_id } => Some(session_id),
-        AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
-    }
-}
+use futures_util::StreamExt;
+use sqlx::Row;
+use tokio::time::{self, Duration};
 
 pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| websocket(socket, s, id))
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
-    let mut rx=s.events.subscribe();
-    while let Ok(event)=rx.recv().await {
-        if event_session_id(&event)!=Some(session_id.as_str()) { continue; }
-        let Ok(text)=serde_json::to_string(&event) else { continue };
-        if socket.send(Message::Text(text.into())).await.is_err() { break; }
+    let mut cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM agent_events")
+        .fetch_one(&s.db).await.unwrap_or(0);
+    let mut ticker = time::interval(Duration::from_millis(100));
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let rows = sqlx::query("SELECT id,payload FROM agent_events WHERE id>? AND session_id=? ORDER BY id LIMIT 256")
+                    .bind(cursor).bind(&session_id).fetch_all(&s.db).await;
+                let Ok(rows) = rows else { continue };
+                for row in rows {
+                    let id = row.get::<i64,_>(0);
+                    let payload = row.get::<String,_>(1);
+                    cursor = id;
+                    if socket.send(Message::Text(payload.into())).await.is_err() { return; }
+                }
+            }
+            message = socket.next() => {
+                match message {
+                    Some(Ok(Message::Close(_))) | None => return,
+                    Some(Ok(_)) => {},
+                    Some(Err(_)) => return,
+                }
+            }
+        }
     }
 }
