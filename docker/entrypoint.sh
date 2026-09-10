@@ -7,6 +7,13 @@ if ! [[ "$workers" =~ ^[1-4]$ ]]; then
   exit 1
 fi
 
+nginx_conf=/etc/nginx/nginx.conf
+upstream_servers=""
+for port in $(seq 8081 $((8080 + workers))); do
+  upstream_servers+="        server 127.0.0.1:${port};\n"
+done
+sed "s|__UPSTREAM_SERVERS__|${upstream_servers}|" /etc/agentweb/nginx.conf.template > "$nginx_conf"
+
 pids=()
 cleanup() {
   trap - TERM INT EXIT
@@ -25,12 +32,9 @@ for port in $(seq 8081 $((8080 + workers))); do
   pids+=("$!")
 done
 
-nginx -c /etc/nginx/nginx.conf -g 'daemon off;' &
-pids+=("$!")
+nginx -c "$nginx_conf" -g 'daemon off;' &
+nginx_pid=$!
+pids+=("$nginx_pid")
 
-while true; do
-  if ! kill -0 "${pids[0]}" 2>/dev/null; then
-    exit 1
-  fi
-  sleep 2
-done
+wait "$nginx_pid"
+exit $?
