@@ -13,8 +13,8 @@ function websocketUrl() {
 
 export function TerminalPanel({ onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | undefined>(undefined);
-  const socketRef = useRef<WebSocket | undefined>(undefined);
+  const terminalRef = useRef<Terminal | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -28,35 +28,54 @@ export function TerminalPanel({ onClose }: Props) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const terminal = new Terminal({ cursorBlink: true, cursorStyle: 'bar', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.2, scrollback: 5000 });
+    const terminal = new Terminal({ cursorBlink: true, cursorStyle: 'bar', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.2, scrollback: 5000, convertEol: false, allowTransparency: false });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
-    fit.fit();
-    terminal.focus();
     terminalRef.current = terminal;
+
+    const fitAndResize = () => {
+      if (!container.isConnected) return;
+      fit.fit();
+      sendResize();
+    };
+    requestAnimationFrame(fitAndResize);
 
     const socket = new WebSocket(websocketUrl());
     socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
-    socket.onopen = () => { setConnected(true); setError(undefined); sendResize(); terminal.focus(); };
+    socket.onopen = () => { setConnected(true); setError(undefined); fitAndResize(); terminal.focus(); };
     socket.onmessage = event => {
-      if (typeof event.data === 'string') { terminal.write(event.data); return; }
-      terminal.write(new Uint8Array(event.data as ArrayBuffer));
+      if (typeof event.data === 'string') terminal.write(event.data);
+      else terminal.write(new Uint8Array(event.data as ArrayBuffer));
     };
     socket.onerror = () => { setConnected(false); setError('Terminal WebSocket 连接失败'); };
-    socket.onclose = () => setConnected(false);
-    const input = terminal.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data })); });
-    const resize = () => { fit.fit(); sendResize(); };
-    const observer = new ResizeObserver(resize);
+    socket.onclose = () => { setConnected(false); setError(current => current || 'Terminal 连接已断开'); };
+
+    const input = terminal.onData(data => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data }));
+    });
+    const observer = new ResizeObserver(() => requestAnimationFrame(fitAndResize));
     observer.observe(container);
-    window.addEventListener('resize', resize);
-    return () => { observer.disconnect(); window.removeEventListener('resize', resize); input.dispose(); socket.close(); terminal.dispose(); socketRef.current = undefined; terminalRef.current = undefined; };
+    window.addEventListener('resize', fitAndResize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', fitAndResize);
+      input.dispose();
+      socket.close();
+      terminal.dispose();
+      socketRef.current = null;
+      terminalRef.current = null;
+    };
   }, [sendResize]);
 
   return <main className="terminal-panel">
-    <header className="terminal-header"><div className="terminal-title"><TerminalIcon size={16} /><strong>Terminal</strong><span className={connected ? 'terminal-status connected' : 'terminal-status'}>{connected ? 'Connected' : 'Disconnected'}</span></div><button className="icon-button" onClick={onClose} aria-label="关闭 Terminal"><X size={16} /></button></header>
+    <header className="terminal-header">
+      <div className="terminal-title"><TerminalIcon size={16} /><strong>Terminal</strong><span className={connected ? 'terminal-status connected' : 'terminal-status'}>{connected ? 'Connected' : 'Disconnected'}</span></div>
+      <button className="icon-button" onClick={onClose} aria-label="关闭 Terminal" title="关闭 Terminal"><X size={16} /></button>
+    </header>
     <div className="terminal-body" ref={containerRef} />
-    {error && <div className="terminal-error">{error}</div>}
+    {error && <div className="terminal-error" role="alert">{error}</div>}
   </main>;
 }
