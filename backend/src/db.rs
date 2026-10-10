@@ -1,5 +1,6 @@
 use anyhow::Result;
-use sha2::{Digest, Sha256};
+use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
+use argon2::password_hash::rand_core::OsRng;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -35,7 +36,12 @@ fn initial_password()->String{
 
 pub async fn ensure_default_admin(pool:&SqlitePool)->Result<Option<String>>{
     let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(pool).await?; if count>0{return Ok(None)};
-    let password=initial_password(); let password_hash=format!("{:x}",Sha256::digest(password.as_bytes())); let now=chrono::Utc::now().to_rfc3339();
+    let password=initial_password();
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default().hash_password(password.as_bytes(), &salt)
+        .map_err(|error| anyhow::anyhow!("default admin password hashing failed: {error}"))?
+        .to_string();
+    let now=chrono::Utc::now().to_rfc3339();
     let result=sqlx::query("INSERT OR IGNORE INTO users(id,username,password_hash,created_at,updated_at) VALUES(?,?,?,?,?)").bind(Uuid::new_v4().to_string()).bind("admin").bind(password_hash).bind(&now).bind(&now).execute(pool).await?;
     if result.rows_affected()==1 { Ok(Some(password)) } else { Ok(None) }
 }

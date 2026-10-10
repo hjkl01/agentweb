@@ -3,6 +3,8 @@ use axum::{body::Body, extract::{ConnectInfo, State}, http::{header, HeaderMap, 
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use argon2::{password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}, Argon2};
+use argon2::password_hash::rand_core::OsRng;
 use sqlx::Row;
 use uuid::Uuid;
 use std::net::{IpAddr, SocketAddr};
@@ -100,7 +102,38 @@ async fn clear_failures(state: &AppState, ip: &str) {
         .await;
 }
 
-async fn verify_password(state: &AppState, username: &str, password: &str) -> Option<String> { let row = sqlx::query("SELECT id, password_hash FROM users WHERE username=?").bind(username).fetch_optional(&state.db).await.ok().flatten()?; if hash(password) == row.get::<String,_>(1) { Some(row.get::<String,_>(0)) } else { None } }
+fn password_hash(password: &str) -> anyhow::Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Ok(Argon2::default().hash_password(password.as_bytes(), &salt)
+        .map_err(|error| anyhow::anyhow!("password hashing failed: {error}"))?
+        .to_string())
+}
+
+async fn verify_password(state: &AppState, username: &str, password: &str) -> Option<String> {
+    let row = sqlx::query("SELECT id, password_hash FROM users WHERE username=?")
+        .bind(username).fetch_optional(&state.db).await.ok().flatten()?;
+    let user_id: String = row.get(0);
+    let stored: String = row.get(1);
+
+    if stored.starts_with("$argon2id$") {
+        let parsed = PasswordHash::new(&stored).ok()?;
+        return Argon2::default().verify_password(password.as_bytes(), &parsed)
+            .is_ok().then_some(user_id);
+    }
+
+    // Backward compatibility: existing installations stored a plain SHA-256 digest.
+    if hash(password) != stored {
+        return None;
+    }
+
+    // Upgrade only after the legacy password has been verified.
+    if let Ok(upgraded) = password_hash(password) {
+        let _ = sqlx::query("UPDATE users SET password_hash=?, updated_at=? WHERE id=? AND password_hash=?")
+            .bind(upgraded).bind(Utc::now().to_rfc3339()).bind(&user_id).bind(&stored)
+            .execute(&state.db).await;
+    }
+    Some(user_id)
+}
 async fn valid_session(state: &AppState, token: &str) -> Option<(String, String)> { let row = sqlx::query("SELECT s.id, u.username FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? LIMIT 1").bind(hash(token)).bind(Utc::now().to_rfc3339()).fetch_optional(&state.db).await.ok().flatten()?; Some((row.get(0), row.get(1))) }
 
 pub async fn basic_auth(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response { if let Some(token) = cookie_token(&request) { if valid_session(&state, &token).await.is_some() { return next.run(request).await; } } unauthorized() }
@@ -116,10 +149,25 @@ pub async fn logout(State(state): State<AppState>, request: Request<Body>) -> Re
 fn clear_cookie() -> Response { Response::builder().status(StatusCode::OK).header(header::SET_COOKIE,format!("agentweb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{}", secure_cookie_attribute())).header(header::CONTENT_TYPE,"application/json").body(Body::from(r#"{"status":"logged_out"}"#)).unwrap() }
 async fn current_user(state: &AppState, token: Option<String>) -> Option<(String,String)> { valid_session(state, &token?).await }
 
-pub async fn change_password(State(state): State<AppState>, headers: HeaderMap, Json(value): Json<ChangePasswordRequest>) -> Response { let token = cookie_token_from_headers(&headers); let Some((session_id,username))=current_user(&state,token).await else { return unauthorized(); }; if value.new_password.len() < 8 { return (StatusCode::BAD_REQUEST,"Password must contain at least 8 characters").into_response(); } if verify_password(&state,&username,&value.current_password).await.is_none() { return (StatusCode::BAD_REQUEST,"Current password is incorrect").into_response(); } if sqlx::query("UPDATE users SET password_hash=?,updated_at=? WHERE username=?").bind(hash(&value.new_password)).bind(Utc::now().to_rfc3339()).bind(&username).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to update password").into_response(); } let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&session_id).bind(&session_id).execute(&state.db).await; (StatusCode::OK,Json(serde_json::json!({"status":"password_changed","username":username}))).into_response() }
+pub async fn change_password(State(state): State<AppState>, headers: HeaderMap, Json(value): Json<ChangePasswordRequest>) -> Response { let token = cookie_token_from_headers(&headers); let Some((session_id,username))=current_user(&state,token).await else { return unauthorized(); }; if value.new_password.len() < 8 { return (StatusCode::BAD_REQUEST,"Password must contain at least 8 characters").into_response(); } if verify_password(&state,&username,&value.current_password).await.is_none() { return (StatusCode::BAD_REQUEST,"Current password is incorrect").into_response(); } if sqlx::query("UPDATE users SET password_hash=?,updated_at=? WHERE username=?").bind(match password_hash(&value.new_password) { Ok(value) => value, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to hash password").into_response() }).bind(Utc::now().to_rfc3339()).bind(&username).execute(&state.db).await.is_err() { return (StatusCode::INTERNAL_SERVER_ERROR,"Unable to update password").into_response(); } let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&session_id).bind(&session_id).execute(&state.db).await; (StatusCode::OK,Json(serde_json::json!({"status":"password_changed","username":username}))).into_response() }
 pub async fn list_sessions(State(state): State<AppState>, request: Request<Body>) -> Response { let token = cookie_token(&request); let Some((current_id,_))=current_user(&state,token).await else { return unauthorized(); }; let rows=sqlx::query("SELECT id,created_at,expires_at FROM auth_sessions WHERE user_id=(SELECT user_id FROM auth_sessions WHERE id=?) AND expires_at>? ORDER BY created_at DESC").bind(&current_id).bind(Utc::now().to_rfc3339()).fetch_all(&state.db).await.unwrap_or_default(); let sessions=rows.into_iter().map(|r|AuthSession{id:r.get(0),created_at:r.get(1),expires_at:r.get(2),current:r.get::<String,_>(0)==current_id}).collect::<Vec<_>>(); (StatusCode::OK,Json(sessions)).into_response() }
 pub async fn revoke_all_sessions(State(state): State<AppState>, request: Request<Body>) -> Response { let token = cookie_token(&request); let Some((current_id,_))=current_user(&state,token).await else { return unauthorized(); }; let _=sqlx::query("DELETE FROM auth_sessions WHERE id<>? AND user_id=(SELECT user_id FROM auth_sessions WHERE id=?)").bind(&current_id).bind(&current_id).execute(&state.db).await; (StatusCode::OK,Json(serde_json::json!({"status":"revoked"}))).into_response() }
 
+
+#[cfg(test)]
+mod password_hash_tests {
+    use super::*;
+
+    #[test]
+    fn argon2_hashes_verify_and_do_not_store_plaintext() {
+        let encoded = password_hash("correct horse battery staple").unwrap();
+        assert!(encoded.starts_with("$argon2id$"));
+        assert!(!encoded.contains("correct horse"));
+        let parsed = PasswordHash::new(&encoded).unwrap();
+        assert!(Argon2::default().verify_password(b"correct horse battery staple", &parsed).is_ok());
+        assert!(Argon2::default().verify_password(b"wrong password", &parsed).is_err());
+    }
+}
 
 #[cfg(test)]
 mod client_ip_tests {
