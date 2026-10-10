@@ -69,7 +69,7 @@ function currentStatus(items: ActivityItem[]) {
   return { label: latest.label || "正在处理请求", state: "running" };
 }
 
-function ActivityRow({ item }: { item: ActivityItem }) {
+function ActivityRow({ item, expanded }: { item: ActivityItem; expanded: boolean }) {
   const thinking = item.type.startsWith("thinking.");
   const output =
     item.type.startsWith("tool.") || item.type.startsWith("command.");
@@ -89,7 +89,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
           )}
         </div>
         {detail && thinking && (
-          <details className="activity-detail activity-thinking">
+          <details className="activity-detail activity-thinking" open={expanded}>
             <summary>查看思考记录</summary>
             <pre>{detail}</pre>
           </details>
@@ -142,7 +142,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
       {open && (
         <div className="activity-list">
           {items.map((item) => (
-            <ActivityRow key={item.id} item={item} />
+            <ActivityRow key={item.id} item={item} expanded={open} />
           ))}
         </div>
       )}
