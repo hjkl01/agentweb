@@ -69,6 +69,7 @@ export type WorkspaceFile = {
   binary?: boolean;
   truncated?: boolean;
   message?: string;
+  source?: string;
 };
 export type WorkspaceDiff = {
   status?: string;
