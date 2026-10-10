@@ -46,7 +46,7 @@ function currentStatus(items: ActivityItem[]) {
     .reverse()
     .find(
       (item) =>
-        item.type !== "message.started" && item.type !== "message.completed",
+        item.type !== "message.started",
     );
   if (!latest) return { label: "正在处理请求", state: "running" };
   if (latest.type === "session.completed")
@@ -142,7 +142,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
       {open && (
         <div className="activity-list">
           {items.map((item) => (
-            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running"} />
+            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running" && !items.some((item) => item.type === "message.completed" || item.type === "session.completed")} />
           ))}
         </div>
       )}
