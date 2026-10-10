@@ -15,6 +15,7 @@ export function useAppController(
   const [input, setInput] = useState("");
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const queueSendingRef = useRef(false);
+  const queueSessionRef = useRef(sessionId);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -58,12 +59,17 @@ export function useAppController(
       alert(e instanceof Error ? e.message : String(e));
     }
   };
+  useEffect(() => {
+    queueSessionRef.current = sessionId;
+    setQueuedMessages([]);
+  }, [sessionId]);
   const send = useCallback(async () => {
     if (!sessionId || !input.trim()) return;
     const message = input.trim();
     setInput("");
     setFocusLine(undefined);
     if (current?.status === "running") {
+      queueSessionRef.current = sessionId;
       setQueuedMessages((items) => [...items, message]);
       return;
     }
@@ -74,6 +80,7 @@ export function useAppController(
   useEffect(() => {
     if (
       !sessionId ||
+      queueSessionRef.current !== sessionId ||
       current?.status === "running" ||
       queuedMessages.length === 0 ||
       queueSendingRef.current
