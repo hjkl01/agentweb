@@ -29,7 +29,12 @@ export function useSessionEvents(options: Options) {
       if (disposed) return;
       const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${protocol}://${location.host}/api/sessions/${active}/events`);
-      ws.onopen = () => { reconnectDelay = 500; options.setError(undefined); };
+      ws.onopen = () => {
+        reconnectDelay = 500;
+        options.setError(undefined);
+        // Reconcile session state in case the completion event was emitted before this socket connected.
+        options.refreshSessions().catch(console.error);
+      };
       ws.onerror = () => { if (!disposed) options.setError('WebSocket 连接失败，正在重试。'); };
       ws.onclose = () => {
         if (disposed) return;
