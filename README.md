@@ -2,7 +2,7 @@
 
 > 一个轻量、Docker-first 的 Web Agent 工作台。
 
-Agent Web 是一个面向 Codex、Claude Code、OpenCode、Pi、OpenClaw 等 Agent 的统一 Web 交互层。它负责 Web UI、会话、实时通信、工作区和 Agent 管理；真正的推理、模型调用、工具执行和代码修改由用户选择的 Agent 完成。
+Agent Web 是一个面向 Codex、Claude Code、OpenCode、Pi 等 Agent 的统一 Web 交互层。它负责 Web UI、会话、实时通信、工作区和 Agent 管理；真正的推理、模型调用、工具执行和代码修改由用户选择的 Agent 完成。
 
 **Agent Web 不是另一个 Agent Runtime。**
 
@@ -149,7 +149,6 @@ Codex
 Claude Code
 OpenCode
 Pi
-OpenClaw
 ```
 
 需要 Node.js 的 Agent，在安装前先选择并安装对应的 Node.js Runtime。
@@ -181,8 +180,7 @@ Rust + React + SQLite
    ├── Codex
    ├── Claude Code
    ├── OpenCode
-   ├── Pi
-   └── OpenClaw
+   └── Pi
    │
    ▼
 模型 / Tools / MCP / Skills / Shell / 文件操作
