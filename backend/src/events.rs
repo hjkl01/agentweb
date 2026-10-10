@@ -1,13 +1,21 @@
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 #[derive(Clone)]
 pub struct EventBus {
     sender: broadcast::Sender<AgentEvent>,
-    db: SqlitePool,
+    persist_sender: mpsc::UnboundedSender<PersistedEvent>,
     worker_id: Option<String>,
+}
+
+struct PersistedEvent {
+    session_id: Option<String>,
+    worker_id: Option<String>,
+    event_type: String,
+    payload: String,
+    created_at: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -57,11 +65,34 @@ pub enum AgentEvent {
 
 impl EventBus {
     pub fn new(db: SqlitePool) -> Self {
-        Self { sender: broadcast::channel(512).0, db, worker_id: None }
+        let (persist_sender, mut persist_receiver) = mpsc::unbounded_channel::<PersistedEvent>();
+        tokio::spawn(async move {
+            // One writer preserves publication order and avoids spawning one task per token delta.
+            while let Some(event) = persist_receiver.recv().await {
+                let result = sqlx::query(
+                    "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
+                     SELECT ?,?,?,?,?
+                     WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)",
+                )
+                .bind(&event.session_id)
+                .bind(&event.worker_id)
+                .bind(&event.event_type)
+                .bind(&event.payload)
+                .bind(&event.created_at)
+                .bind(event.session_id.as_deref())
+                .bind(event.session_id.as_deref())
+                .execute(&db)
+                .await;
+                if let Err(error) = result {
+                    tracing::warn!(%error, "failed to persist agent event");
+                }
+            }
+        });
+        Self { sender: broadcast::channel(512).0, persist_sender, worker_id: None }
     }
 
     pub fn for_worker(&self, worker_id: String) -> Self {
-        Self { sender: self.sender.clone(), db: self.db.clone(), worker_id: Some(worker_id) }
+        Self { sender: self.sender.clone(), persist_sender: self.persist_sender.clone(), worker_id: Some(worker_id) }
     }
 
     pub fn publish(&self, event: AgentEvent) {
@@ -92,26 +123,15 @@ impl EventBus {
             .ok()
             .and_then(|value| value.get("type").and_then(|value| value.as_str()).map(str::to_owned))
             .unwrap_or_default();
-        let worker_id = self.worker_id.clone();
-        let db = self.db.clone();
-        tokio::spawn(async move {
-            // Install events have no session and are still persisted: the WebSocket reader
-            // only replays stored rows. Session events keep the orphan guard, because the
-            // worker may still emit while another worker deletes the session.
-            let result = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) SELECT ?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)")
-                .bind(&session_id)
-                .bind(worker_id)
-                .bind(event_type)
-                .bind(payload)
-                .bind(Utc::now().to_rfc3339())
-                .bind(session_id.as_deref())
-                .bind(session_id.as_deref())
-                .execute(&db)
-                .await;
-            if let Err(error) = result {
-                tracing::warn!(%error, "failed to persist agent event");
-            }
-        });
+        if self.persist_sender.send(PersistedEvent {
+            session_id,
+            worker_id: self.worker_id.clone(),
+            event_type,
+            payload,
+            created_at: Utc::now().to_rfc3339(),
+        }).is_err() {
+            tracing::warn!("agent event persistence worker is unavailable");
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
@@ -132,23 +152,34 @@ mod tests {
     }
 
     async fn rows(bus: &EventBus) -> Vec<(Option<String>, String)> {
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let mut rows: Vec<(Option<String>, String)> = sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(&bus.db).await.unwrap();
-        rows.sort();
-        rows
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(&bus.db).await.unwrap()
     }
 
     #[tokio::test]
-    async fn persists_install_events_and_guards_session_events() {
+    async fn persists_install_events_in_publication_order_and_guards_missing_sessions() {
         let bus = bus().await;
-        // The install WebSocket only replays stored rows, so session-less install events must be stored.
         bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() });
         bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true });
-        // A session event for a session that no longer exists must not create an orphan row.
         bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() });
-        assert_eq!(rows(&bus).await, [(None, "install.completed".to_owned()), (None, "install.output".to_owned())]);
+        assert_eq!(
+            rows(&bus).await,
+            [(None, "install.output".to_owned()), (None, "install.completed".to_owned())]
+        );
+
         sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&bus.db).await.unwrap();
+        bus.publish(AgentEvent::MessageStarted { session_id: "live".into() });
         bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() });
-        assert_eq!(rows(&bus).await.len(), 3);
+        bus.publish(AgentEvent::MessageCompleted { session_id: "live".into() });
+        assert_eq!(
+            rows(&bus).await,
+            [
+                (None, "install.output".to_owned()),
+                (None, "install.completed".to_owned()),
+                (Some("live".to_owned()), "message.started".to_owned()),
+                (Some("live".to_owned()), "message.delta".to_owned()),
+                (Some("live".to_owned()), "message.completed".to_owned()),
+            ]
+        );
     }
 }
