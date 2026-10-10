@@ -49,6 +49,31 @@ volumes:
 
 `data/` 内部包含数据库、Agent 配置、Workspace、Node.js Runtime 和按需安装的 Agent。
 
+## 本地构建并直接启动
+
+在项目根目录执行：
+
+```bash
+make install
+make build
+make start
+```
+
+`make build` 会把可运行的后端程序和前端静态文件统一输出到项目根目录的 `build/`，不需要进入 `backend/` 或 `frontend/` 启动：
+
+```text
+agentweb/
+├── build/
+│   ├── agentweb          # Rust 后端可执行文件
+│   └── frontend/         # 前端静态文件，可直接由后端提供服务
+│       └── index.html
+└── data/                 # 数据库、用户配置、工作区和 Runtime
+```
+
+构建完成后，运行 `make start` 即可启动服务，默认访问 http://localhost:8080。数据会保存在项目根目录的 `data/` 中。需要优化体积和运行性能时，可使用 `make release` 生成 Release 版本；启动方式仍然是 `make start`。
+
+`make start` 会以前台方式运行，按 `Ctrl+C` 停止。首次启动时，请留意终端输出的默认管理员密码并妥善保存。
+
 ## 本地开发
 
 如果需要修改 Rust 后端或 React 前端，可以直接在本地运行，不需要每次重新构建 Docker 镜像。
