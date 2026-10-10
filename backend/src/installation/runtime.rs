@@ -67,6 +67,12 @@ struct NodeRelease {
     lts: serde_json::Value,
 }
 
+impl NodeRelease {
+    fn version(&self) -> &str {
+        self.version.trim_start_matches('v')
+    }
+}
+
 const NODE_INDEX_URLS: &[&str] = &[
     "https://npmmirror.com/mirrors/node/index.json",
     "https://nodejs.org/dist/index.json",
@@ -81,10 +87,54 @@ pub fn supported_node_versions() -> Vec<&'static str> {
     ]
 }
 
-/// Return the newest three releases for every currently supported major line.
+/// Return the newest three releases for every currently supported major line, for
+/// the version picker. A user-typed version is validated against [`all_node_versions`]
+/// instead, so older but still published patch releases such as 22.22.2 stay installable.
 /// Node's release index marks LTS releases with a string and Current releases
 /// with `false`; older EOL lines are excluded from the selectable list.
 pub async fn available_node_versions() -> Result<Vec<String>> {
+    Ok(curate_node_releases(&node_index().await?))
+}
+
+/// Every version published in the Node.js release index, newest first.
+pub async fn all_node_versions() -> Result<Vec<String>> {
+    let mut versions: Vec<String> = node_index().await?.into_iter().map(|r| r.version().to_owned()).collect();
+    versions.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
+    versions.dedup();
+    Ok(versions)
+}
+
+/// Resolve an exact version, or a `major` / `major.minor` prefix, against `versions`.
+pub fn match_node_version<'a>(requested: &str, versions: &'a [String]) -> Option<&'a str> {
+    versions.iter().find(|item| **item == requested || item.starts_with(&format!("{requested}."))).map(String::as_str)
+}
+
+fn curate_node_releases(releases: &[NodeRelease]) -> Vec<String> {
+    let mut by_major: std::collections::BTreeMap<u64, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for release in releases {
+        let version = release.version();
+        let mut parts = version.split('.');
+        let Some(major) = parts.next().and_then(|v| v.parse::<u64>().ok()) else {
+            continue;
+        };
+        let is_lts = release.lts.as_str().is_some();
+        let is_current = release.lts == serde_json::Value::Bool(false) && major >= 26;
+        if is_lts || is_current {
+            by_major.entry(major).or_default().push(version.to_owned());
+        }
+    }
+
+    let mut versions = Vec::new();
+    for (_, mut releases) in by_major.into_iter().rev() {
+        releases.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
+        releases.dedup();
+        versions.extend(releases.into_iter().take(3));
+    }
+    versions
+}
+
+async fn node_index() -> Result<Vec<NodeRelease>> {
     let client = reqwest::Client::builder()
         .user_agent("agentweb/0.1")
         .build()?;
@@ -113,29 +163,7 @@ pub async fn available_node_versions() -> Result<Vec<String>> {
             last_error.map(|e| format!(": {e}")).unwrap_or_default()
         ));
     }
-
-    let mut by_major: std::collections::BTreeMap<u64, Vec<String>> =
-        std::collections::BTreeMap::new();
-    for release in releases {
-        let version = release.version.trim_start_matches('v');
-        let mut parts = version.split('.');
-        let Some(major) = parts.next().and_then(|v| v.parse::<u64>().ok()) else {
-            continue;
-        };
-        let is_lts = release.lts.as_str().is_some();
-        let is_current = release.lts == serde_json::Value::Bool(false) && major >= 26;
-        if is_lts || is_current {
-            by_major.entry(major).or_default().push(version.to_owned());
-        }
-    }
-
-    let mut versions = Vec::new();
-    for (_, mut releases) in by_major.into_iter().rev() {
-        releases.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
-        releases.dedup();
-        versions.extend(releases.into_iter().take(3));
-    }
-    Ok(versions)
+    Ok(releases)
 }
 
 fn version_key(version: &str) -> (u64, u64, u64) {
@@ -150,7 +178,7 @@ fn version_key(version: &str) -> (u64, u64, u64) {
 }
 
 pub async fn validate_node_version(version: &str) -> bool {
-    available_node_versions()
+    all_node_versions()
         .await
         .map(|versions| versions.iter().any(|item| item == version))
         .unwrap_or(false)
@@ -374,4 +402,33 @@ pub async fn detect_installed_node() -> Result<Option<(String, String)>> {
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(version: &str, lts: serde_json::Value) -> NodeRelease { NodeRelease { version: version.to_owned(), lts } }
+
+    #[test]
+    fn shortlist_is_truncated_but_every_published_release_resolves() {
+        let index = vec![
+            release("v26.4.0", serde_json::Value::Bool(false)),
+            release("v26.3.0", serde_json::Value::Bool(false)),
+            release("v26.2.0", serde_json::Value::Bool(false)),
+            release("v26.1.0", serde_json::Value::Bool(false)),
+            release("v22.23.0", serde_json::json!("Jod")),
+            release("v22.22.2", serde_json::json!("Jod")),
+            release("v22.22.1", serde_json::json!("Jod")),
+            release("v22.22.0", serde_json::json!("Jod")),
+        ];
+        assert_eq!(curate_node_releases(&index), ["26.4.0", "26.3.0", "26.2.0", "22.23.0", "22.22.2", "22.22.1"]);
+        let mut all: Vec<String> = index.iter().map(|r| r.version().to_owned()).collect();
+        all.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
+        assert_eq!(match_node_version("22.22.2", &all), Some("22.22.2"));
+        assert_eq!(match_node_version("22.22", &all), Some("22.22.2"));
+        assert_eq!(match_node_version("22", &all), Some("22.23.0"));
+        assert_eq!(match_node_version("99.9.9", &all), None);
+        assert_eq!(match_node_version("../etc", &all), None);
+    }
 }

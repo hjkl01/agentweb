@@ -26,7 +26,8 @@ async fn main()->Result<()>{
  tracing_subscriber::fmt().with_env_filter(filter).init();
  let db_url=std::env::var("DATABASE_URL").unwrap_or_else(|_|"sqlite://./data/agentweb.db".into());
  if let Some(path)=db_url.strip_prefix("sqlite://"){let path=path.split('?').next().unwrap_or(path);if let Some(parent)=Path::new(path).parent(){if !parent.as_os_str().is_empty(){tokio::fs::create_dir_all(parent).await?;}}}
- let db_options=SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true).journal_mode(sqlx::sqlite::SqliteJournalMode::Wal).busy_timeout(std::time::Duration::from_secs(5)); let pool:SqlitePool=SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
+ // WAL only needs to fsync at checkpoints; sqlx's default FULL makes every event insert an fsync
+ let db_options=SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true).journal_mode(sqlx::sqlite::SqliteJournalMode::Wal).synchronous(sqlx::sqlite::SqliteSynchronous::Normal).busy_timeout(std::time::Duration::from_secs(5)); let pool:SqlitePool=SqlitePoolOptions::new().max_connections(5).connect_with(db_options).await?;
  db::init(&pool).await?;
  let now=Utc::now().to_rfc3339(); let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)").bind(&now).bind(&now).execute(&pool).await;
  if let Some(password)=db::ensure_default_admin(&pool).await?{eprintln!("\n============================================================");eprintln!(" Agent Web首次启动，已创建默认管理员账号");eprintln!(" 用户名: admin");eprintln!(" 密码:   {password}");eprintln!(" 请立即保存密码；删除数据库后会重新生成新的密码。");eprintln!("============================================================\n");}

@@ -15,10 +15,11 @@ export function useAgentRuntime(){
      const known=catalogById.get(agent.id);
      return known?{...known,installed:true}:{id:agent.id,name:agent.name,description:agent.kind,installed:true,requirements:[]};
    });
-   const configuredIds=new Set(configured.map(agent=>agent.id));
-   const status=await Promise.all(catalog.filter(agent=>!configuredIds.has(agent.id)).map(async agent=>{try{return [agent.id,await api<AgentStatus>(`/agents/${encodeURIComponent(agent.id)}/status`)] as const}catch{return [agent.id,undefined] as const}}));
+   // Built-ins are seeded into the agents table, so only skip catalog entries that are already listed above (installed).
+   const listedIds=new Set(configured.filter(agent=>agent.installed).map(agent=>agent.id));
+   const status=await Promise.all(catalog.filter(agent=>!listedIds.has(agent.id)).map(async agent=>{try{return [agent.id,await api<AgentStatus>(`/agents/${encodeURIComponent(agent.id)}/status`)] as const}catch{return [agent.id,undefined] as const}}));
    const statusById=new Map(status);
-   const catalogAgents=catalog.filter(agent=>!configuredIds.has(agent.id)).map(agent=>{const current=statusById.get(agent.id);return current?{...agent,installed:current.installed}:agent});
+   const catalogAgents=catalog.filter(agent=>!listedIds.has(agent.id)).map(agent=>{const current=statusById.get(agent.id);return current?{...agent,installed:current.installed}:agent});
    const resolved=[...installedAgents,...catalogAgents];
    setAgents(resolved);setNode(nodeInfo);setNodeVersion(current=>current||nodeInfo.active||'');
    const available=Boolean(settings.default_agent_id&&resolved.some(agent=>agent.id===settings.default_agent_id&&agent.installed));

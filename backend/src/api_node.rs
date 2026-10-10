@@ -21,8 +21,8 @@ pub async fn node_versions(State(s): State<AppState>) -> Json<NodeVersions> {
 pub async fn install_node(Json(v): Json<InstallNodeRequest>) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let requested = v.version.trim();
     if requested.is_empty() { return Err(error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_REQUIRED", "Node.js version is required")); }
-    let available = runtime::available_node_versions().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "NODE_VERSION_LIST_FAILED", format!("failed to fetch Node.js versions: {error:#}")))?;
-    let version = available.iter().find(|item| *item == requested || item.starts_with(&format!("{requested}."))).cloned().ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_UNSUPPORTED", format!("unsupported Node.js version: {requested}")))?;
+    let available = runtime::all_node_versions().await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "NODE_VERSION_LIST_FAILED", format!("failed to fetch Node.js versions: {error:#}")))?;
+    let version = runtime::match_node_version(requested, &available).map(str::to_owned).ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "NODE_VERSION_UNSUPPORTED", format!("unsupported Node.js version: {requested}")))?;
     runtime::install_node(&version, |message| tracing::info!(message = %message, "Node.js installation")).await.map_err(|error| error_response(StatusCode::BAD_GATEWAY, "NODE_INSTALL_FAILED", format!("failed to install Node.js {version}: {error:#}")))?;
     Ok(Json(serde_json::json!({ "status": "installed", "version": version })))
 }

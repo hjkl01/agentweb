@@ -33,7 +33,7 @@ export function useSessionEvents(options: Options) {
       ws.onerror = () => { if (!disposed) options.setError('WebSocket 连接失败，正在重试。'); };
       ws.onclose = () => {
         if (disposed) return;
-        reconnectTimer = setTimeout(async () => { try { await loadState(); } catch (error) { options.setError(error instanceof Error ? error.message : String(error)); } connect(); }, reconnectDelay);
+        reconnectTimer = setTimeout(async () => { try { await loadState(); } catch (error) { options.setError(error instanceof Error ? error.message : String(error)); } options.refreshSessions().catch(console.error); connect(); }, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 8000);
       };
       ws.onmessage = event => handleEvent(event.data, active, options);

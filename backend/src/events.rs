@@ -95,26 +95,60 @@ impl EventBus {
         let worker_id = self.worker_id.clone();
         let db = self.db.clone();
         tokio::spawn(async move {
-            if let Some(session_id) = session_id {
-                // The worker may still emit events while another worker deletes the session.
-                // Guard the write so a late event cannot create an orphan row.
-                let result = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=?)")
-                    .bind(&session_id)
-                    .bind(worker_id)
-                    .bind(event_type)
-                    .bind(payload)
-                    .bind(Utc::now().to_rfc3339())
-                    .bind(&session_id)
-                    .execute(&db)
-                    .await;
-                if let Err(error) = result {
-                    tracing::warn!(%error, "failed to persist agent event");
-                }
+            // Install events have no session and are still persisted: the WebSocket reader
+            // only replays stored rows. Session events keep the orphan guard, because the
+            // worker may still emit while another worker deletes the session.
+            let result = sqlx::query("INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at) SELECT ?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)")
+                .bind(&session_id)
+                .bind(worker_id)
+                .bind(event_type)
+                .bind(payload)
+                .bind(Utc::now().to_rfc3339())
+                .bind(session_id.as_deref())
+                .bind(session_id.as_deref())
+                .execute(&db)
+                .await;
+            if let Err(error) = result {
+                tracing::warn!(%error, "failed to persist agent event");
             }
         });
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.sender.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn bus() -> EventBus {
+        let db = SqlitePoolOptions::new().max_connections(1).idle_timeout(None).connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)").execute(&db).await.unwrap();
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)").execute(&db).await.unwrap();
+        EventBus::new(db)
+    }
+
+    async fn rows(bus: &EventBus) -> Vec<(Option<String>, String)> {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let mut rows: Vec<(Option<String>, String)> = sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(&bus.db).await.unwrap();
+        rows.sort();
+        rows
+    }
+
+    #[tokio::test]
+    async fn persists_install_events_and_guards_session_events() {
+        let bus = bus().await;
+        // The install WebSocket only replays stored rows, so session-less install events must be stored.
+        bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() });
+        bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true });
+        // A session event for a session that no longer exists must not create an orphan row.
+        bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() });
+        assert_eq!(rows(&bus).await, [(None, "install.completed".to_owned()), (None, "install.output".to_owned())]);
+        sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&bus.db).await.unwrap();
+        bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() });
+        assert_eq!(rows(&bus).await.len(), 3);
     }
 }
