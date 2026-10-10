@@ -146,7 +146,6 @@ Available
 ---------
 ○ Claude Code       [Install]
 ○ OpenCode          [Install]
-○ OpenClaw          [Install]
 ○ Other Agents      [Install]
 ```
 
@@ -249,7 +248,6 @@ agents/
 ├── codex.rs
 ├── claude_code.rs
 ├── opencode.rs
-├── openclaw.rs
 └── acp.rs
 ```
 
