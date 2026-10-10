@@ -138,6 +138,7 @@ async fn main() -> Result<()> {
             "/sessions/{id}/messages",
             get(api::list_messages).post(api::send_message),
         )
+        .route("/sessions/{id}/activity", get(api::list_session_activity))
         .route(
             "/sessions/{id}/interrupt",
             axum::routing::post(api::interrupt),
