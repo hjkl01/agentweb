@@ -36,10 +36,11 @@ export function useSessionEvents(options: Options) {
     options.setActivityOpen(false);
 
     const loadState = async () => {
-      const [messages, files, session] = await Promise.all([
+      const [messages, files, session, activity] = await Promise.all([
         api<ChatMessage[]>(`/sessions/${active}/messages`),
         api<FileItem[]>(`/sessions/${active}/files`),
         api<Session>(`/sessions/${active}`),
+        api<AgentEvent[]>(`/sessions/${active}/activity`),
       ]);
       if (disposed) return;
       let restoredMessages = messages;
@@ -71,7 +72,16 @@ export function useSessionEvents(options: Options) {
       options.setMessages(restoredMessages);
       options.setFiles(files);
       options.setStream("");
-      options.setActivity([]);
+      // Completed sessions can restore persisted activity. Running sessions replay
+      // the active turn over WebSocket, so applying history here would duplicate it.
+      options.setActivity(
+        session.status === "running"
+          ? []
+          : activity.reduce<ActivityItem[]>(
+              (items, event) => applyAgentEvent(items, event),
+              [],
+            ),
+      );
       options.setActivityOpen(false);
       options.setError(undefined);
     };
