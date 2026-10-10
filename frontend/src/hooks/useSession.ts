@@ -14,6 +14,7 @@ export function useSession(active?: string) {
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [error, setError] = useState<string>();
   const refreshRequestId = useRef(0);
+  const activeRefreshRequestId = useRef(0);
   const refreshSessions = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
     try {
@@ -32,8 +33,10 @@ export function useSession(active?: string) {
     refreshSessions().catch(console.error);
   }, [refreshSessions]);
   const refreshActiveSession = useCallback(async (sessionId: string) => {
+    const requestId = ++activeRefreshRequestId.current;
     try {
       const latest = await api<Session>(`/sessions/${sessionId}`);
+      if (requestId !== activeRefreshRequestId.current) return;
       setSessions((items) => {
         const exists = items.some((item) => item.id === sessionId);
         return exists
@@ -41,6 +44,7 @@ export function useSession(active?: string) {
           : [latest, ...items];
       });
     } catch (error) {
+      if (requestId !== activeRefreshRequestId.current) return;
       setError(error instanceof Error ? error.message : String(error));
     }
   }, []);
