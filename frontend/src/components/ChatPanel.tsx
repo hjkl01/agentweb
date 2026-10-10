@@ -68,7 +68,7 @@ export function ChatPanel({
     return match ? (match[1] ?? match[2] ?? "") : "";
   }, [input]);
   const shouldMention =
-    !!active && !running && /(?:^|\s)@(?:\{[^}]*|[^\s]*)$/.test(input);
+    !!active && /(?:^|\s)@(?:\{[^}]*|[^\s]*)$/.test(input);
   const chooseMention = (path: string) => {
     const match = input.match(/(?:^|\s)@(?:\{[^}]*)?[^\s]*$/);
     if (!match) return;
