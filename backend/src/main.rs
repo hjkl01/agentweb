@@ -73,8 +73,14 @@ async fn main() -> Result<()> {
         }
     });
     let state = state::AppState::new(pool);
-    let frontend_dir =
-        std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| "./frontend/dist".into());
+    let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| {
+        // `make build` copies index.html straight into ./frontend, vite's dev output lives in ./frontend/dist
+        if Path::new("./frontend/index.html").is_file() {
+            "./frontend".into()
+        } else {
+            "./frontend/dist".into()
+        }
+    });
     let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
         .route("/auth/password", axum::routing::put(auth::change_password))
