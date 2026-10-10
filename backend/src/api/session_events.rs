@@ -53,7 +53,6 @@ pub async fn list_session_activity(
 
     let events = rows
         .into_iter()
-        .rev()
         .filter_map(|row| {
             let payload = row.get::<String, _>(0);
             match serde_json::from_str::<serde_json::Value>(&payload) {
