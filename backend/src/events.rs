@@ -67,24 +67,55 @@ impl EventBus {
     pub fn new(db: SqlitePool) -> Self {
         let (persist_sender, mut persist_receiver) = mpsc::unbounded_channel::<PersistedEvent>();
         tokio::spawn(async move {
-            // One writer preserves publication order and avoids spawning one task per token delta.
-            while let Some(event) = persist_receiver.recv().await {
-                let result = sqlx::query(
-                    "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
-                     SELECT ?,?,?,?,?
-                     WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)",
-                )
-                .bind(&event.session_id)
-                .bind(&event.worker_id)
-                .bind(&event.event_type)
-                .bind(&event.payload)
-                .bind(&event.created_at)
-                .bind(event.session_id.as_deref())
-                .bind(event.session_id.as_deref())
-                .execute(&db)
-                .await;
-                if let Err(error) = result {
-                    tracing::warn!(%error, "failed to persist agent event");
+            // Batch nearby events into one transaction while preserving publication order.
+            // The short deadline keeps low-volume events responsive; the size limit bounds
+            // transaction duration during high-volume token streaming.
+            while let Some(first) = persist_receiver.recv().await {
+                let mut batch = Vec::with_capacity(100);
+                batch.push(first);
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(5);
+                while batch.len() < 100 {
+                    match tokio::time::timeout_at(deadline, persist_receiver.recv()).await {
+                        Ok(Some(event)) => batch.push(event),
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+
+                let mut transaction = match db.begin().await {
+                    Ok(transaction) => transaction,
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to begin agent event persistence transaction");
+                        continue;
+                    }
+                };
+                let mut failed = false;
+                for event in &batch {
+                    let result = sqlx::query(
+                        "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
+                         SELECT ?,?,?,?,?
+                         WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)",
+                    )
+                    .bind(&event.session_id)
+                    .bind(&event.worker_id)
+                    .bind(&event.event_type)
+                    .bind(&event.payload)
+                    .bind(&event.created_at)
+                    .bind(event.session_id.as_deref())
+                    .bind(event.session_id.as_deref())
+                    .execute(&mut *transaction)
+                    .await;
+                    if let Err(error) = result {
+                        tracing::warn!(%error, "failed to persist agent event batch");
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed {
+                    if let Err(error) = transaction.rollback().await {
+                        tracing::warn!(%error, "failed to roll back agent event batch");
+                    }
+                } else if let Err(error) = transaction.commit().await {
+                    tracing::warn!(%error, "failed to commit agent event batch");
                 }
             }
         });
