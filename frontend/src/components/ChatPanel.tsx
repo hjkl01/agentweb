@@ -1,4 +1,4 @@
-import { Activity, AtSign, Bot, Send, Square } from "lucide-react";
+import { Activity, AtSign, Bot, Check, Copy, Send, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { RefObject } from "react";
 import type {
@@ -12,6 +12,26 @@ import { AgentActivity } from "./AgentActivity";
 import { MentionPicker } from "./MentionPicker";
 import { ModelSelector } from "./ModelSelector";
 import { AgentSelector } from "./AgentSelector";
+import { MarkdownMessage } from "./MarkdownMessage";
+
+function CopyMessageButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" className="message-action" onClick={copy} title="复制消息" aria-label="复制消息">
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+      <span>{copied ? "已复制" : "复制"}</span>
+    </button>
+  );
+}
 
 type Props = {
   current?: Session;
@@ -148,14 +168,17 @@ export function ChatPanel({
               )}
             </div>
             <div className="message-content">
-              <div className="message-role">
-                {message.role === "user"
-                  ? "You"
-                  : message.role === "error"
-                    ? "Error"
-                    : currentAgent?.name || "Agent"}
+              <div className="message-heading">
+                <div className="message-role">
+                  {message.role === "user"
+                    ? "You"
+                    : message.role === "error"
+                      ? "Error"
+                      : currentAgent?.name || "Agent"}
+                </div>
+                <CopyMessageButton content={message.content} />
               </div>
-              <pre>{message.content}</pre>
+              <MarkdownMessage content={message.content} />
             </div>
           </div>
         ))}
@@ -169,10 +192,8 @@ export function ChatPanel({
                 {currentAgent?.name || "Agent"}{" "}
                 <span className="streaming">streaming</span>
               </div>
-              <pre>
-                {stream}
-                <span className="cursor" />
-              </pre>
+              <MarkdownMessage content={stream} />
+              <span className="cursor" />
             </div>
           </div>
         )}
