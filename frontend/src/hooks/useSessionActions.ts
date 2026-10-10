@@ -18,6 +18,21 @@ export function useSessionActions({ setSessions }: Options) {
     setSessions(items => items.map(item => item.id === sessionId ? session : item)); return session;
   }, [setSessions]);
   const sendMessage = useCallback(async (sessionId: string, message: string) => {
+    // Mark the session as running before awaiting the request. A fast Agent may finish
+    // and refresh the session to idle before this POST response arrives.
+    setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: 'running' } : item));
+    try {
+      const result = await api<{ status?: string; error?: string; title?: string }>(`/sessions/${sessionId}/messages`, { method: 'POST', body: JSON.stringify({ message }) });
+      if (result.error) throw new Error(result.error);
+      // Do not set status here: the completion event may already have changed it to idle.
+      if (result.title) setSessions(items => items.map(item => item.id === sessionId ? { ...item, title: result.title! } : item));
+      return result;
+    } catch (error) {
+      // Reconcile optimistic state if the request failed or the session was already running.
+      try { setSessions(await api<Session[]>('/sessions')); } catch { /* preserve the original error */ }
+      throw error;
+    }
+  }, [setSessions]);
     const result = await api<{ status?: string; error?: string; title?: string }>(`/sessions/${sessionId}/messages`, { method: 'POST', body: JSON.stringify({ message }) });
     if (result.error) throw new Error(result.error);
     setSessions(items => items.map(item => item.id === sessionId ? { ...item, status: 'running', ...(result.title ? { title: result.title } : {}) } : item)); return result;
