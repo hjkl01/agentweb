@@ -15,14 +15,29 @@ export function useSession(active?: string) {
   const [error, setError] = useState<string>();
   const refreshRequestId = useRef(0);
   const activeRefreshRequestId = useRef(0);
+  // Incremented only when an authoritative session-detail response is accepted.
+  // This prevents an older /sessions list response from overwriting that status.
+  const acceptedDetailRevision = useRef(new Map<string, number>());
   const refreshSessions = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
+    const detailRevisionsAtRequest = new Map(acceptedDetailRevision.current);
     try {
       const latestSessions = await api<Session[]>("/sessions");
-      // Multiple refreshes can overlap (polling, WebSocket completion, reconnect).
-      // Ignore older responses so a stale "running" result cannot overwrite "idle".
       if (requestId !== refreshRequestId.current) return;
-      setSessions(latestSessions);
+      setSessions((currentSessions) => {
+        const currentById = new Map(currentSessions.map((session) => [session.id, session]));
+        return latestSessions.map((latest) => {
+          const current = currentById.get(latest.id);
+          const revisionAtRequest = detailRevisionsAtRequest.get(latest.id) ?? 0;
+          const currentRevision = acceptedDetailRevision.current.get(latest.id) ?? 0;
+          // A detail request completed after this list request began. Keep the
+          // newer detail status rather than regressing to a stale list snapshot.
+          if (current && currentRevision > revisionAtRequest) {
+            return { ...latest, status: current.status };
+          }
+          return latest;
+        });
+      });
       setError(undefined);
     } catch (error) {
       if (requestId !== refreshRequestId.current) return;
@@ -37,6 +52,10 @@ export function useSession(active?: string) {
     try {
       const latest = await api<Session>(`/sessions/${sessionId}`);
       if (requestId !== activeRefreshRequestId.current) return;
+      acceptedDetailRevision.current.set(
+        sessionId,
+        (acceptedDetailRevision.current.get(sessionId) ?? 0) + 1,
+      );
       setSessions((items) => {
         const exists = items.some((item) => item.id === sessionId);
         return exists
