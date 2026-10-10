@@ -3,6 +3,23 @@ import { Fragment, useState } from "react";
 
 type InlinePart = { type: "text" | "code" | "link" | "strong" | "em"; value: string; href?: string };
 
+const KEYWORDS = new Set(("const let var function return if else for while do switch case break continue class extends new this import from export default async await try catch finally throw typeof instanceof interface type enum public private protected static readonly as satisfies def pass raise with lambda yield in is not and or True False None null undefined true false async await fn pub use mod impl struct trait match loop mut let self crate super package func go defer select chan map range fallthrough").split(/\\s+/));
+
+function highlightCode(code: string, language: string) {
+  const lang = language.toLowerCase();
+  const python = lang === "py" || lang === "python";
+  const hashComments = python || ["sh", "bash", "zsh", "shell", "yaml", "yml", "toml", "ruby"].includes(lang);
+  const pattern = /(\u0022(?:\\\\.|[^\u0022\\\\])*\u0022|\u0027(?:\\\\.|[^\u0027\\\\])*\u0027|`(?:\\\\.|[^`\\\\])*`|\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*|#[^\\n]*|\\b(?:\\d+(?:\\.\\d+)?|0x[\\da-fA-F]+)\\b|\\b[A-Za-z_$][\\w$]*\\b)/g;
+  return code.split(pattern).filter((part) => part !== undefined && part !== "").map((part, index) => {
+    if (/^(\u0022|\u0027|`)/.test(part)) return <span className="syntax-string" key={index}>{part}</span>;
+    if (part.startsWith("/*") || part.startsWith("//") || (hashComments && part.startsWith("#"))) return <span className="syntax-comment" key={index}>{part}</span>;
+    if (/^(?:\\d|0x[\\da-fA-F])/i.test(part)) return <span className="syntax-number" key={index}>{part}</span>;
+    if (KEYWORDS.has(part)) return <span className="syntax-keyword" key={index}>{part}</span>;
+    if (/^[A-Za-z_$][\\w$]*$/.test(part) && /\\bfunction\\s+$/.test(code.slice(Math.max(0, code.indexOf(part) - 20), code.indexOf(part)))) return <span className="syntax-function" key={index}>{part}</span>;
+    return part;
+  });
+}
+
 function inlineParts(source: string): InlinePart[] {
   const parts: InlinePart[] = [];
   const pattern = /`([^`]+)`|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|\*([^*\n]+)\*|_([^_\n]+)_|\[([^\]]+)\]\(([^\s)]+)(?:\s+["'][^"']*["'])?\)/g;
@@ -54,7 +71,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
         {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "已复制" : "复制"}
       </button>
     </div>
-    <pre><code>{code}</code></pre>
+    <pre><code>{highlightCode(code, language)}</code></pre>
   </div>;
 }
 
