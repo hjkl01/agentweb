@@ -136,7 +136,10 @@ export function WorkspacePanel({
       const next = remaining[remaining.length - 1];
       setActivePath(next);
       if (next) onOpenFile(next);
-      else onCloseFile();
+      else {
+        setMaximized(false);
+        onCloseFile();
+      }
     }
   };
 
