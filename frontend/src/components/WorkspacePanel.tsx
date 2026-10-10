@@ -3,10 +3,13 @@ import {
   FileWarning,
   Folder,
   GitCompare,
+  Maximize2,
+  Minimize2,
   RefreshCw,
   Search,
   X,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { CodePreview } from "./CodePreview";
 import { DiffViewer } from "./DiffViewer";
 import { FileTree } from "./FileTree";
@@ -48,10 +51,14 @@ function Preview({
   file,
   line,
   onClose,
+  maximized,
+  onToggleMaximize,
 }: {
   file: WorkspaceFile;
   line?: number;
   onClose: () => void;
+  maximized: boolean;
+  onToggleMaximize: () => void;
 }) {
   const unavailable = file.binary || file.truncated;
   return (
@@ -60,16 +67,26 @@ function Preview({
         <div>
           <strong>{file.path}</strong>
           <small>
-            File preview{line ? ` · line ${line}` : ""}
+            File preview{line ? \` · line \${line}\` : ""}
             {file.size !== undefined
-              ? ` · ${file.size.toLocaleString()} bytes`
+              ? \` · \${file.size.toLocaleString()} bytes\`
               : ""}
             {file.source === "git" ? " · HEAD" : ""}
           </small>
         </div>
-        <button className="icon-button" onClick={onClose}>
-          <X size={15} />
-        </button>
+        <div className="preview-head-actions">
+          <button
+            className="icon-button"
+            onClick={onToggleMaximize}
+            title={maximized ? "Restore preview" : "Maximize preview"}
+            aria-label={maximized ? "Restore preview" : "Maximize preview"}
+          >
+            {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button className="icon-button" onClick={onClose} title="Close preview" aria-label="Close preview">
+            <X size={15} />
+          </button>
+        </div>
       </div>
       <PreviewNotice file={file} />
       {!unavailable && <CodePreview file={file} focusLine={line} />}
@@ -91,8 +108,40 @@ export function WorkspacePanel({
   onOpenFile,
   onCloseFile,
 }: Props) {
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [activePath, setActivePath] = useState<string>();
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    setOpenTabs([]);
+    setActivePath(undefined);
+    setMaximized(false);
+  }, [current?.id]);
+
+  useEffect(() => {
+    if (!selectedFile?.path) return;
+    setOpenTabs((tabs) => tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path]);
+    setActivePath(selectedFile.path);
+  }, [selectedFile?.path]);
+
+  const activateTab = (path: string) => {
+    setActivePath(path);
+    if (path !== selectedFile?.path) onOpenFile(path);
+  };
+
+  const closeTab = (path: string) => {
+    const remaining = openTabs.filter((item) => item !== path);
+    setOpenTabs(remaining);
+    if (activePath === path) {
+      const next = remaining[remaining.length - 1];
+      setActivePath(next);
+      if (next) onOpenFile(next);
+      else onCloseFile();
+    }
+  };
+
   return (
-    <aside className="workspace">
+    <aside className={\`workspace\${maximized ? " preview-maximized" : ""}\`}>
       <div className="workspace-head">
         <div>
           <strong>Workspace</strong>
@@ -136,11 +185,37 @@ export function WorkspacePanel({
       )}
       {tab === "diff" && <DiffViewer diff={diff} />}
       {selectedFile && (
-        <Preview
-          file={selectedFile}
-          line={selectedLine}
-          onClose={onCloseFile}
-        />
+        <div className="workspace-preview-area">
+          <div className="preview-tabs" role="tablist" aria-label="Open files">
+            {openTabs.map((path) => (
+              <div className={\`preview-tab\${path === activePath ? " active" : ""}\`} key={path}>
+                <button
+                  role="tab"
+                  aria-selected={path === activePath}
+                  onClick={() => activateTab(path)}
+                  title={path}
+                >
+                  {path.split("/").pop() || path}
+                </button>
+                <button
+                  className="preview-tab-close"
+                  onClick={() => closeTab(path)}
+                  aria-label={\`Close \${path}\`}
+                  title="Close tab"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <Preview
+            file={selectedFile}
+            line={selectedLine}
+            onClose={() => closeTab(selectedFile.path)}
+            maximized={maximized}
+            onToggleMaximize={() => setMaximized((value) => !value)}
+          />
+        </div>
       )}
     </aside>
   );
