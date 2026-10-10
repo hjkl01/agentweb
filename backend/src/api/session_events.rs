@@ -18,13 +18,35 @@ pub async fn list_session_activity(
     load_session(&s.db, &id).await?;
 
     let cutoff = (Utc::now() - Duration::days(1)).to_rfc3339();
+    // Restore only the latest turn. Include its start event plus the newest
+    // 499 following events so token deltas from older turns cannot overwhelm the
+    // activity list; a very long turn may omit intermediate events, but keeps its
+    // beginning and latest output.
     let rows = sqlx::query(
-        "SELECT payload FROM agent_events
-         WHERE session_id=? AND created_at>=?
-         ORDER BY id DESC LIMIT 500",
+        "WITH latest_start AS (
+             SELECT MAX(id) AS id FROM agent_events
+             WHERE session_id=? AND event_type='message.started' AND created_at>=?
+         ),
+         recent AS (
+             SELECT id,payload FROM agent_events
+             WHERE session_id=? AND created_at>=?
+               AND id>COALESCE((SELECT id FROM latest_start),0)
+             ORDER BY id DESC LIMIT 499
+         ),
+         start_event AS (
+             SELECT e.id,e.payload FROM agent_events e
+             JOIN latest_start s ON e.id=s.id
+         )
+         SELECT payload FROM (
+             SELECT id,payload FROM recent
+             UNION ALL
+             SELECT id,payload FROM start_event
+         ) ORDER BY id",
     )
     .bind(&id)
-    .bind(cutoff)
+    .bind(&cutoff)
+    .bind(&id)
+    .bind(&cutoff)
     .fetch_all(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
