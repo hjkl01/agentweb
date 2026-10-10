@@ -1419,3 +1419,11 @@ button:disabled {
 .md-table tr:last-child td { border-bottom: 0; }
 .md-table th:last-child,
 .md-table td:last-child { border-right: 0; }
+
+
+/* Lightweight token colors; syntax highlighting is intentionally dependency-free. */
+.md-code-block .syntax-keyword { color: #8250df; font-weight: 600; }
+.md-code-block .syntax-string { color: #0a7a55; }
+.md-code-block .syntax-comment { color: #85858f; font-style: italic; }
+.md-code-block .syntax-number { color: #b35c00; }
+.md-code-block .syntax-function { color: #0969da; }
