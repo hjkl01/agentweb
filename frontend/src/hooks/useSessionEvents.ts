@@ -190,8 +190,12 @@ function handleEvent(raw: string, active: string, options: Options) {
     event.type === "agent.error" ||
     event.type === "error" ||
     event.type === "session.completed";
-  if (activityEvent)
+  if (activityEvent) {
+    if (event.type !== "session.completed" && event.type !== "agent.error" && event.type !== "error") {
+      options.setActivityOpen(true);
+    }
     options.setActivity((items) => applyAgentEvent(items, event));
+  }
   if (event.type.startsWith("file."))
     options.setWorkspaceRevision((value) => value + 1);
   if (event.type === "session.completed" || event.type === "agent.error" || event.type === "error") {
