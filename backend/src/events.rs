@@ -63,13 +63,33 @@ pub enum AgentEvent {
     InstallCompleted { agent_id: String, success: bool },
 }
 
-// Returns whether the failed operation is safe to retry. A failed commit is
-// deliberately not retried: the database may have committed despite the error.
+// SQLite primary result codes 5 and 6 are SQLITE_BUSY and SQLITE_LOCKED.
+// Extended result codes preserve the primary code in the low 8 bits.
+fn is_retryable_sqlite_code(code: Option<&str>) -> bool {
+    code.and_then(|value| value.parse::<i32>().ok())
+        .map(|value| matches!(value & 0xff, 5 | 6))
+        .unwrap_or(false)
+}
+
+fn is_retryable_sqlite_error(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(database_error) => {
+            is_retryable_sqlite_code(database_error.code().as_deref())
+        }
+        _ => false,
+    }
+}
+
+// Only SQLite lock contention is retried. A failed commit is never retried
+// because the database may have committed despite the error.
 async fn persist_batch(
     db: &SqlitePool,
     batch: &[PersistedEvent],
 ) -> Result<(), (sqlx::Error, bool)> {
-    let mut transaction = db.begin().await.map_err(|error| (error, true))?;
+    let mut transaction = db.begin().await.map_err(|error| {
+        let retryable = is_retryable_sqlite_error(&error);
+        (error, retryable)
+    })?;
     for event in batch {
         if let Err(error) = sqlx::query(
             "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
@@ -89,7 +109,8 @@ async fn persist_batch(
             if let Err(rollback_error) = transaction.rollback().await {
                 tracing::warn!(%rollback_error, "failed to roll back agent event batch");
             }
-            return Err((error, true));
+            let retryable = is_retryable_sqlite_error(&error);
+            return Err((error, retryable));
         }
     }
     transaction.commit().await.map_err(|error| (error, false))
@@ -202,6 +223,17 @@ impl EventBus {
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn retries_only_sqlite_busy_and_locked_codes() {
+        for code in ["5", "6", "261", "262"] {
+            assert!(is_retryable_sqlite_code(Some(code)), "expected retryable code {code}");
+        }
+        for code in ["1", "19", "SQLITE_BUSY", ""] {
+            assert!(!is_retryable_sqlite_code(Some(code)), "unexpected retryable code {code}");
+        }
+        assert!(!is_retryable_sqlite_code(None));
+    }
 
     async fn bus() -> (EventBus, SqlitePool) {
         let db = SqlitePoolOptions::new().max_connections(1).idle_timeout(None).connect("sqlite::memory:").await.unwrap();
