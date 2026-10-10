@@ -393,7 +393,7 @@ pub async fn run_session(
             let now = Utc::now().to_rfc3339();
             let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
             match updated {
-                Ok(result) if result.rows_affected() == 1 => {
+                Ok(update_result) if update_result.rows_affected() == 1 => {
                     if !result.assistant_text.is_empty() {
                         if let Err(error) = sqlx::query(
                             "UPDATE messages SET content=? WHERE id=? AND session_id=?",
@@ -420,10 +420,10 @@ pub async fn run_session(
                         })
                         .await;
                 }
-                Ok(result) => {
+                Ok(update_result) => {
                     tracing::warn!(
                         session_id = %session.id,
-                        rows_affected = result.rows_affected(),
+                        rows_affected = update_result.rows_affected(),
                         "session completion did not update the running session; skipping completion event"
                     );
                 }
