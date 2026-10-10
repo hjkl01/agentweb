@@ -49,7 +49,7 @@ function currentStatus(items: ActivityItem[]) {
         item.type !== "message.started",
     );
   if (!latest) return { label: "正在处理请求", state: "running" };
-  if (latest.type === "session.completed")
+  if (latest.type === "session.completed" || latest.type === "message.completed")
     return { label: "已完成", state: "complete" };
   if (isFailed(latest.type)) return { label: "执行出错", state: "error" };
   if (latest.type.startsWith("thinking."))
