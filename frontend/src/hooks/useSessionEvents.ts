@@ -194,7 +194,7 @@ function handleEvent(raw: string, active: string, options: Options) {
     event.type === "error" ||
     event.type === "session.completed";
   if (activityEvent) {
-    if (event.type !== "session.completed" && event.type !== "agent.error" && event.type !== "error") {
+    if (event.type !== "session.completed" && event.type !== "message.completed" && event.type !== "agent.error" && event.type !== "error") {
       options.setActivityOpen(true);
     }
     options.setActivity((items) => applyAgentEvent(items, event));
