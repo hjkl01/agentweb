@@ -84,6 +84,7 @@ export function useSession(active?: string) {
   useSessionEvents({
     active,
     refreshSessions,
+    refreshActiveSession,
     setMessages,
     setFiles,
     setStream,
