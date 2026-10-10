@@ -1,14 +1,14 @@
-import { Terminal as TerminalIcon, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import '@xterm/xterm/css/xterm.css';
+import { Terminal as TerminalIcon, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 
 type Props = { onClose: () => void; sessionId?: string };
 
 function websocketUrl(sessionId?: string) {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
   return `${protocol}//${window.location.host}/api/terminal/ws${query}`;
 }
 
@@ -23,13 +23,29 @@ export function TerminalPanel({ onClose, sessionId }: Props) {
     const terminal = terminalRef.current;
     const socket = socketRef.current;
     if (!terminal || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    socket.send(
+      JSON.stringify({
+        type: "resize",
+        cols: terminal.cols,
+        rows: terminal.rows,
+      }),
+    );
   }, []);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const terminal = new Terminal({ cursorBlink: true, cursorStyle: 'bar', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.2, scrollback: 5000, convertEol: false, allowTransparency: false });
+    const terminal = new Terminal({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      scrollback: 5000,
+      convertEol: false,
+      allowTransparency: false,
+    });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
@@ -43,26 +59,40 @@ export function TerminalPanel({ onClose, sessionId }: Props) {
     requestAnimationFrame(fitAndResize);
 
     const socket = new WebSocket(websocketUrl(sessionId));
-    socket.binaryType = 'arraybuffer';
+    socket.binaryType = "arraybuffer";
     socketRef.current = socket;
-    socket.onopen = () => { setConnected(true); setError(undefined); fitAndResize(); terminal.focus(); };
-    socket.onmessage = event => {
-      if (typeof event.data === 'string') terminal.write(event.data);
+    socket.onopen = () => {
+      setConnected(true);
+      setError(undefined);
+      fitAndResize();
+      terminal.focus();
+    };
+    socket.onmessage = (event) => {
+      if (typeof event.data === "string") terminal.write(event.data);
       else terminal.write(new Uint8Array(event.data as ArrayBuffer));
     };
-    socket.onerror = () => { setConnected(false); setError('Terminal WebSocket 连接失败'); };
-    socket.onclose = () => { setConnected(false); setError(current => current || 'Terminal 连接已断开'); };
+    socket.onerror = () => {
+      setConnected(false);
+      setError("Terminal WebSocket 连接失败");
+    };
+    socket.onclose = () => {
+      setConnected(false);
+      setError((current) => current || "Terminal 连接已断开");
+    };
 
-    const input = terminal.onData(data => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data }));
+    const input = terminal.onData((data) => {
+      if (socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify({ type: "input", data }));
     });
-    const observer = new ResizeObserver(() => requestAnimationFrame(fitAndResize));
+    const observer = new ResizeObserver(() =>
+      requestAnimationFrame(fitAndResize),
+    );
     observer.observe(container);
-    window.addEventListener('resize', fitAndResize);
+    window.addEventListener("resize", fitAndResize);
 
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', fitAndResize);
+      window.removeEventListener("resize", fitAndResize);
       input.dispose();
       socket.close();
       terminal.dispose();
@@ -71,12 +101,35 @@ export function TerminalPanel({ onClose, sessionId }: Props) {
     };
   }, [sendResize, sessionId]);
 
-  return <main className="terminal-panel">
-    <header className="terminal-header">
-      <div className="terminal-title"><TerminalIcon size={16} /><strong>Terminal</strong><span className={connected ? 'terminal-status connected' : 'terminal-status'}>{connected ? 'Connected' : 'Disconnected'}</span></div>
-      <button className="icon-button" onClick={onClose} aria-label="关闭 Terminal" title="关闭 Terminal"><X size={16} /></button>
-    </header>
-    <div className="terminal-body" ref={containerRef} />
-    {error && <div className="terminal-error" role="alert">{error}</div>}
-  </main>;
+  return (
+    <main className="terminal-panel">
+      <header className="terminal-header">
+        <div className="terminal-title">
+          <TerminalIcon size={16} />
+          <strong>Terminal</strong>
+          <span
+            className={
+              connected ? "terminal-status connected" : "terminal-status"
+            }
+          >
+            {connected ? "Connected" : "Disconnected"}
+          </span>
+        </div>
+        <button
+          className="icon-button"
+          onClick={onClose}
+          aria-label="关闭 Terminal"
+          title="关闭 Terminal"
+        >
+          <X size={16} />
+        </button>
+      </header>
+      <div className="terminal-body" ref={containerRef} />
+      {error && (
+        <div className="terminal-error" role="alert">
+          {error}
+        </div>
+      )}
+    </main>
+  );
 }

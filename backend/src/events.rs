@@ -38,7 +38,11 @@ pub enum AgentEvent {
     #[serde(rename = "tool.started")]
     ToolStarted { session_id: String, tool: String },
     #[serde(rename = "tool.output")]
-    ToolOutput { session_id: String, tool: String, output: String },
+    ToolOutput {
+        session_id: String,
+        tool: String,
+        output: String,
+    },
     #[serde(rename = "tool.completed")]
     ToolCompleted { session_id: String, tool: String },
     #[serde(rename = "file.created")]
@@ -168,11 +172,19 @@ impl EventBus {
                 }
             }
         });
-        Self { sender: broadcast::channel(512).0, persist_sender, worker_id: None }
+        Self {
+            sender: broadcast::channel(512).0,
+            persist_sender,
+            worker_id: None,
+        }
     }
 
     pub fn for_worker(&self, worker_id: String) -> Self {
-        Self { sender: self.sender.clone(), persist_sender: self.persist_sender.clone(), worker_id: Some(worker_id) }
+        Self {
+            sender: self.sender.clone(),
+            persist_sender: self.persist_sender.clone(),
+            worker_id: Some(worker_id),
+        }
     }
 
     pub async fn publish(&self, event: AgentEvent) {
@@ -203,7 +215,12 @@ impl EventBus {
         };
         let event_type = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
-            .and_then(|value| value.get("type").and_then(|value| value.as_str()).map(str::to_owned))
+            .and_then(|value| {
+                value
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
             .unwrap_or_default();
         // Reserve capacity before broadcasting. When SQLite falls behind, this
         // applies backpressure to the producer instead of growing memory without bound.
@@ -238,41 +255,86 @@ mod tests {
     #[test]
     fn retries_only_sqlite_busy_and_locked_codes() {
         for code in ["5", "6", "261", "262"] {
-            assert!(is_retryable_sqlite_code(Some(code)), "expected retryable code {code}");
+            assert!(
+                is_retryable_sqlite_code(Some(code)),
+                "expected retryable code {code}"
+            );
         }
         for code in ["1", "19", "SQLITE_BUSY", ""] {
-            assert!(!is_retryable_sqlite_code(Some(code)), "unexpected retryable code {code}");
+            assert!(
+                !is_retryable_sqlite_code(Some(code)),
+                "unexpected retryable code {code}"
+            );
         }
         assert!(!is_retryable_sqlite_code(None));
     }
 
     async fn bus() -> (EventBus, SqlitePool) {
-        let db = SqlitePoolOptions::new().max_connections(1).idle_timeout(None).connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)").execute(&db).await.unwrap();
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .idle_timeout(None)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .unwrap();
         sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)").execute(&db).await.unwrap();
         (EventBus::new(db.clone()), db)
     }
 
     async fn rows(db: &SqlitePool) -> Vec<(Option<String>, String)> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(db).await.unwrap()
+        sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id")
+            .fetch_all(db)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn persists_install_events_in_publication_order_and_guards_missing_sessions() {
         let (bus, db) = bus().await;
-        bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() }).await;
-        bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true }).await;
-        bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() }).await;
+        bus.publish(AgentEvent::InstallOutput {
+            agent_id: "pi".into(),
+            text: "Installing pi …".into(),
+        })
+        .await;
+        bus.publish(AgentEvent::InstallCompleted {
+            agent_id: "pi".into(),
+            success: true,
+        })
+        .await;
+        bus.publish(AgentEvent::MessageDelta {
+            session_id: "gone".into(),
+            text: "x".into(),
+        })
+        .await;
         assert_eq!(
             rows(&db).await,
-            [(None, "install.output".to_owned()), (None, "install.completed".to_owned())]
+            [
+                (None, "install.output".to_owned()),
+                (None, "install.completed".to_owned())
+            ]
         );
 
-        sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&db).await.unwrap();
-        bus.publish(AgentEvent::MessageStarted { session_id: "live".into() }).await;
-        bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() }).await;
-        bus.publish(AgentEvent::MessageCompleted { session_id: "live".into() }).await;
+        sqlx::query("INSERT INTO sessions(id) VALUES('live')")
+            .execute(&db)
+            .await
+            .unwrap();
+        bus.publish(AgentEvent::MessageStarted {
+            session_id: "live".into(),
+        })
+        .await;
+        bus.publish(AgentEvent::MessageDelta {
+            session_id: "live".into(),
+            text: "x".into(),
+        })
+        .await;
+        bus.publish(AgentEvent::MessageCompleted {
+            session_id: "live".into(),
+        })
+        .await;
         assert_eq!(
             rows(&db).await,
             [

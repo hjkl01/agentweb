@@ -1,18 +1,22 @@
-use axum::{extract::{ws::{Message, WebSocket}, State, WebSocketUpgrade}, response::IntoResponse};
-use sqlx::Row;
 use crate::state::AppState;
+use axum::{
+    extract::{
+        ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
+    },
+    response::IntoResponse,
+};
+use sqlx::Row;
 
 pub async fn ws_events(ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| websocket(socket, s))
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState) {
-    let mut cursor = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(id), 0) FROM agent_events"
-    )
-    .fetch_one(&s.db)
-    .await
-    .unwrap_or(0);
+    let mut cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM agent_events")
+        .fetch_one(&s.db)
+        .await
+        .unwrap_or(0);
     let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
     loop {

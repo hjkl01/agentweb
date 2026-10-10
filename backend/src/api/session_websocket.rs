@@ -1,9 +1,19 @@
 use crate::state::AppState;
-use axum::{extract::{ws::{Message, WebSocket}, Path, State, WebSocketUpgrade}, response::IntoResponse};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket},
+        Path, State, WebSocketUpgrade,
+    },
+    response::IntoResponse,
+};
 use sqlx::Row;
 use tokio::time::{self, Duration};
 
-pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse {
+pub async fn ws_events(
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+    State(s): State<AppState>,
+) -> impl IntoResponse {
     ws.on_upgrade(move |socket| websocket(socket, s, id))
 }
 
@@ -30,7 +40,7 @@ async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
                 WHERE e.session_id=s.id AND e.worker_id=s.worker_id
             ), 0)
          END
-         FROM sessions s WHERE s.id=?"
+         FROM sessions s WHERE s.id=?",
     )
     .bind(&session_id)
     .fetch_one(&s.db)

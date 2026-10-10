@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
 
 export function sessionPath(id: string) {
   return `/sessions/${encodeURIComponent(id)}`;
@@ -14,13 +14,13 @@ export function useAppRoute() {
 
   useEffect(() => {
     const onPopState = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const navigate = (next: string, replace = false) => {
-    if (replace) window.history.replaceState({}, '', next);
-    else window.history.pushState({}, '', next);
+    if (replace) window.history.replaceState({}, "", next);
+    else window.history.pushState({}, "", next);
     setPath(next);
   };
 

@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
 type Props = { children: ReactNode };
 type State = { error?: Error };
@@ -11,7 +11,7 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('Agent Web render error:', error, info.componentStack);
+    console.error("Agent Web render error:", error, info.componentStack);
   }
 
   render() {

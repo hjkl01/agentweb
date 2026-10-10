@@ -1,5 +1,11 @@
 use crate::state::AppState;
-use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State}, response::Response};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
+    response::Response,
+};
 use futures::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Deserialize;
@@ -42,7 +48,9 @@ async fn run_terminal(
             Ok(session) => std::path::PathBuf::from(session.workspace),
             Err(_) => {
                 let mut socket = socket;
-                let _ = socket.send(Message::Text("Session not found.".into())).await;
+                let _ = socket
+                    .send(Message::Text("Session not found.".into()))
+                    .await;
                 return;
             }
         }
@@ -55,17 +63,28 @@ async fn run_terminal(
     if !workspace.is_dir() {
         warn!(path = ?workspace, "terminal workspace does not exist");
         let mut socket = socket;
-        let _ = socket.send(Message::Text("Terminal workspace does not exist.".into())).await;
+        let _ = socket
+            .send(Message::Text("Terminal workspace does not exist.".into()))
+            .await;
         return;
     }
 
     let pty_system = native_pty_system();
-    let pair = match pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
+    let pair = match pty_system.openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }) {
         Ok(pair) => pair,
         Err(error) => {
             warn!(%error, "failed to create PTY");
             let mut socket = socket;
-            let _ = socket.send(Message::Text(format!("Failed to create terminal: {error}").into())).await;
+            let _ = socket
+                .send(Message::Text(
+                    format!("Failed to create terminal: {error}").into(),
+                ))
+                .await;
             return;
         }
     };
@@ -75,7 +94,10 @@ async fn run_terminal(
     command.cwd(&workspace);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/data/home".into()));
+    command.env(
+        "HOME",
+        std::env::var("HOME").unwrap_or_else(|_| "/data/home".into()),
+    );
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("SHELL", &shell);
 
@@ -84,7 +106,11 @@ async fn run_terminal(
         Err(error) => {
             warn!(%error, "failed to spawn terminal shell");
             let mut socket = socket;
-            let _ = socket.send(Message::Text(format!("Failed to start shell: {error}").into())).await;
+            let _ = socket
+                .send(Message::Text(
+                    format!("Failed to start shell: {error}").into(),
+                ))
+                .await;
             return;
         }
     };
@@ -116,7 +142,9 @@ async fn run_terminal(
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    if output_tx.blocking_send(buffer[..size].to_vec()).is_err() { break; }
+                    if output_tx.blocking_send(buffer[..size].to_vec()).is_err() {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }

@@ -1,7 +1,11 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tokio::{fs, process::Command, time::{sleep, Duration as TokioDuration}};
+use tokio::{
+    fs,
+    process::Command,
+    time::{sleep, Duration as TokioDuration},
+};
 
 pub fn runtime_root() -> PathBuf {
     std::env::var("AGENTWEB_RUNTIME_DIR")
@@ -27,13 +31,23 @@ pub async fn acquire_install_lock(key: &str) -> Result<InstallLock> {
     fs::create_dir_all(&root).await?;
     let safe_key: String = key
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let path = root.join(format!(".install-{safe_key}.lock"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10 * 60);
 
     loop {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(file) => {
                 use std::io::Write;
                 let mut file = file;
@@ -45,7 +59,9 @@ pub async fn acquire_install_lock(key: &str) -> Result<InstallLock> {
                 // older than 30 minutes as stale and recover it.
                 if let Ok(metadata) = std::fs::metadata(&path) {
                     if let Ok(modified) = metadata.modified() {
-                        if modified.elapsed().unwrap_or_default() > std::time::Duration::from_secs(30 * 60) {
+                        if modified.elapsed().unwrap_or_default()
+                            > std::time::Duration::from_secs(30 * 60)
+                        {
                             let _ = std::fs::remove_file(&path);
                             continue;
                         }
@@ -98,7 +114,11 @@ pub async fn available_node_versions() -> Result<Vec<String>> {
 
 /// Every version published in the Node.js release index, newest first.
 pub async fn all_node_versions() -> Result<Vec<String>> {
-    let mut versions: Vec<String> = node_index().await?.into_iter().map(|r| r.version().to_owned()).collect();
+    let mut versions: Vec<String> = node_index()
+        .await?
+        .into_iter()
+        .map(|r| r.version().to_owned())
+        .collect();
     versions.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
     versions.dedup();
     Ok(versions)
@@ -106,7 +126,10 @@ pub async fn all_node_versions() -> Result<Vec<String>> {
 
 /// Resolve an exact version, or a `major` / `major.minor` prefix, against `versions`.
 pub fn match_node_version<'a>(requested: &str, versions: &'a [String]) -> Option<&'a str> {
-    versions.iter().find(|item| **item == requested || item.starts_with(&format!("{requested}."))).map(String::as_str)
+    versions
+        .iter()
+        .find(|item| **item == requested || item.starts_with(&format!("{requested}.")))
+        .map(String::as_str)
 }
 
 fn curate_node_releases(releases: &[NodeRelease]) -> Vec<String> {
@@ -323,7 +346,7 @@ pub async fn install_node(version: &str, events: impl Fn(String) + Send + 'stati
     if home.join("bin/node").exists() {
         return Ok(());
     }
-    let _lock = acquire_install_lock(&format!("node-{version}")) .await?;
+    let _lock = acquire_install_lock(&format!("node-{version}")).await?;
     // Re-check after waiting for another worker's installation to finish.
     if home.join("bin/node").exists() {
         return Ok(());
@@ -408,7 +431,12 @@ pub async fn detect_installed_node() -> Result<Option<(String, String)>> {
 mod tests {
     use super::*;
 
-    fn release(version: &str, lts: serde_json::Value) -> NodeRelease { NodeRelease { version: version.to_owned(), lts } }
+    fn release(version: &str, lts: serde_json::Value) -> NodeRelease {
+        NodeRelease {
+            version: version.to_owned(),
+            lts,
+        }
+    }
 
     #[test]
     fn shortlist_is_truncated_but_every_published_release_resolves() {
@@ -422,7 +450,10 @@ mod tests {
             release("v22.22.1", serde_json::json!("Jod")),
             release("v22.22.0", serde_json::json!("Jod")),
         ];
-        assert_eq!(curate_node_releases(&index), ["26.4.0", "26.3.0", "26.2.0", "22.23.0", "22.22.2", "22.22.1"]);
+        assert_eq!(
+            curate_node_releases(&index),
+            ["26.4.0", "26.3.0", "26.2.0", "22.23.0", "22.22.2", "22.22.1"]
+        );
         let mut all: Vec<String> = index.iter().map(|r| r.version().to_owned()).collect();
         all.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
         assert_eq!(match_node_version("22.22.2", &all), Some("22.22.2"));
