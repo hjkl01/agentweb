@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc};
 #[derive(Clone)]
 pub struct EventBus {
     sender: broadcast::Sender<AgentEvent>,
-    persist_sender: mpsc::UnboundedSender<PersistedEvent>,
+    persist_sender: mpsc::Sender<PersistedEvent>,
     worker_id: Option<String>,
 }
 
@@ -118,7 +118,7 @@ async fn persist_batch(
 
 impl EventBus {
     pub fn new(db: SqlitePool) -> Self {
-        let (persist_sender, mut persist_receiver) = mpsc::unbounded_channel::<PersistedEvent>();
+        let (persist_sender, mut persist_receiver) = mpsc::channel::<PersistedEvent>(2048);
         tokio::spawn(async move {
             // Batch nearby events into one transaction while preserving publication order.
             // The short deadline keeps low-volume events responsive; the size limit bounds
@@ -175,9 +175,11 @@ impl EventBus {
         Self { sender: self.sender.clone(), persist_sender: self.persist_sender.clone(), worker_id: Some(worker_id) }
     }
 
-    pub fn publish(&self, event: AgentEvent) {
-        let _ = self.sender.send(event.clone());
-        let Ok(payload) = serde_json::to_string(&event) else { return; };
+    pub async fn publish(&self, event: AgentEvent) {
+        let Ok(payload) = serde_json::to_string(&event) else {
+            tracing::error!("failed to serialize agent event for persistence");
+            return;
+        };
         let session_id = match &event {
             AgentEvent::SessionStarted { session_id }
             | AgentEvent::MessageStarted { session_id }
@@ -203,15 +205,24 @@ impl EventBus {
             .ok()
             .and_then(|value| value.get("type").and_then(|value| value.as_str()).map(str::to_owned))
             .unwrap_or_default();
-        if self.persist_sender.send(PersistedEvent {
+        // Reserve capacity before broadcasting. When SQLite falls behind, this
+        // applies backpressure to the producer instead of growing memory without bound.
+        let permit = match self.persist_sender.reserve().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                let _ = self.sender.send(event);
+                tracing::error!("agent event persistence worker is unavailable");
+                return;
+            }
+        };
+        let _ = self.sender.send(event);
+        permit.send(PersistedEvent {
             session_id,
             worker_id: self.worker_id.clone(),
             event_type,
             payload,
             created_at: Utc::now().to_rfc3339(),
-        }).is_err() {
-            tracing::warn!("agent event persistence worker is unavailable");
-        }
+        });
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
@@ -250,18 +261,18 @@ mod tests {
     #[tokio::test]
     async fn persists_install_events_in_publication_order_and_guards_missing_sessions() {
         let (bus, db) = bus().await;
-        bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() });
-        bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true });
-        bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() });
+        bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() }).await;
+        bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true }).await;
+        bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() }).await;
         assert_eq!(
             rows(&db).await,
             [(None, "install.output".to_owned()), (None, "install.completed".to_owned())]
         );
 
         sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&db).await.unwrap();
-        bus.publish(AgentEvent::MessageStarted { session_id: "live".into() });
-        bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() });
-        bus.publish(AgentEvent::MessageCompleted { session_id: "live".into() });
+        bus.publish(AgentEvent::MessageStarted { session_id: "live".into() }).await;
+        bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() }).await;
+        bus.publish(AgentEvent::MessageCompleted { session_id: "live".into() }).await;
         assert_eq!(
             rows(&db).await,
             [

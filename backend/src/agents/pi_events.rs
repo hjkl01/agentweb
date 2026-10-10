@@ -1,7 +1,7 @@
 use crate::events::{AgentEvent, EventBus};
 use serde_json::Value;
 
-pub fn handle(session_id: &str, value: &Value, events: &EventBus) -> Option<String> {
+pub async fn handle(session_id: &str, value: &Value, events: &EventBus) -> Option<String> {
     let typ = value.get("type").and_then(Value::as_str).unwrap_or_default();
     if typ != "message_update" {
         return None;
@@ -11,7 +11,7 @@ pub fn handle(session_id: &str, value: &Value, events: &EventBus) -> Option<Stri
         "text_delta" => message.get("delta").and_then(Value::as_str).map(str::to_owned),
         "thinking_delta" => {
             if let Some(text) = message.get("delta").and_then(Value::as_str) {
-                events.publish(AgentEvent::ThinkingDelta { session_id: session_id.into(), text: text.into() });
+                events.publish(AgentEvent::ThinkingDelta { session_id: session_id.into(), text: text.into() }).await;
             }
             None
         }
