@@ -229,8 +229,6 @@ OpenCode
 Pi
   runtime: node
 
-OpenClaw
-  runtime: according to its installation requirements
 ```
 
 ### 安装要求
@@ -760,7 +758,7 @@ nodejs.org
 - [ ] Node.js release metadata 动态获取
 - [ ] Node.js 国内镜像优先 + 官方 fallback
 - [ ] Codex 等所有 Agent 都通过统一 Web Installer 安装
-- [ ] Claude Code / OpenCode / Pi / OpenClaw 完整独立 Runtime 管理
+- [ ] Claude Code / OpenCode / Pi 完整独立 Runtime 管理
 - [ ] 多 Agent 安装实例的完整生命周期管理
 - [ ] Authentication
 - [ ] Permission / sandbox controls
@@ -842,7 +840,6 @@ Pi
 ### V0.3
 
 ```text
-OpenClaw
 更多 Agent Adapter
 Artifact Preview
 多 Workspace
