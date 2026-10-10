@@ -95,6 +95,7 @@ export function App({ sessionId, navigate }: Props) {
           activity={c.session.activity}
           activityOpen={c.session.activityOpen}
           input={c.input}
+          queuedCount={c.queuedMessages.length}
           textareaRef={c.textareaRef}
           chatRef={c.chatRef}
           onInputChange={c.setInput}
