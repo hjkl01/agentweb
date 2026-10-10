@@ -67,9 +67,9 @@ function Preview({
         <div>
           <strong>{file.path}</strong>
           <small>
-            File preview{line ? \` · line \${line}\` : ""}
+            File preview{line ? ` · line ${line}` : ""}
             {file.size !== undefined
-              ? \` · \${file.size.toLocaleString()} bytes\`
+              ? ` · ${file.size.toLocaleString()} bytes`
               : ""}
             {file.source === "git" ? " · HEAD" : ""}
           </small>
@@ -141,7 +141,7 @@ export function WorkspacePanel({
   };
 
   return (
-    <aside className={\`workspace\${maximized ? " preview-maximized" : ""}\`}>
+    <aside className={`workspace${maximized ? " preview-maximized" : ""}`}>
       <div className="workspace-head">
         <div>
           <strong>Workspace</strong>
@@ -188,7 +188,7 @@ export function WorkspacePanel({
         <div className="workspace-preview-area">
           <div className="preview-tabs" role="tablist" aria-label="Open files">
             {openTabs.map((path) => (
-              <div className={\`preview-tab\${path === activePath ? " active" : ""}\`} key={path}>
+              <div className={`preview-tab${path === activePath ? " active" : ""}`} key={path}>
                 <button
                   role="tab"
                   aria-selected={path === activePath}
@@ -200,7 +200,7 @@ export function WorkspacePanel({
                 <button
                   className="preview-tab-close"
                   onClick={() => closeTab(path)}
-                  aria-label={\`Close \${path}\`}
+                  aria-label={`Close ${path}`}
                   title="Close tab"
                 >
                   <X size={12} />
