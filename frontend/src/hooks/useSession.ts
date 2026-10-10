@@ -8,6 +8,13 @@ export function useSession(active?:string){
  const [sessions,setSessions]=useState<Session[]>([]);const [messages,setMessages]=useState<ChatMessage[]>([]);const [files,setFiles]=useState<FileItem[]>([]);const [stream,setStream]=useState('');const [activity,setActivity]=useState<ActivityItem[]>([]);const [activityOpen,setActivityOpen]=useState(false);const [workspaceRevision,setWorkspaceRevision]=useState(0);const [error,setError]=useState<string>();
  const refreshSessions=useCallback(async()=>{try{setSessions(await api<Session[]>('/sessions'));setError(undefined)}catch(error){setError(error instanceof Error?error.message:String(error))}},[]);
  useEffect(()=>{refreshSessions().catch(console.error)},[refreshSessions]);
+ const activeStatus=sessions.find(item=>item.id===active)?.status;
+ useEffect(()=>{
+  if(!active||activeStatus!=='running')return;
+  // Keep the composer in sync even if the WebSocket misses a terminal event.
+  const timer=window.setInterval(()=>{refreshSessions().catch(console.error)},1000);
+  return()=>window.clearInterval(timer);
+ },[active,activeStatus,refreshSessions]);
  const actions=useSessionActions({setSessions});
  const sendChat=useCallback(async(sessionId:string,message:string)=>{
   const content=message.trim();if(!content)return;setMessages(items=>[...items,{id:crypto.randomUUID(),role:'user',content}]);setActivity([]);setActivityOpen(false);
