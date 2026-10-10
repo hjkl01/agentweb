@@ -17,9 +17,34 @@ export function useSessionEvents(options: Options) {
     options.setStream(''); options.setActivity([]); options.setActivityOpen(false);
 
     const loadState = async () => {
-      const [messages, files] = await Promise.all([api<ChatMessage[]>(`/sessions/${active}/messages`), api<FileItem[]>(`/sessions/${active}/files`)]);
+      const [messages, files, session] = await Promise.all([
+        api<ChatMessage[]>(`/sessions/${active}/messages`),
+        api<FileItem[]>(`/sessions/${active}/files`),
+        api<Session>(`/sessions/${active}`),
+      ]);
       if (disposed) return;
-      options.setMessages(messages); options.setFiles(files); options.setStream(''); options.setError(undefined);
+      let restoredMessages = messages;
+      if (session.status === 'running') {
+        // The backend replays the current turn. Clear only an assistant message that
+        // belongs to the latest user turn, so replayed deltas replace stale partial text.
+        restoredMessages = [...messages];
+        let lastUserIndex = -1;
+        for (let index = restoredMessages.length - 1; index >= 0; index -= 1) {
+          if (restoredMessages[index].role === 'user') { lastUserIndex = index; break; }
+        }
+        for (let index = restoredMessages.length - 1; index > lastUserIndex; index -= 1) {
+          if (restoredMessages[index].role === 'assistant') {
+            restoredMessages[index] = { ...restoredMessages[index], content: '' };
+            break;
+          }
+        }
+      }
+      options.setMessages(restoredMessages);
+      options.setFiles(files);
+      options.setStream('');
+      options.setActivity([]);
+      options.setActivityOpen(false);
+      options.setError(undefined);
     };
     const syncMessages = async () => {
       try { const messages = await api<ChatMessage[]>(`/sessions/${active}/messages`); if (!disposed) options.setMessages(messages); }
