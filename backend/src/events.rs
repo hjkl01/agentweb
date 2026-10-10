@@ -144,35 +144,35 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn bus() -> EventBus {
+    async fn bus() -> (EventBus, SqlitePool) {
         let db = SqlitePoolOptions::new().max_connections(1).idle_timeout(None).connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)").execute(&db).await.unwrap();
         sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)").execute(&db).await.unwrap();
-        EventBus::new(db)
+        (EventBus::new(db.clone()), db)
     }
 
-    async fn rows(bus: &EventBus) -> Vec<(Option<String>, String)> {
+    async fn rows(db: &SqlitePool) -> Vec<(Option<String>, String)> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(&bus.db).await.unwrap()
+        sqlx::query_as("SELECT session_id,event_type FROM agent_events ORDER BY id").fetch_all(db).await.unwrap()
     }
 
     #[tokio::test]
     async fn persists_install_events_in_publication_order_and_guards_missing_sessions() {
-        let bus = bus().await;
+        let (bus, db) = bus().await;
         bus.publish(AgentEvent::InstallOutput { agent_id: "pi".into(), text: "Installing pi …".into() });
         bus.publish(AgentEvent::InstallCompleted { agent_id: "pi".into(), success: true });
         bus.publish(AgentEvent::MessageDelta { session_id: "gone".into(), text: "x".into() });
         assert_eq!(
-            rows(&bus).await,
+            rows(&db).await,
             [(None, "install.output".to_owned()), (None, "install.completed".to_owned())]
         );
 
-        sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&bus.db).await.unwrap();
+        sqlx::query("INSERT INTO sessions(id) VALUES('live')").execute(&db).await.unwrap();
         bus.publish(AgentEvent::MessageStarted { session_id: "live".into() });
         bus.publish(AgentEvent::MessageDelta { session_id: "live".into(), text: "x".into() });
         bus.publish(AgentEvent::MessageCompleted { session_id: "live".into() });
         assert_eq!(
-            rows(&bus).await,
+            rows(&db).await,
             [
                 (None, "install.output".to_owned()),
                 (None, "install.completed".to_owned()),
