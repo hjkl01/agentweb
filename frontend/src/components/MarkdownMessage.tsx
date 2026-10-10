@@ -90,6 +90,13 @@ export function MarkdownMessage({ content }: { content: string }) {
       blocks.push({ type: "heading", value: heading[2], level: heading[1].length });
       continue;
     }
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+      flushParagraph(); flushList();
+      const tableLines = [line, lines[++i]];
+      while (i + 1 < lines.length && lines[i + 1].includes("|") && lines[i + 1].trim()) tableLines.push(lines[++i]);
+      blocks.push({ type: "table", value: tableLines.join("\n") });
+      continue;
+    }
     if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
       flushParagraph(); flushList(); blocks.push({ type: "hr", value: "" }); continue;
     }
@@ -128,6 +135,12 @@ export function MarkdownMessage({ content }: { content: string }) {
     if (block.type === "ul" || block.type === "ol") {
       const Tag = block.type;
       return <Tag key={index}>{block.value.split("\n").map((item, itemIndex) => <li key={itemIndex}><Inline source={item} /></li>)}</Tag>;
+    }
+    if (block.type === "table") {
+      const rows = block.value.split("\n").map((row) => row.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()));
+      const headers = rows[0] ?? [];
+      const body = rows.slice(2);
+      return <div className="md-table-wrap" key={index}><table className="md-table"><thead><tr>{headers.map((cell, cellIndex) => <th key={cellIndex}><Inline source={cell} /></th>)}</tr></thead><tbody>{body.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, cellIndex) => <td key={cellIndex}><Inline source={row[cellIndex] ?? ""} /></td>)}</tr>)}</tbody></table></div>;
     }
     if (block.type === "quote") return <blockquote key={index}><Inline source={block.value} /></blockquote>;
     if (block.type === "hr") return <hr key={index} />;
