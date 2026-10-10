@@ -27,6 +27,8 @@ export function applyAgentEvent(items: ActivityItem[], event: AgentEvent): Activ
 
 function activityKey(items: ActivityItem[], event: AgentEvent, data: Record<string, any>) {
   if (event.type.startsWith('thinking.')) return 'thinking';
+  if (event.type === 'session.completed') return 'session:completed';
+  if (event.type === 'agent.error' || event.type === 'error') return 'session:error';
   const explicit = IDENTIFIERS.map(name => data[name]).find(Boolean);
   if (explicit) return String(explicit);
 
@@ -59,21 +61,23 @@ function baseType(type: string) {
 }
 
 function labelFor(event: AgentEvent, data: Record<string, any>) {
-  if (event.type.startsWith('thinking.')) return 'Thinking';
-  if (event.type.startsWith('tool.')) return `Tool: ${data.tool || data.name || 'unknown'}`;
-  if (event.type.startsWith('command.')) return `Run command: ${data.command || data.name || 'running'}`;
-  if (event.type === 'file.created') return 'File created';
-  if (event.type === 'file.modified') return 'File modified';
-  if (event.type === 'file.deleted') return 'File deleted';
-  if (event.type === 'message.started') return 'Agent started';
-  if (event.type === 'agent.error' || event.type === 'error') return 'Agent error';
+  if (event.type.startsWith('thinking.')) return '分析过程';
+  if (event.type.startsWith('tool.')) return `工具调用：${data.tool || data.name || '工具'}`;
+  if (event.type.startsWith('command.')) return `执行命令：${data.command || data.name || '命令'}`;
+  if (event.type === 'file.created') return '创建文件';
+  if (event.type === 'file.modified') return '修改文件';
+  if (event.type === 'file.deleted') return '删除文件';
+  if (event.type === 'message.started') return '开始处理请求';
+  if (event.type === 'message.completed') return '生成回复';
+  if (event.type === 'session.completed') return '任务完成';
+  if (event.type === 'agent.error' || event.type === 'error') return '执行失败';
   return event.type;
 }
 
 function detailFor(event: AgentEvent, data: Record<string, any>) {
   if (event.type.startsWith('thinking.') || event.type === 'message.delta') return data.text;
-  if (event.type === 'tool.output') return data.output || data.text;
-  if (event.type === 'command.output') return data.output || data.text;
+  if (event.type.startsWith('tool.') && (event.type.endsWith('.output') || event.type.endsWith('.delta'))) return data.output || data.text;
+  if (event.type.startsWith('command.') && (event.type.endsWith('.output') || event.type.endsWith('.delta'))) return data.output || data.text;
   if (event.type.startsWith('file.')) return data.path;
   if (event.type === 'agent.error' || event.type === 'error') return data.message;
   return undefined;
