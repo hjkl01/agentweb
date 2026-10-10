@@ -179,7 +179,10 @@ function handleEvent(raw: string, active: string, options: Options) {
       return next;
     });
   }
-  if (event.type === "message.completed") options.setStream("");
+  if (event.type === "message.completed") {
+    options.setStream("");
+    options.setActivityOpen(false);
+  }
   const activityEvent =
     event.type.startsWith("thinking.") ||
     event.type.startsWith("tool.") ||
