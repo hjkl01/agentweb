@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAgentRuntime } from "./useAgentRuntime";
 import { useAgentInstallation } from "./useAgentInstallation";
 import { useAgentModels } from "./useAgentModels";
@@ -13,6 +13,7 @@ export function useAppController(
 ) {
   const runtime = useAgentRuntime();
   const [input, setInput] = useState("");
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -56,15 +57,25 @@ export function useAppController(
       alert(e instanceof Error ? e.message : String(e));
     }
   };
-  const send = async () => {
-    if (!sessionId || !input.trim() || current?.status === "running") return;
+  const send = useCallback(async () => {
+    if (!sessionId || !input.trim()) return;
     const message = input.trim();
     setInput("");
     setFocusLine(undefined);
+    if (current?.status === "running") {
+      setQueuedMessages((items) => [...items, message]);
+      return;
+    }
     try {
       await session.sendChat(sessionId, message);
     } catch {}
-  };
+  }, [sessionId, input, current?.status, session.sendChat]);
+  useEffect(() => {
+    if (!sessionId || current?.status === "running" || queuedMessages.length === 0) return;
+    const [nextMessage, ...remaining] = queuedMessages;
+    setQueuedMessages(remaining);
+    session.sendChat(sessionId, nextMessage).catch(() => {});
+  }, [sessionId, current?.status, queuedMessages, session.sendChat]);
   const renameSession = async (id: string) => {
     const target = session.sessions.find((item) => item.id === id);
     const title = window.prompt("重命名会话", target?.title || "");
@@ -135,6 +146,7 @@ export function useAppController(
     startupError,
     input,
     setInput,
+    queuedMessages,
     catalogOpen,
     setCatalogOpen,
     accountOpen,
