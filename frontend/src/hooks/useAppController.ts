@@ -14,6 +14,7 @@ export function useAppController(
   const runtime = useAgentRuntime();
   const [input, setInput] = useState("");
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const queueSendingRef = useRef(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -71,10 +72,18 @@ export function useAppController(
     } catch {}
   }, [sessionId, input, current?.status, session.sendChat]);
   useEffect(() => {
-    if (!sessionId || current?.status === "running" || queuedMessages.length === 0) return;
+    if (
+      !sessionId ||
+      current?.status === "running" ||
+      queuedMessages.length === 0 ||
+      queueSendingRef.current
+    ) return;
     const [nextMessage, ...remaining] = queuedMessages;
+    queueSendingRef.current = true;
     setQueuedMessages(remaining);
-    session.sendChat(sessionId, nextMessage).catch(() => {});
+    session.sendChat(sessionId, nextMessage)
+      .catch(() => {})
+      .finally(() => { queueSendingRef.current = false; });
   }, [sessionId, current?.status, queuedMessages, session.sendChat]);
   const renameSession = async (id: string) => {
     const target = session.sessions.find((item) => item.id === id);
