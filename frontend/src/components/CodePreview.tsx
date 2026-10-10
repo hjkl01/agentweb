@@ -79,7 +79,7 @@ export function CodePreview({ file, focusLine }: Props) {
       ) : isHtml ? (
         <iframe
           className="workspace-html-preview"
-          title={\`HTML preview: \${file.path}\`}
+          title={`HTML preview: ${file.path}`}
           sandbox=""
           referrerPolicy="no-referrer"
           srcDoc={file.content}
@@ -91,7 +91,7 @@ export function CodePreview({ file, focusLine }: Props) {
               const lineNumber = index + 1;
               return (
                 <span
-                  className={\`code-line\${focusLine === lineNumber ? " code-line-focused" : ""}\`}
+                  className={`code-line${focusLine === lineNumber ? " code-line-focused" : ""}`}
                   data-line={lineNumber}
                   key={index}
                 >
