@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { ActivityItem, ChatMessage, FileItem, Session } from "../types";
 import { useSessionActions } from "./useSessionActions";
@@ -13,11 +13,18 @@ export function useSession(active?: string) {
   const [activityOpen, setActivityOpen] = useState(false);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [error, setError] = useState<string>();
+  const refreshRequestId = useRef(0);
   const refreshSessions = useCallback(async () => {
+    const requestId = ++refreshRequestId.current;
     try {
-      setSessions(await api<Session[]>("/sessions"));
+      const latestSessions = await api<Session[]>("/sessions");
+      // Multiple refreshes can overlap (polling, WebSocket completion, reconnect).
+      // Ignore older responses so a stale "running" result cannot overwrite "idle".
+      if (requestId !== refreshRequestId.current) return;
+      setSessions(latestSessions);
       setError(undefined);
     } catch (error) {
+      if (requestId !== refreshRequestId.current) return;
       setError(error instanceof Error ? error.message : String(error));
     }
   }, []);
