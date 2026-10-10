@@ -392,21 +392,49 @@ pub async fn run_session(
             persist_task.abort();
             let now = Utc::now().to_rfc3339();
             let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
-            if updated.map(|r| r.rows_affected() == 1).unwrap_or(false)
-                && !result.assistant_text.is_empty()
-            {
-                let _ = sqlx::query("UPDATE messages SET content=? WHERE id=? AND session_id=?")
-                    .bind(result.assistant_text)
-                    .bind(&assistant_id)
-                    .bind(&session.id)
-                    .execute(&db)
-                    .await;
+            match updated {
+                Ok(result) if result.rows_affected() == 1 => {
+                    if !result.assistant_text.is_empty() {
+                        if let Err(error) = sqlx::query(
+                            "UPDATE messages SET content=? WHERE id=? AND session_id=?",
+                        )
+                        .bind(result.assistant_text)
+                        .bind(&assistant_id)
+                        .bind(&session.id)
+                        .execute(&db)
+                        .await
+                        {
+                            tracing::error!(
+                                session_id = %session.id,
+                                %error,
+                                "failed to persist final assistant message"
+                            );
+                        }
+                    }
+                    // Publish completion only after the database confirms the session
+                    // transitioned from running to idle. Otherwise clients may refresh
+                    // and still observe a stale running state.
+                    worker_events
+                        .publish(AgentEvent::SessionCompleted {
+                            session_id: session.id.clone(),
+                        })
+                        .await;
+                }
+                Ok(result) => {
+                    tracing::warn!(
+                        session_id = %session.id,
+                        rows_affected = result.rows_affected(),
+                        "session completion did not update the running session; skipping completion event"
+                    );
+                }
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session.id,
+                        %error,
+                        "failed to finalize session state; skipping completion event"
+                    );
+                }
             }
-            worker_events
-                .publish(AgentEvent::SessionCompleted {
-                    session_id: session.id.clone(),
-                })
-                .await;
         }
         Err(error) => {
             monitor.abort();
