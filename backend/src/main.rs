@@ -14,7 +14,7 @@ use anyhow::Result;
 use axum::{middleware, routing::get, Router};
 use chrono::Utc;
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
-use std::{path::Path, str::FromStr};
+use std::{net::SocketAddr, path::Path, str::FromStr};
 use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
@@ -58,5 +58,5 @@ async fn main()->Result<()>{
   let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND worker_id=?").bind(&now).bind(&shutdown_worker).execute(&shutdown_db).await;
   for row in rows { let id=sqlx::Row::get::<String,_>(&row,0); let _=shutdown_agents.interrupt(&id).await; }
  };
- axum::serve(listener,app).with_graceful_shutdown(shutdown).await?; Ok(())
+ axum::serve(listener,app.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown).await?; Ok(())
 }

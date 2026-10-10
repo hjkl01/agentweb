@@ -59,7 +59,7 @@ Backend 通过 WebSocket 广播 session-scoped events。message/thinking/tool/co
 
 当前锁定计数保存在 backend 进程内存中；单进程部署适用。未来多进程/多实例部署时应迁移到 SQLite 或 Redis，使限流状态可共享。
 
-反向代理必须正确传递 `X-Forwarded-For` 或 `X-Real-IP`；生产环境应只信任来自可信代理的这些 Header，避免客户端伪造 IP。
+默认只使用 TCP 对端 IP，不信任客户端自行提供的转发 Header。只有配置 `AGENTWEB_TRUSTED_PROXIES`（逗号分隔的代理 IP）后，来自这些代理的 `X-Forwarded-For` / `X-Real-IP` 才会用于识别客户端。HTTPS 部署默认启用 Cookie 的 `Secure` 属性；仅在本地 HTTP 开发时才设置 `AGENTWEB_COOKIE_SECURE=false`。
 
 ### 5.3 用户管理
 
