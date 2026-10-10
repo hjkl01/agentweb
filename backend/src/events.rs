@@ -63,6 +63,38 @@ pub enum AgentEvent {
     InstallCompleted { agent_id: String, success: bool },
 }
 
+// Returns whether the failed operation is safe to retry. A failed commit is
+// deliberately not retried: the database may have committed despite the error.
+async fn persist_batch(
+    db: &SqlitePool,
+    batch: &[PersistedEvent],
+) -> Result<(), (sqlx::Error, bool)> {
+    let mut transaction = db.begin().await.map_err(|error| (error, true))?;
+    for event in batch {
+        if let Err(error) = sqlx::query(
+            "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
+             SELECT ?,?,?,?,?
+             WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)",
+        )
+        .bind(&event.session_id)
+        .bind(&event.worker_id)
+        .bind(&event.event_type)
+        .bind(&event.payload)
+        .bind(&event.created_at)
+        .bind(event.session_id.as_deref())
+        .bind(event.session_id.as_deref())
+        .execute(&mut *transaction)
+        .await
+        {
+            if let Err(rollback_error) = transaction.rollback().await {
+                tracing::warn!(%rollback_error, "failed to roll back agent event batch");
+            }
+            return Err((error, true));
+        }
+    }
+    transaction.commit().await.map_err(|error| (error, false))
+}
+
 impl EventBus {
     pub fn new(db: SqlitePool) -> Self {
         let (persist_sender, mut persist_receiver) = mpsc::unbounded_channel::<PersistedEvent>();
@@ -81,41 +113,37 @@ impl EventBus {
                     }
                 }
 
-                let mut transaction = match db.begin().await {
-                    Ok(transaction) => transaction,
-                    Err(error) => {
-                        tracing::warn!(%error, "failed to begin agent event persistence transaction");
-                        continue;
+                let mut attempt = 0_u32;
+                loop {
+                    match persist_batch(&db, &batch).await {
+                        Ok(()) => break,
+                        Err((error, retryable)) if retryable && attempt < 5 => {
+                            let delay_ms = 25_u64 * (1_u64 << attempt);
+                            attempt += 1;
+                            tracing::warn!(
+                                %error,
+                                attempt,
+                                delay_ms,
+                                "agent event batch persistence failed; retrying"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        }
+                        Err((error, retryable)) => {
+                            if retryable {
+                                tracing::error!(
+                                    %error,
+                                    attempts = attempt + 1,
+                                    "dropping agent event batch after persistence retries were exhausted"
+                                );
+                            } else {
+                                tracing::error!(
+                                    %error,
+                                    "agent event batch commit failed; not retrying because commit outcome may be ambiguous"
+                                );
+                            }
+                            break;
+                        }
                     }
-                };
-                let mut failed = false;
-                for event in &batch {
-                    let result = sqlx::query(
-                        "INSERT INTO agent_events(session_id,worker_id,event_type,payload,created_at)
-                         SELECT ?,?,?,?,?
-                         WHERE ? IS NULL OR EXISTS (SELECT 1 FROM sessions WHERE id=?)",
-                    )
-                    .bind(&event.session_id)
-                    .bind(&event.worker_id)
-                    .bind(&event.event_type)
-                    .bind(&event.payload)
-                    .bind(&event.created_at)
-                    .bind(event.session_id.as_deref())
-                    .bind(event.session_id.as_deref())
-                    .execute(&mut *transaction)
-                    .await;
-                    if let Err(error) = result {
-                        tracing::warn!(%error, "failed to persist agent event batch");
-                        failed = true;
-                        break;
-                    }
-                }
-                if failed {
-                    if let Err(error) = transaction.rollback().await {
-                        tracing::warn!(%error, "failed to roll back agent event batch");
-                    }
-                } else if let Err(error) = transaction.commit().await {
-                    tracing::warn!(%error, "failed to commit agent event batch");
                 }
             }
         });
