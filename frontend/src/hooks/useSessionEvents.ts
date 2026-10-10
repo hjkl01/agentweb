@@ -53,6 +53,7 @@ function handleEvent(raw: string, active: string, options: Options) {
   let event: AgentEvent; try { event = JSON.parse(raw) as AgentEvent; } catch { return; }
   const data = event.data || {};
   if (event.type === 'message.started') {
+    options.setActivityOpen(false);
     options.setStream('');
     options.setMessages(items => items.some(item => item.role === 'assistant' && item.content === '') ? items : [...items, { id: `agent-${crypto.randomUUID()}`, role: 'assistant', content: '' }]);
   }
@@ -61,8 +62,8 @@ function handleEvent(raw: string, active: string, options: Options) {
     options.setMessages(items => { const target = [...items].map((item, index) => ({ item, index })).reverse().find(({ item }) => item.role === 'assistant'); if (!target) return items; const next = [...items]; next[target.index] = { ...target.item, content: target.item.content + text }; return next; });
   }
   if (event.type === 'message.completed') options.setStream('');
-  const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'message.completed' || event.type === 'agent.error' || event.type === 'error';
-  if (activityEvent) { options.setActivity(items => applyAgentEvent(items, event)); options.setActivityOpen(true); }
+  const activityEvent = event.type.startsWith('thinking.') || event.type.startsWith('tool.') || event.type.startsWith('command.') || event.type.startsWith('file.') || event.type === 'message.started' || event.type === 'message.completed' || event.type === 'agent.error' || event.type === 'error' || event.type === 'session.completed';
+  if (activityEvent) options.setActivity(items => applyAgentEvent(items, event));
   if (event.type.startsWith('file.')) options.setWorkspaceRevision(value => value + 1);
   if (event.type === 'session.completed' || event.type === 'agent.error') { syncMessages(); options.setWorkspaceRevision(value => value + 1); options.refreshSessions().catch(console.error); }
 }
