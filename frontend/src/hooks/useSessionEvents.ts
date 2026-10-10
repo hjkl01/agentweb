@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../lib/api';
 import { applyAgentEvent } from '../lib/agentActivity';
-import type { ActivityItem, AgentEvent, ChatMessage, FileItem } from '../types';
+import type { ActivityItem, AgentEvent, ChatMessage, FileItem, Session } from '../types';
 
 type Options = { active?: string; refreshSessions: () => Promise<void>; setMessages: Dispatch<SetStateAction<ChatMessage[]>>; setFiles: Dispatch<SetStateAction<FileItem[]>>; setStream: Dispatch<SetStateAction<string>>; setActivity: Dispatch<SetStateAction<ActivityItem[]>>; setActivityOpen: Dispatch<SetStateAction<boolean>>; setWorkspaceRevision: Dispatch<SetStateAction<number>>; setError: (message?: string) => void; };
 

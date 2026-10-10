@@ -8,11 +8,29 @@ pub async fn ws_events(Path(id): Path<String>, ws: WebSocketUpgrade, State(s): S
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
+    // If the session is running, replay the current turn from its message.started
+    // event. This recovers activity and streamed text when the socket connects late
+    // or reconnects after a temporary network loss. Completed sessions stay live-only.
     let mut cursor = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(e.id), 0)
-         FROM agent_events e
-         JOIN sessions s ON s.id=e.session_id
-         WHERE e.session_id=? AND e.worker_id=s.worker_id"
+        "SELECT CASE
+            WHEN s.status='running' AND EXISTS (
+                SELECT 1 FROM agent_events started
+                WHERE started.session_id=s.id
+                  AND started.worker_id=s.worker_id
+                  AND started.event_type='message.started'
+            )
+            THEN (
+                SELECT MAX(started.id)-1 FROM agent_events started
+                WHERE started.session_id=s.id
+                  AND started.worker_id=s.worker_id
+                  AND started.event_type='message.started'
+            )
+            ELSE COALESCE((
+                SELECT MAX(e.id) FROM agent_events e
+                WHERE e.session_id=s.id AND e.worker_id=s.worker_id
+            ), 0)
+         END
+         FROM sessions s WHERE s.id=?"
     )
     .bind(&session_id)
     .fetch_one(&s.db)
