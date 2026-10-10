@@ -13,6 +13,7 @@ import type {
 type Options = {
   active?: string;
   refreshSessions: () => Promise<void>;
+  refreshActiveSession: (sessionId: string) => Promise<void>;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setFiles: Dispatch<SetStateAction<FileItem[]>>;
   setStream: Dispatch<SetStateAction<string>>;
@@ -147,7 +148,7 @@ function handleEvent(raw: string, active: string, options: Options) {
   }
   const data = event.data || {};
   if (event.type === "message.started") {
-    options.setActivityOpen(false);
+    options.setActivityOpen(true);
     options.setStream("");
     options.setMessages((items) =>
       items.some((item) => item.role === "assistant" && item.content === "")
@@ -193,9 +194,11 @@ function handleEvent(raw: string, active: string, options: Options) {
     options.setActivity((items) => applyAgentEvent(items, event));
   if (event.type.startsWith("file."))
     options.setWorkspaceRevision((value) => value + 1);
-  if (event.type === "session.completed" || event.type === "agent.error") {
+  if (event.type === "session.completed" || event.type === "agent.error" || event.type === "error") {
+    options.setActivityOpen(false);
     syncMessages();
     options.setWorkspaceRevision((value) => value + 1);
+    options.refreshActiveSession(active).catch(console.error);
     options.refreshSessions().catch(console.error);
   }
 }
