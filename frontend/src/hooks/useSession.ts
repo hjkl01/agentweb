@@ -31,15 +31,29 @@ export function useSession(active?: string) {
   useEffect(() => {
     refreshSessions().catch(console.error);
   }, [refreshSessions]);
+  const refreshActiveSession = useCallback(async (sessionId: string) => {
+    try {
+      const latest = await api<Session>(`/sessions/${sessionId}`);
+      setSessions((items) => {
+        const exists = items.some((item) => item.id === sessionId);
+        return exists
+          ? items.map((item) => (item.id === sessionId ? latest : item))
+          : [latest, ...items];
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
   const activeStatus = sessions.find((item) => item.id === active)?.status;
   useEffect(() => {
     if (!active || activeStatus !== "running") return;
-    // Keep the composer in sync even if the WebSocket misses a terminal event.
+    // Poll the authoritative session detail, not only the session list.
+    // This recovers even if the completion WebSocket event is missed.
     const timer = window.setInterval(() => {
-      refreshSessions().catch(console.error);
+      refreshActiveSession(active).catch(console.error);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [active, activeStatus, refreshSessions]);
+  }, [active, activeStatus, refreshActiveSession]);
   const actions = useSessionActions({ setSessions });
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
@@ -101,6 +115,7 @@ export function useSession(active?: string) {
     setActivity,
     setActivityOpen,
     refreshSessions,
+    refreshActiveSession,
     sendChat,
     ...actions,
   };
