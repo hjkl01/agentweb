@@ -142,7 +142,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
       {open && (
         <div className="activity-list">
           {items.map((item) => (
-            <ActivityRow key={item.id} item={item} expanded={open} />
+            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running"} />
           ))}
         </div>
       )}
