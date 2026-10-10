@@ -25,6 +25,7 @@ type Props = {
   activity: ActivityItem[];
   activityOpen: boolean;
   input: string;
+  queuedCount: number;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   chatRef: RefObject<HTMLElement | null>;
   onInputChange: (value: string) => void;
@@ -48,6 +49,7 @@ export function ChatPanel({
   activity,
   activityOpen,
   input,
+  queuedCount,
   textareaRef,
   chatRef,
   onInputChange,
@@ -210,7 +212,6 @@ export function ChatPanel({
                 if (
                   event.key === "Enter" &&
                   !event.shiftKey &&
-                  !running &&
                   !shouldMention
                 ) {
                   event.preventDefault();
@@ -222,7 +223,7 @@ export function ChatPanel({
                   ? "输入消息，使用 @ 选择文件或文件夹…"
                   : "Create a chat to start"
               }
-              disabled={!active || running}
+              disabled={!active}
               rows={1}
             />
             <button
@@ -241,8 +242,8 @@ export function ChatPanel({
           </div>
         </div>
         <div className="composer-hint">
-          <AtSign size={12} /> @ 选择文件/文件夹 · Enter 发送 · Shift + Enter
-          换行
+          <AtSign size={12} /> @ 选择文件/文件夹 · Enter 发送 · Shift + Enter 换行
+          {queuedCount > 0 && ` · 已排队 ${queuedCount} 条，当前回复结束后自动发送`}
         </div>
       </div>
     </main>
