@@ -2,7 +2,7 @@
 
 ## 1. 总体架构
 
-Agent Web 是 Agent Runtime 的 Web 交互层，不替代 Codex、Pi、OpenCode、Claude Code、OpenClaw 的推理和工具执行。
+Agent Web 是 Agent Runtime 的 Web 交互层，不替代 Codex、Pi、OpenCode、Claude Code 的推理和工具执行。
 
 ```text
 Browser
@@ -20,7 +20,6 @@ Agent Web Backend :8080
        ├── Codex Adapter
        ├── Pi Adapter
        ├── OpenCode Adapter
-       ├── OpenClaw Adapter
        └── Generic Adapter
 ```
 
@@ -30,7 +29,7 @@ Agent Web Backend :8080
 
 - Codex：`CODEX_HOME/config.toml` 或 `~/.codex/config.toml`。
 - Pi：Agent 自己的 model registry / `pi --list-models`，并兼容其配置路径。
-- OpenCode、OpenClaw、Claude Code：后续分别实现原生配置和事件适配。
+- OpenCode、Claude Code：后续分别实现原生配置和事件适配。
 
 模型属于 Web Session 配置，可以在新建对话时选择，也可以使用 `PUT /api/sessions/{id}/model` 切换。
 
