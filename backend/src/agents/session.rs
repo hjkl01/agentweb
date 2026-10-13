@@ -345,6 +345,28 @@ pub async fn run_session(
     let kind = config.id.clone();
     let message = expand_mentions(&message, &session.workspace).await;
     let adapter = agents.adapter(&kind).await;
+    // A stop request may arrive while configuration and workspace references are
+    // being prepared, before the Agent process has registered itself. Recheck
+    // ownership immediately before starting the adapter so that such a request
+    // does not launch a fresh child process after the session was interrupted.
+    let ownership = sqlx::query("SELECT status,worker_id FROM sessions WHERE id=?")
+        .bind(&session.id)
+        .fetch_optional(&db)
+        .await;
+    let still_owned = matches!(
+        ownership,
+        Ok(Some(ref row))
+            if sqlx::Row::get::<String, _>(row, 0) == "running"
+                && sqlx::Row::get::<Option<String>, _>(row, 1).as_deref() == Some(&worker_id)
+    );
+    if !still_owned {
+        tracing::info!(
+            session_id = %session.id,
+            worker_id = %worker_id,
+            "skipping agent startup because the session is no longer owned by this worker"
+        );
+        return;
+    }
     let monitor_adapter = adapter.clone();
     let monitor_db = db.clone();
     let monitor_id = session.id.clone();
