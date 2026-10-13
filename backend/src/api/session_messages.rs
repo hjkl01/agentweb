@@ -49,7 +49,29 @@ pub async fn send_message(
         load_session(&s.db, &id).await?;
         return Err(StatusCode::CONFLICT);
     }
-    let session = load_session(&s.db, &id).await?;
+    let session = match load_session(&s.db, &id).await {
+        Ok(session) => session,
+        Err(status) => {
+            // The claim above already marked this session as running. If loading
+            // it fails, release that claim so the session is not stuck until the
+            // lease expires. The ownership predicate protects a newer worker.
+            if let Err(error) = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(Utc::now().to_rfc3339())
+                .bind(&id)
+                .bind(&s.worker_id)
+                .execute(&s.db)
+                .await
+            {
+                tracing::error!(
+                    session_id = %id,
+                    worker_id = %s.worker_id,
+                    %error,
+                    "failed to release session claim after loading the session failed"
+                );
+            }
+            return Err(status);
+        }
+    };
     tracing::info!(session_id = %id, agent_id = %session.agent_id, worker_id = %s.worker_id, message_bytes = v.message.len(), "accepted chat message");
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
         let title = format!("Chat {}", now.format("%Y-%m-%d %H:%M"));
