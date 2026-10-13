@@ -17,11 +17,10 @@ pub async fn ws_events(
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
-    // Session events are transient (kept in memory, never written to SQLite), so the
-    // socket streams live from the in-memory bus. Each backend worker has its own bus,
-    // so a socket must land on the worker that runs the session; the default single
-    // worker (AGENTWEB_WORKERS=1) keeps this local.
-    // ponytail: per-worker bus, add a shared broker only if AGENTWEB_WORKERS > 1 matters.
+    // Session events remain transient and are never persisted to SQLite. In multi-worker
+    // Docker deployments, the local EventBus receives live events from peer workers through
+    // the bounded TCP relay configured by the entrypoint. A relay disconnect or full queue
+    // can still lose transient events; reconnecting does not replay missed events.
     let mut events = s.events.subscribe();
     loop {
         let event = tokio::select! {
