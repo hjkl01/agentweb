@@ -979,6 +979,69 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupt_before_process_registration_is_applied_to_that_execution() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let events = EventBus::new(db);
+        let adapter = ProcessAdapter::new();
+        let config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        adapter
+            .interrupt_execution("shared-session", "execution-old")
+            .await
+            .expect("pre-start interruption should be accepted");
+
+        let result = timeout(
+            Duration::from_secs(3),
+            adapter.run_for_execution(
+                ProcessKind::Generic,
+                &config,
+                "shared-session",
+                "execution-old",
+                "30",
+                &events,
+            ),
+        )
+        .await
+        .expect("the pre-interrupted process should stop promptly");
+
+        assert!(result.is_err(), "the pre-start stop must interrupt the run");
+        assert!(
+            !adapter.processes.lock().await.contains_key("execution-old"),
+            "the interrupted child must be removed from the execution registry"
+        );
+        assert!(
+            !adapter.interrupted.lock().await.contains("execution-old"),
+            "the execution's interruption marker must be cleared after cleanup"
+        );
+    }
+
     // The process monitor must not wait forever when a descendant inherits the
     // agent's output pipes after the direct agent process exits.
     #[cfg(target_os = "linux")]
