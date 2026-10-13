@@ -96,8 +96,12 @@ async fn materialize_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let now = stamp(Utc::now());
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)")
-        .bind(&now).bind(&now).execute(pool).await?;
+    // Do not requeue a run while its associated session still has a live lease.
+    // This closes the small recovery race where the run lease expires first and a
+    // second worker would otherwise claim the run while the old Agent still owns
+    // the session.
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND s.lease_until>=?))")
+        .bind(&now).bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
 
@@ -314,6 +318,32 @@ mod tests {
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'").fetch_one(&pool).await.unwrap();
         assert_eq!(status,"queued");
     }
+    #[tokio::test]
+    async fn expired_run_waits_for_live_session_lease_before_requeueing() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL, lease_until TEXT)")
+            .execute(&pool).await.unwrap();
+        let now = Utc::now();
+        let expired = stamp(now - Duration::minutes(1));
+        let live = stamp(now + Duration::minutes(1));
+        sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s1','running',?)")
+            .bind(&live).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'s1','worker-a',?,?,?)")
+            .bind(&expired).bind(&expired).bind(&expired).bind(&expired).execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, "running", "must not requeue while the associated session lease is live");
+
+        sqlx::query("UPDATE sessions SET lease_until=? WHERE id='s1'")
+            .bind(&expired).execute(&pool).await.unwrap();
+        recover_expired(&pool).await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, "queued", "must requeue after the associated session lease expires");
+    }
+
     #[tokio::test]
     async fn running_worker_can_renew_lease_but_other_worker_cannot() {
         let pool = test_pool().await;
