@@ -87,14 +87,8 @@ impl AgentManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        agents::{
-            adapter::{AgentRunResult},
-            models::AgentModel,
-        },
-        events::EventBus,
-    };
+    use super::{AgentAdapter, AgentConfig, AgentManager};
+    use crate::{agents::models::AgentModel, events::EventBus};
     use anyhow::{bail, Result};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
