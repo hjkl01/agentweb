@@ -49,8 +49,10 @@ function currentStatus(items: ActivityItem[]) {
         item.type !== "message.started",
     );
   if (!latest) return { label: "正在处理请求", state: "running" };
-  if (latest.type === "session.completed" || latest.type === "message.completed")
+  if (latest.type === "session.completed")
     return { label: "已完成", state: "complete" };
+  if (latest.type === "message.completed")
+    return { label: "本轮输出完成", state: "running" };
   if (isFailed(latest.type)) return { label: "执行出错", state: "error" };
   if (latest.type.startsWith("thinking."))
     return { label: "正在分析", state: "running" };
@@ -142,7 +144,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
       {open && (
         <div className="activity-list">
           {items.map((item) => (
-            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running" && !items.some((item) => item.type === "message.completed" || item.type === "session.completed")} />
+            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running" && !items.some((item) => item.type === "session.completed" || item.type === "agent.error" || item.type === "error")} />
           ))}
         </div>
       )}
