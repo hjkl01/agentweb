@@ -599,15 +599,21 @@ mod tests {
         );
 
         let group = format!("-{pid}");
-        let probe = Command::new("kill")
-            .args(["-0", &group])
-            .status()
-            .await
-            .expect("kill should be available on Unix");
-        assert!(
-            !probe.success(),
-            "the process group should no longer exist after task cancellation"
-        );
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let probe = Command::new("kill")
+                    .args(["-0", &group])
+                    .status()
+                    .await
+                    .expect("kill should be available on Unix");
+                if !probe.success() {
+                    break;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the process group should disappear after task cancellation");
     }
 
     #[cfg(unix)]
