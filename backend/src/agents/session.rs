@@ -318,12 +318,19 @@ pub async fn run_session(
     tracing::info!(session_id = %session.id, agent_id = %session.agent_id, worker_id = %worker_id, "agent execution started");
     let mut config = match build_agent_config(&db, &session.agent_id).await {
         Ok(c) => c,
-        Err(_) => {
+        Err(error) => {
+            tracing::error!(
+                session_id = %session.id,
+                agent_id = %session.agent_id,
+                worker_id = %worker_id,
+                %error,
+                "failed to build agent configuration"
+            );
             finish_session(&db, &session.id, &worker_id, "error").await;
             worker_events
                 .publish(AgentEvent::Error {
                     session_id: session.id,
-                    message: "agent executable not found".into(),
+                    message: "failed to prepare agent configuration; check backend logs".into(),
                 })
                 .await;
             return;
