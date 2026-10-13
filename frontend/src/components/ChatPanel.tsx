@@ -1,4 +1,4 @@
-import { Activity, AtSign, Bot, Check, Copy, Send, Square } from "lucide-react";
+import { Activity, AlertTriangle, AtSign, Bot, Check, Copy, Send, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { RefObject } from "react";
 import type {
@@ -54,6 +54,7 @@ type Props = {
   onSend: () => void;
   onToggleActivity: () => void;
   onStop: () => void;
+  onRestartMissingSession: () => void;
   onNewChat: () => void;
   onAutoResize: () => void;
 };
@@ -78,6 +79,7 @@ export function ChatPanel({
   onSend,
   onToggleActivity,
   onStop,
+  onRestartMissingSession,
   onNewChat,
   onAutoResize,
 }: Props) {
@@ -143,6 +145,25 @@ export function ChatPanel({
             <button className="new-chat" onClick={onNewChat}>
               <span>＋</span> New chat
             </button>
+          </div>
+        )}
+        {current?.status === "missing" && (
+          <div className="session-warning" role="alert">
+            <AlertTriangle size={18} />
+            <div className="session-warning-content">
+              <strong>原生会话已不存在</strong>
+              <p>Agent 的原生 Session 可能已被手动删除，原有上下文无法恢复。会话元数据已保留；重新开始会创建新的原生 Session。</p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm("确认重新开始？旧的原生 Session ID 将被清除，并在发送下一条消息时创建新会话。")) {
+                    onRestartMissingSession();
+                  }
+                }}
+              >
+                重新开始
+              </button>
+            </div>
           </div>
         )}
         {active && !messages.length && !stream && (
@@ -244,13 +265,13 @@ export function ChatPanel({
                   ? "输入消息，使用 @ 选择文件或文件夹…"
                   : "Create a chat to start"
               }
-              disabled={!active}
+              disabled={!active || current?.status === "missing"}
               rows={1}
             />
             <button
               className="send-button"
               onClick={running ? onStop : onSend}
-              disabled={!active || (!running && !input.trim())}
+              disabled={!active || current?.status === "missing" || (!running && !input.trim())}
               aria-label={running ? "Stop" : "Send"}
               title={running ? "Stop agent" : "Send message"}
             >
