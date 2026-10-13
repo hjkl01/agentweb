@@ -74,13 +74,22 @@ pub async fn send_message(
 
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
         let title = build_title(&v.message);
-        sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
+        if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
             .bind(&title)
             .bind(&now_text)
             .bind(&id)
             .execute(&s.db)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .is_err()
+        {
+            let _ = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(Utc::now().to_rfc3339())
+                .bind(&id)
+                .bind(&s.worker_id)
+                .execute(&s.db)
+                .await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
         title
     } else {
         session.title.clone()
