@@ -24,18 +24,6 @@ pub struct SendMessage {
     pub message: String,
 }
 
-fn build_title(message: &str) -> String {
-    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut title = normalized.chars().take(40).collect::<String>();
-    if normalized.chars().count() > 40 {
-        title.push('…');
-    }
-    if title.is_empty() {
-        "New Chat".into()
-    } else {
-        title
-    }
-}
 
 pub async fn send_message(
     Path(id): Path<String>,
@@ -56,7 +44,7 @@ pub async fn send_message(
     }
     let session = load_session(&s.db, &id).await?;
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
-        let title = build_title(&v.message);
+        let title = format!("Chat {}", now.format("%Y-%m-%d %H:%M"));
         if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
             .bind(&title)
             .bind(&now_text)
