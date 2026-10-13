@@ -83,3 +83,96 @@ impl AgentManager {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        agents::{
+            adapter::{AgentRunResult},
+            models::AgentModel,
+        },
+        events::EventBus,
+    };
+    use anyhow::{bail, Result};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct MockAdapter {
+        interrupt_calls: Arc<AtomicUsize>,
+        should_fail: bool,
+    }
+
+    #[async_trait]
+    impl AgentAdapter for MockAdapter {
+        async fn send_message(
+            &self,
+            _config: &AgentConfig,
+            _session_id: &str,
+            _message: &str,
+            _events: &EventBus,
+        ) -> Result<adapter::AgentRunResult> {
+            bail!("send_message is not used in this test")
+        }
+
+        async fn interrupt(&self, _session_id: &str) -> Result<()> {
+            self.interrupt_calls.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                bail!("mock interrupt failure")
+            }
+            Ok(())
+        }
+
+        async fn list_models(&self, _config: &AgentConfig) -> Result<Vec<AgentModel>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupt_attempts_all_adapters_when_one_fails() {
+        let manager = AgentManager::new();
+        let failed_calls = Arc::new(AtomicUsize::new(0));
+        let successful_calls = Arc::new(AtomicUsize::new(0));
+
+        {
+            let mut adapters = manager.adapters.lock().await;
+            adapters.insert(
+                "failing".to_owned(),
+                Arc::new(MockAdapter {
+                    interrupt_calls: failed_calls.clone(),
+                    should_fail: true,
+                }),
+            );
+            adapters.insert(
+                "successful".to_owned(),
+                Arc::new(MockAdapter {
+                    interrupt_calls: successful_calls.clone(),
+                    should_fail: false,
+                }),
+            );
+        }
+
+        let result = manager.interrupt("test-session").await;
+
+        assert!(result.is_err(), "the first adapter error must be returned");
+        assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(successful_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn interrupt_succeeds_when_all_adapters_succeed() {
+        let manager = AgentManager::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        manager.adapters.lock().await.insert(
+            "successful".to_owned(),
+            Arc::new(MockAdapter {
+                interrupt_calls: calls.clone(),
+                should_fail: false,
+            }),
+        );
+
+        assert!(manager.interrupt("test-session").await.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+}
