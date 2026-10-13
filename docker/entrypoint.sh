@@ -12,7 +12,7 @@ upstream_servers=""
 for port in $(seq 8081 $((8080 + workers))); do
   upstream_servers+="        server 127.0.0.1:${port};\n"
 done
-sed "s|__UPSTREAM_SERVERS__|${upstream_servers}|" /etc/agentweb/nginx.conf.template > "$nginx_conf"
+sed \\\n  -e "s|__UPSTREAM_SERVERS__|${upstream_servers}|" \\\n  -e "s|__SESSION_UPSTREAM_SERVERS__|${upstream_servers}|" \\\n  /etc/agentweb/nginx.conf.template > "$nginx_conf"
 nginx -t -c "$nginx_conf"
 
 pids=()
