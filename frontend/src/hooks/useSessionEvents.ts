@@ -169,7 +169,16 @@ function handleEvent(raw: string, active: string, options: Options) {
         .map((item, index) => ({ item, index }))
         .reverse()
         .find(({ item }) => item.role === "assistant");
-      if (!target) return items;
+      if (!target) {
+        return [
+          ...items,
+          {
+            id: `agent-${crypto.randomUUID()}`,
+            role: "assistant",
+            content: text,
+          },
+        ];
+      }
       const next = [...items];
       next[target.index] = {
         ...target.item,
