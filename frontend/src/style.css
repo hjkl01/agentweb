@@ -1529,3 +1529,41 @@ button:disabled {
     max-width: 100vw;
   }
 }
+
+
+.session-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 16px 24px;
+  padding: 16px;
+  border: 1px solid var(--border, #e5a000);
+  border-radius: 12px;
+  background: var(--surface-secondary, rgba(234, 179, 8, 0.08));
+  color: var(--text, inherit);
+}
+.session-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.session-warning-content {
+  min-width: 0;
+  flex: 1;
+}
+.session-warning-content p {
+  margin: 6px 0 12px;
+  color: var(--text-muted, #777);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.session-warning-content button {
+  border: 1px solid var(--border, #bbb);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: var(--surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+.session-warning-content button:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.12));
+}
