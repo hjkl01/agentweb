@@ -416,12 +416,21 @@ pub async fn run_session(
             monitor.abort();
             let run_error = error.downcast_ref::<AgentRunError>();
             let interrupted = run_error.is_some_and(|run_error| run_error.interrupted);
+            let native_session_missing =
+                run_error.is_some_and(|run_error| run_error.native_session_missing);
             let native_session_id =
                 run_error.and_then(|run_error| run_error.native_session_id.as_deref());
             let now = Utc::now().to_rfc3339();
+            let status = if interrupted {
+                "interrupted"
+            } else if native_session_missing {
+                "missing"
+            } else {
+                "error"
+            };
             let updated = sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
                 .bind(native_session_id)
-                .bind(if interrupted { "interrupted" } else { "error" })
+                .bind(status)
                 .bind(&now)
                 .bind(&session.id)
                 .bind(&worker_id)
