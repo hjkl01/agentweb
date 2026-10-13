@@ -315,6 +315,7 @@ pub async fn run_session(
     worker_id: String,
 ) {
     let worker_events = events.for_worker(worker_id.clone());
+    tracing::info!(session_id = %session.id, agent_id = %session.agent_id, worker_id = %worker_id, "agent execution started");
     let mut config = match build_agent_config(&db, &session.agent_id).await {
         Ok(c) => c,
         Err(_) => {
@@ -413,6 +414,7 @@ pub async fn run_session(
             }
         }
         Err(error) => {
+            tracing::error!(session_id = %session.id, worker_id = %worker_id, %error, "agent execution failed");
             monitor.abort();
             let run_error = error.downcast_ref::<AgentRunError>();
             let interrupted = run_error.is_some_and(|run_error| run_error.interrupted);
