@@ -21,7 +21,28 @@ const MAX_DIRECTORY_LISTING_FILES: usize = 200;
 const SESSION_LEASE_SECONDS: i64 = 30;
 
 async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) {
-    let _ = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
+    let result = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
+    match result {
+        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(result) => {
+            tracing::warn!(
+                session_id = %session_id,
+                worker_id = %worker_id,
+                requested_status = %status,
+                rows_affected = result.rows_affected(),
+                "session finalization did not update the session owned by this worker"
+            );
+        }
+        Err(error) => {
+            tracing::error!(
+                session_id = %session_id,
+                worker_id = %worker_id,
+                requested_status = %status,
+                %error,
+                "failed to finalize session state"
+            );
+        }
+    }
 }
 async fn persist_stream(
     db: sqlx::SqlitePool,
