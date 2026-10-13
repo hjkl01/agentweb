@@ -187,6 +187,12 @@ impl ProcessAdapter {
                     || typ == "message_end"
                     || nested.contains("agentmessage")
                     || nested.contains("assistant")
+                    || value.get("role").and_then(Value::as_str) == Some("assistant")
+                    || value
+                        .get("message")
+                        .and_then(|message| message.get("role"))
+                        .and_then(Value::as_str)
+                        == Some("assistant")
             }
         }
     }
