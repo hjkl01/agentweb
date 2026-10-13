@@ -437,22 +437,36 @@ pub async fn run_session(
             } else {
                 "error"
             };
-            let updated = sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let finalized = match sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
                 .bind(native_session_id)
                 .bind(status)
                 .bind(&now)
                 .bind(&session.id)
                 .bind(&worker_id)
                 .execute(&db)
-                .await;
-            if let Err(update_error) = updated {
-                tracing::error!(
-                    session_id = %session.id,
-                    %update_error,
-                    "failed to save native session ID while finalizing failed agent run"
-                );
-            }
-            if !interrupted {
+                .await
+            {
+                Ok(result) if result.rows_affected() == 1 => true,
+                Ok(result) => {
+                    tracing::warn!(
+                        session_id = %session.id,
+                        worker_id = %worker_id,
+                        rows_affected = result.rows_affected(),
+                        "failed agent run no longer owns the session; skipping stale finalization event"
+                    );
+                    false
+                }
+                Err(update_error) => {
+                    tracing::error!(
+                        session_id = %session.id,
+                        worker_id = %worker_id,
+                        %update_error,
+                        "failed to save native session ID while finalizing failed agent run"
+                    );
+                    false
+                }
+            };
+            if !interrupted && finalized {
                 worker_events
                     .publish(AgentEvent::Error {
                         session_id: session.id,
