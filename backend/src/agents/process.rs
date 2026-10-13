@@ -544,6 +544,92 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupt_racing_with_natural_exit_cleans_process_and_interrupt_state() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{sleep, timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .expect("sessions table should be created");
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .expect("agent_events table should be created");
+        let events = EventBus::new(db);
+        let adapter = Arc::new(ProcessAdapter::new());
+        let config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let run_adapter = adapter.clone();
+        let run_events = events.clone();
+        let run = tokio::spawn(async move {
+            run_adapter
+                .run(ProcessKind::Generic, &config, "exit-race", "0.1", &run_events)
+                .await
+        });
+
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if adapter.processes.lock().await.contains_key("exit-race") {
+                    break;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the process should register before the race is triggered");
+
+        let interrupt_adapter = adapter.clone();
+        let interrupt = tokio::spawn(async move {
+            interrupt_adapter.interrupt_process("exit-race").await
+        });
+
+        timeout(Duration::from_secs(3), async {
+            let run_result = run.await.expect("the run task should not panic");
+            assert!(
+                run_result.is_ok()
+                    || run_result
+                        .as_ref()
+                        .expect_err("non-successful result must be an error")
+                        .to_string()
+                        .contains("interrupted"),
+                "the run should either finish naturally or report interruption"
+            );
+            interrupt
+                .await
+                .expect("the interrupt task should not panic")
+                .expect("interrupting a process that is exiting should be harmless");
+        })
+        .await
+        .expect("run and interrupt should both finish promptly");
+
+        assert!(
+            !adapter.processes.lock().await.contains_key("exit-race"),
+            "the process registry must be cleared after the race"
+        );
+        assert!(
+            !adapter.interrupted.lock().await.contains("exit-race"),
+            "the interruption marker must not leak into the next run"
+        );
+    }
+
     // The process monitor must not wait forever when a descendant inherits the
     // agent's output pipes after the direct agent process exits.
     #[cfg(target_os = "linux")]
