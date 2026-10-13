@@ -212,8 +212,18 @@ async fn execute_run(state: AppState, run_id: &str) {
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(&state.db, run_id, &state.worker_id, "failed", Some("会话无法认领，可能正在运行")).await; return;
     }
-    let _ = sqlx::query("UPDATE scheduled_task_runs SET agent_session_id=?,updated_at=? WHERE id=? AND lease_owner=?")
+    // Bind the session to the run only if this worker still owns the run.
+    // If ownership changed during session setup, release the session claim and do
+    // not start an Agent that no longer has a valid task lease.
+    let linked = sqlx::query("UPDATE scheduled_task_runs SET agent_session_id=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=?")
         .bind(&session.id).bind(&now_text).bind(run_id).bind(&state.worker_id).execute(&state.db).await;
+    if !matches!(linked, Ok(ref result) if result.rows_affected() == 1) {
+        let release_time = stamp(Utc::now());
+        let _ = sqlx::query("UPDATE sessions SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            .bind(&release_time).bind(&session.id).bind(&state.worker_id).execute(&state.db).await;
+        tracing::warn!(%run_id, session_id = %session.id, "run ownership changed during setup; released session without starting Agent");
+        return;
+    }
     let renew_db = state.db.clone();
     let renew_run = run_id.to_owned();
     let renew_session = session.id.clone();
