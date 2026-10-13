@@ -26,14 +26,15 @@ impl AgentAdapter for GenericAdapter {
         &self,
         config: &AgentConfig,
         session_id: &str,
+        execution_id: &str,
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
         self.process
-            .run(self.kind, config, session_id, message, events)
+            .run_for_execution(self.kind, config, session_id, execution_id, message, events)
             .await
     }
-    async fn interrupt(&self, session_id: &str) -> Result<()> {
-        self.process.interrupt_process(session_id).await
+    async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
+        self.process.interrupt_execution(session_id, execution_id).await
     }
 }
