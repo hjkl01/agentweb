@@ -20,10 +20,10 @@ const MAX_REFERENCE_TOTAL_BYTES: usize = 512 * 1024;
 const MAX_DIRECTORY_LISTING_FILES: usize = 200;
 const SESSION_LEASE_SECONDS: i64 = 30;
 
-async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) {
+async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) -> bool {
     let result = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
     match result {
-        Ok(result) if result.rows_affected() == 1 => {}
+        Ok(result) if result.rows_affected() == 1 => true,
         Ok(result) => {
             tracing::warn!(
                 session_id = %session_id,
@@ -32,6 +32,7 @@ async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str
                 rows_affected = result.rows_affected(),
                 "session finalization did not update the session owned by this worker"
             );
+            false
         }
         Err(error) => {
             tracing::error!(
@@ -41,6 +42,7 @@ async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str
                 %error,
                 "failed to finalize session state"
             );
+            false
         }
     }
 }
@@ -326,13 +328,14 @@ pub async fn run_session(
                 %error,
                 "failed to build agent configuration"
             );
-            finish_session(&db, &session.id, &worker_id, "error").await;
-            worker_events
-                .publish(AgentEvent::Error {
-                    session_id: session.id,
-                    message: "failed to prepare agent configuration; check backend logs".into(),
-                })
-                .await;
+            if finish_session(&db, &session.id, &worker_id, "error").await {
+                worker_events
+                    .publish(AgentEvent::Error {
+                        session_id: session.id,
+                        message: "failed to prepare agent configuration; check backend logs".into(),
+                    })
+                    .await;
+            }
             return;
         }
     };
