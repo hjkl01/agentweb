@@ -122,6 +122,17 @@ export function useAppController(
       alert(e instanceof Error ? e.message : String(e));
     }
   };
+  const restartMissingSession = async () => {
+    if (!sessionId) return;
+    try {
+      await session.restartMissingSession(sessionId);
+      session.setMessages([]);
+      session.setActivity([]);
+      session.setActivityOpen(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
   const stop = () => {
     if (sessionId) session.interrupt(sessionId).catch(console.error);
   };
@@ -182,6 +193,7 @@ export function useAppController(
     togglePin,
     deleteSession,
     stop,
+    restartMissingSession,
     changeAgent,
     changeModel,
     autoResize,
