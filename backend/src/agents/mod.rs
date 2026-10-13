@@ -16,6 +16,7 @@ pub mod session;
 pub use adapter::{AgentAdapter, AgentConfig};
 use anyhow::Result;
 use codex::CodexAdapter;
+use commands::ProcessKind;
 use generic::GenericAdapter;
 use opencode::OpenCodeAdapter;
 use pi::PiAdapter;
