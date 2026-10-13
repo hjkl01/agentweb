@@ -188,7 +188,17 @@ impl ProcessAdapter {
             .await
             .insert(session_id.to_owned(), child.clone());
         if self.interrupted.lock().await.contains(session_id) {
-            Self::stop_child(&child).await?;
+            // Do not return early here: stdout/stderr readers and the normal
+            // process-monitor cleanup still need to run even if the first stop
+            // attempt fails. Keeping the child in the process map also allows a
+            // subsequent interrupt request to retry stopping it.
+            if let Err(error) = Self::stop_child(&child).await {
+                tracing::warn!(
+                    session_id = %session_id,
+                    %error,
+                    "failed to stop agent process during startup interruption; continuing cleanup monitoring"
+                );
+            }
         }
         events
             .publish(AgentEvent::MessageStarted {
