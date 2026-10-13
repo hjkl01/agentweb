@@ -216,18 +216,26 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         Err(e) => return e,
     };
     if session.status == "running" {
-        // Stop only the execution currently recorded for this session. The token
-        // predicate protects a newer execution if a lease takeover races deletion.
-        let execution_id: Option<String> = match sqlx::query_scalar(
-            "SELECT worker_id FROM sessions WHERE id=? AND status='running'",
+        // Never stop a live execution when deletion will be rejected anyway.
+        // Only expired leases may be cleaned up by this endpoint.
+        let now = Utc::now().to_rfc3339();
+        let execution: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
+            "SELECT worker_id,lease_until FROM sessions WHERE id=? AND status='running'",
         )
         .bind(&id)
         .fetch_optional(&s.db)
         .await
         {
-            Ok(value) => value.flatten(),
+            Ok(value) => value,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
         };
+        let Some((execution_id, lease_until)) = execution else {
+            return StatusCode::CONFLICT;
+        };
+        if lease_until.as_deref().is_some_and(|lease| lease >= now.as_str()) {
+            return StatusCode::CONFLICT;
+        }
+        let execution_id = execution_id;
         let Some(execution_id) = execution_id else {
             return StatusCode::CONFLICT;
         };
