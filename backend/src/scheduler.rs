@@ -1,8 +1,8 @@
-use crate::{agents::{process::run_session, AgentManager}, api::Session, events::EventBus, state::AppState};
+use crate::{agents::process::run_session, api::Session, state::AppState};
 use chrono::{DateTime, Datelike, Duration, SecondsFormat, Timelike, Utc};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
-use std::{sync::Arc, time::Duration as StdDuration};
+use std::time::Duration as StdDuration;
 use tokio::time;
 use uuid::Uuid;
 
@@ -283,7 +283,7 @@ mod tests {
         sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
             .execute(&pool).await.unwrap();
         let old = stamp(Utc::now() - Duration::hours(4));
-        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t1','task','do it','codex','/tmp','interval','{\\"seconds\\":60}','UTC',?,1,?)")
+        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t1','task','do it','codex','/tmp','interval','{\"seconds\":60}','UTC',?,1,?)")
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
         materialize_due(&pool).await.unwrap();
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t1'").fetch_one(&pool).await.unwrap();

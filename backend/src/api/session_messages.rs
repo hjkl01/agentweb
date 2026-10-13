@@ -1,4 +1,5 @@
 use super::sessions::load_session;
+use crate::agents::pi_transcript::{read_messages, TranscriptMessage};
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -13,10 +14,16 @@ const SESSION_LEASE_SECONDS: i64 = 30;
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
-) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+) -> Result<Json<Vec<TranscriptMessage>>, StatusCode> {
     // Conversation content belongs to the Agent's native session, not SQLite.
-    load_session(&s.db, &id).await?;
-    Ok(Json(Vec::new()))
+    let session = load_session(&s.db, &id).await?;
+    if session.agent_id != "pi" {
+        return Ok(Json(Vec::new()));
+    }
+    let Some(native_session_id) = session.native_session_id.as_deref() else {
+        return Ok(Json(Vec::new()));
+    };
+    Ok(Json(read_messages(native_session_id)))
 }
 
 #[derive(Deserialize)]

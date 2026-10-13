@@ -67,6 +67,32 @@ pub enum AgentEvent {
     InstallCompleted { agent_id: String, success: bool },
 }
 
+impl AgentEvent {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            AgentEvent::SessionStarted { session_id }
+            | AgentEvent::MessageStarted { session_id }
+            | AgentEvent::MessageDelta { session_id, .. }
+            | AgentEvent::MessageCompleted { session_id }
+            | AgentEvent::ThinkingStarted { session_id }
+            | AgentEvent::ThinkingDelta { session_id, .. }
+            | AgentEvent::ThinkingCompleted { session_id }
+            | AgentEvent::ToolStarted { session_id, .. }
+            | AgentEvent::ToolOutput { session_id, .. }
+            | AgentEvent::ToolCompleted { session_id, .. }
+            | AgentEvent::FileCreated { session_id, .. }
+            | AgentEvent::FileModified { session_id, .. }
+            | AgentEvent::FileDeleted { session_id, .. }
+            | AgentEvent::CommandStarted { session_id, .. }
+            | AgentEvent::CommandOutput { session_id, .. }
+            | AgentEvent::CommandCompleted { session_id }
+            | AgentEvent::Error { session_id, .. }
+            | AgentEvent::SessionCompleted { session_id } => Some(session_id),
+            AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
+        }
+    }
+}
+
 // SQLite primary result codes 5 and 6 are SQLITE_BUSY and SQLITE_LOCKED.
 // Extended result codes preserve the primary code in the low 8 bits.
 fn is_retryable_sqlite_code(code: Option<&str>) -> bool {
@@ -201,27 +227,7 @@ impl EventBus {
             tracing::error!("failed to serialize agent event for persistence");
             return;
         };
-        let session_id = match &event {
-            AgentEvent::SessionStarted { session_id }
-            | AgentEvent::MessageStarted { session_id }
-            | AgentEvent::MessageDelta { session_id, .. }
-            | AgentEvent::MessageCompleted { session_id }
-            | AgentEvent::ThinkingStarted { session_id }
-            | AgentEvent::ThinkingDelta { session_id, .. }
-            | AgentEvent::ThinkingCompleted { session_id }
-            | AgentEvent::ToolStarted { session_id, .. }
-            | AgentEvent::ToolOutput { session_id, .. }
-            | AgentEvent::ToolCompleted { session_id, .. }
-            | AgentEvent::FileCreated { session_id, .. }
-            | AgentEvent::FileModified { session_id, .. }
-            | AgentEvent::FileDeleted { session_id, .. }
-            | AgentEvent::CommandStarted { session_id, .. }
-            | AgentEvent::CommandOutput { session_id, .. }
-            | AgentEvent::CommandCompleted { session_id }
-            | AgentEvent::Error { session_id, .. }
-            | AgentEvent::SessionCompleted { session_id } => Some(session_id.clone()),
-            AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. } => None,
-        };
+        let session_id = event.session_id().map(str::to_owned);
         let event_type = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
             .and_then(|value| {

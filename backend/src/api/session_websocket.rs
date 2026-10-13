@@ -6,8 +6,7 @@ use axum::{
     },
     response::IntoResponse,
 };
-use sqlx::Row;
-use tokio::time::{self, Duration};
+use tokio::sync::broadcast;
 
 pub async fn ws_events(
     Path(id): Path<String>,
@@ -18,62 +17,36 @@ pub async fn ws_events(
 }
 
 async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
-    // If the session is running, replay the current turn from its message.started
-    // event. This recovers activity and streamed text when the socket connects late
-    // or reconnects after a temporary network loss. Completed sessions stay live-only.
-    let mut cursor = sqlx::query_scalar::<_, i64>(
-        "SELECT CASE
-            WHEN s.status='running' AND EXISTS (
-                SELECT 1 FROM agent_events started
-                WHERE started.session_id=s.id
-                  AND started.worker_id=s.worker_id
-                  AND started.event_type='message.started'
-            )
-            THEN (
-                SELECT MAX(started.id)-1 FROM agent_events started
-                WHERE started.session_id=s.id
-                  AND started.worker_id=s.worker_id
-                  AND started.event_type='message.started'
-            )
-            ELSE COALESCE((
-                SELECT MAX(e.id) FROM agent_events e
-                WHERE e.session_id=s.id AND e.worker_id=s.worker_id
-            ), 0)
-         END
-         FROM sessions s WHERE s.id=?",
-    )
-    .bind(&session_id)
-    .fetch_one(&s.db)
-    .await
-    .unwrap_or(0);
-    let mut ticker = time::interval(Duration::from_millis(100));
-
+    // Session events are transient (kept in memory, never written to SQLite), so the
+    // socket streams live from the in-memory bus. Each backend worker has its own bus,
+    // so a socket must land on the worker that runs the session; the default single
+    // worker (AGENTWEB_WORKERS=1) keeps this local.
+    // ponytail: per-worker bus, add a shared broker only if AGENTWEB_WORKERS > 1 matters.
+    let mut events = s.events.subscribe();
     loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                let rows = sqlx::query(
-                    "SELECT e.id,e.payload
-                     FROM agent_events e
-                     JOIN sessions s ON s.id=e.session_id
-                     WHERE e.id>? AND e.session_id=? AND e.worker_id=s.worker_id
-                     ORDER BY e.id LIMIT 256"
-                )
-                    .bind(cursor).bind(&session_id).fetch_all(&s.db).await;
-                let Ok(rows) = rows else { continue; };
-                for row in rows {
-                    let id = row.get::<i64,_>(0);
-                    let payload = row.get::<String,_>(1);
-                    cursor = id;
-                    if socket.send(Message::Text(payload.into())).await.is_err() { return; }
-                }
-            }
+        let event = tokio::select! {
+            event = events.recv() => match event {
+                Ok(event) => event,
+                // A slow client skipped events; keep streaming the latest state.
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
             message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Close(_))) | None => return,
-                    Some(Ok(_)) => {},
+                    Some(Ok(_)) => continue,
                     Some(Err(_)) => return,
                 }
             }
+        };
+        if event.session_id() != Some(session_id.as_str()) {
+            continue;
+        }
+        let Ok(payload) = serde_json::to_string(&event) else {
+            continue;
+        };
+        if socket.send(Message::Text(payload.into())).await.is_err() {
+            return;
         }
     }
 }

@@ -10,6 +10,7 @@ pub mod models;
 pub mod opencode;
 pub mod pi;
 pub mod pi_events;
+pub mod pi_transcript;
 pub mod process;
 pub mod session;
 

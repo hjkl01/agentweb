@@ -160,9 +160,13 @@ impl ProcessAdapter {
                     .to_ascii_lowercase();
                 if matches!(
                     typ.as_str(),
-                    "session_start" | "session.started" | "session_starting"
+                    "session" | "session_start" | "session.started" | "session_starting"
                 ) {
-                    event_parser::parsed(value).1
+                    value
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| event_parser::parsed(value).1)
                 } else {
                     None
                 }
