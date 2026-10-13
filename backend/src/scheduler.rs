@@ -121,11 +121,27 @@ async fn renew_run_lease_once(pool: &SqlitePool, run_id: &str, worker: &str) -> 
         .bind(lease).bind(now_text).bind(run_id).bind(worker).execute(pool).await, Ok(r) if r.rows_affected() == 1)
 }
 
-async fn renew_run_lease(pool: SqlitePool, run_id: String, worker: String) {
-    let mut ticker = time::interval(StdDuration::from_secs(LEASE_SECONDS as u64 / 3));
+async fn renew_session_lease_once(pool: &SqlitePool, session_id: &str, worker: &str) -> bool {
+    let now = Utc::now();
+    let now_text = stamp(now);
+    let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
+    matches!(sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+        .bind(lease).bind(now_text).bind(session_id).bind(worker).execute(pool).await, Ok(r) if r.rows_affected() == 1)
+}
+
+async fn renew_run_lease(pool: SqlitePool, run_id: String, session_id: String, worker: String) {
+    let mut ticker = time::interval(StdDuration::from_secs((LEASE_SECONDS as u64 / 3).max(1)));
     loop {
         ticker.tick().await;
-        if !renew_run_lease_once(&pool, &run_id, &worker).await { return; }
+        // Renew both leases together. If the session lease expires while its task-run
+        // lease remains valid, another worker could claim the same session and launch
+        // a second Agent process against it.
+        if !renew_run_lease_once(&pool, &run_id, &worker).await
+            || !renew_session_lease_once(&pool, &session_id, &worker).await
+        {
+            tracing::warn!(%run_id, %session_id, %worker, "scheduled task lost its run or session lease");
+            return;
+        }
     }
 }
 
@@ -181,8 +197,11 @@ async fn execute_run(state: AppState, run_id: &str) {
         .bind(&session.id).bind(&now_text).bind(run_id).bind(&state.worker_id).execute(&state.db).await;
     let renew_db = state.db.clone();
     let renew_run = run_id.to_owned();
+    let renew_session = session.id.clone();
     let renew_worker = state.worker_id.clone();
-    let heartbeat = tokio::spawn(async move { renew_run_lease(renew_db, renew_run, renew_worker).await; });
+    let heartbeat = tokio::spawn(async move {
+        renew_run_lease(renew_db, renew_run, renew_session, renew_worker).await;
+    });
     run_session(state.db.clone(), state.agents.clone(), session, prompt, state.events.clone(), state.worker_id.clone()).await;
     heartbeat.abort();
     let status: Option<String> = sqlx::query_scalar("SELECT status FROM sessions WHERE id=?").bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
@@ -275,6 +294,23 @@ mod tests {
             .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
         assert!(renew_run_lease_once(&pool, "r1", "worker-a").await);
         assert!(!renew_run_lease_once(&pool, "r1", "worker-b").await);
+    }
+
+    #[tokio::test]
+    async fn session_lease_is_renewed_only_by_its_owner() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)")
+            .execute(&pool).await.unwrap();
+        let old = stamp(Utc::now() - Duration::seconds(1));
+        sqlx::query("INSERT INTO sessions(id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-a',?,?)")
+            .bind(&old).bind(&old).execute(&pool).await.unwrap();
+
+        assert!(renew_session_lease_once(&pool, "s1", "worker-a").await);
+        assert!(!renew_session_lease_once(&pool, "s1", "worker-b").await);
+
+        let lease: String = sqlx::query_scalar("SELECT lease_until FROM sessions WHERE id='s1'")
+            .fetch_one(&pool).await.unwrap();
+        assert!(DateTime::parse_from_rfc3339(&lease).unwrap().with_timezone(&Utc) > Utc::now());
     }
 
     #[tokio::test]
