@@ -35,7 +35,7 @@ export function useSessionEvents(options: Options) {
     options.setActivity([]);
     options.setActivityOpen(false);
 
-    const loadState = async () => {
+    const loadState = async (preserveCurrentMessages = false) => {
       const [messages, files, session, activity] = await Promise.all([
         api<ChatMessage[]>(`/sessions/${active}/messages`),
         api<FileItem[]>(`/sessions/${active}/files`),
@@ -69,7 +69,9 @@ export function useSessionEvents(options: Options) {
           }
         }
       }
-      options.setMessages(restoredMessages);
+      if (!preserveCurrentMessages || restoredMessages.length > 0) {
+        options.setMessages(restoredMessages);
+      }
       options.setFiles(files);
       options.setStream("");
       // Completed sessions can restore persisted activity. Running sessions replay
@@ -84,19 +86,6 @@ export function useSessionEvents(options: Options) {
       );
       options.setActivityOpen(false);
       options.setError(undefined);
-    };
-    const syncMessages = async () => {
-      try {
-        const messages = await api<ChatMessage[]>(
-          `/sessions/${active}/messages`,
-        );
-        if (!disposed) options.setMessages(messages);
-      } catch (error) {
-        if (!disposed)
-          options.setError(
-            error instanceof Error ? error.message : String(error),
-          );
-      }
     };
     const connect = () => {
       if (disposed) return;
@@ -117,7 +106,7 @@ export function useSessionEvents(options: Options) {
         if (disposed) return;
         reconnectTimer = setTimeout(async () => {
           try {
-            await loadState();
+            await loadState(true);
           } catch (error) {
             options.setError(
               error instanceof Error ? error.message : String(error),
@@ -213,7 +202,6 @@ function handleEvent(raw: string, active: string, options: Options) {
     options.setWorkspaceRevision((value) => value + 1);
   if (event.type === "session.completed" || event.type === "agent.error" || event.type === "error") {
     options.setActivityOpen(false);
-    syncMessages();
     options.setWorkspaceRevision((value) => value + 1);
     options.refreshActiveSession(active).catch(console.error);
     options.refreshSessions().catch(console.error);
