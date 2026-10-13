@@ -13,6 +13,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Start the database-backed scheduler once the shared application state is ready.
+    pub fn start_scheduler(&self) {
+        crate::scheduler::start(self.clone());
+    }
+
     pub fn new(db: SqlitePool) -> Self {
         Self {
             events: EventBus::new(db.clone()),
