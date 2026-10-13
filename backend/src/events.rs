@@ -188,6 +188,15 @@ impl EventBus {
     }
 
     pub async fn publish(&self, event: AgentEvent) {
+        // Session conversation/activity events are transient. Only installer status
+        // is persisted; chat context is owned by the Agent's native session.
+        if !matches!(
+            &event,
+            AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. }
+        ) {
+            let _ = self.sender.send(event);
+            return;
+        }
         let Ok(payload) = serde_json::to_string(&event) else {
             tracing::error!("failed to serialize agent event for persistence");
             return;
@@ -293,7 +302,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn persists_install_events_in_publication_order_and_guards_missing_sessions() {
+    async fn persists_only_install_events_and_keeps_session_events_transient() {
         let (bus, db) = bus().await;
         bus.publish(AgentEvent::InstallOutput {
             agent_id: "pi".into(),
@@ -340,9 +349,6 @@ mod tests {
             [
                 (None, "install.output".to_owned()),
                 (None, "install.completed".to_owned()),
-                (Some("live".to_owned()), "message.started".to_owned()),
-                (Some("live".to_owned()), "message.delta".to_owned()),
-                (Some("live".to_owned()), "message.completed".to_owned()),
             ]
         );
     }
