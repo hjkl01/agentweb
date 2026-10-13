@@ -126,6 +126,10 @@ async fn main() -> Result<()> {
         )
         .route("/sessions/{id}/pin", axum::routing::put(api::toggle_pin))
         .route(
+            "/sessions/{id}/restart",
+            axum::routing::post(api::restart_missing_session),
+        )
+        .route(
             "/sessions/{id}/model",
             axum::routing::put(api::set_session_model),
         )
