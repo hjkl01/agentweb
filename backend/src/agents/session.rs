@@ -398,7 +398,7 @@ pub async fn run_session(
                 }
             };
             let Some(row) = row else {
-                let _ = monitor_adapter.interrupt(&monitor_id).await;
+                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
                 continue;
             };
             let status: String = sqlx::Row::get(&row, 0);
@@ -447,7 +447,7 @@ pub async fn run_session(
         }
     });
     match adapter
-        .send_message(&config, &session.id, &message, &worker_events)
+        .send_message(&config, &session.id, &worker_id, &message, &worker_events)
         .await
     {
         Ok(result) => {
