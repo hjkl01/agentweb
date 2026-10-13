@@ -57,7 +57,7 @@ impl AgentManager {
         adapter
     }
 
-    pub async fn interrupt(&self, session_id: &str) -> Result<()> {
+    pub async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
         let adapters = self
             .adapters
             .lock()
@@ -67,7 +67,7 @@ impl AgentManager {
             .collect::<Vec<_>>();
         let mut first_error = None;
         for adapter in adapters {
-            if let Err(error) = adapter.interrupt(session_id).await {
+            if let Err(error) = adapter.interrupt(session_id, execution_id).await {
                 // Try every adapter even if one fails. A session can have stale
                 // processes from an earlier agent configuration, and returning
                 // early could leave those processes running without an interrupt
@@ -109,13 +109,14 @@ mod tests {
             &self,
             _config: &AgentConfig,
             _session_id: &str,
+            _execution_id: &str,
             _message: &str,
             _events: &EventBus,
         ) -> Result<AgentRunResult> {
             bail!("send_message is not used in this test")
         }
 
-        async fn interrupt(&self, _session_id: &str) -> Result<()> {
+        async fn interrupt(&self, _session_id: &str, _execution_id: &str) -> Result<()> {
             self.interrupt_calls.fetch_add(1, Ordering::SeqCst);
             if self.should_fail {
                 bail!("mock interrupt failure")
@@ -152,7 +153,7 @@ mod tests {
             );
         }
 
-        let result = manager.interrupt("test-session").await;
+        let result = manager.interrupt("test-session", "test-execution").await;
 
         assert!(result.is_err(), "the first adapter error must be returned");
         assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
@@ -171,7 +172,7 @@ mod tests {
             }),
         );
 
-        assert!(manager.interrupt("test-session").await.is_ok());
+        assert!(manager.interrupt("test-session", "test-execution").await.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
