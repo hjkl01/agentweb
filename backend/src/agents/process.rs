@@ -624,6 +624,22 @@ pub use super::session::run_session;
 mod tests {
     use super::ProcessAdapter;
     use std::sync::Arc;
+
+    #[test]
+    fn detects_explicit_missing_native_session_errors_only() {
+        assert!(ProcessAdapter::indicates_missing_native_session(
+            "Error: session not found"
+        ));
+        assert!(ProcessAdapter::indicates_missing_native_session(
+            "No session found for the supplied ID"
+        ));
+        assert!(!ProcessAdapter::indicates_missing_native_session(
+            "permission denied while opening session storage"
+        ));
+        assert!(!ProcessAdapter::indicates_missing_native_session(
+            "network timeout"
+        ));
+    }
     use tokio::{process::Command, sync::Mutex};
 
     #[cfg(unix)]
