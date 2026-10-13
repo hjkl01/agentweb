@@ -981,6 +981,119 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn interrupting_stale_execution_does_not_stop_new_execution_for_same_session() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{sleep, timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let events = EventBus::new(db);
+        let adapter = Arc::new(ProcessAdapter::new());
+        let config = super::super::adapter::AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let old_adapter = adapter.clone();
+        let old_config = config.clone();
+        let old_events = events.clone();
+        let old_run = tokio::spawn(async move {
+            old_adapter
+                .run_for_execution(
+                    ProcessKind::Generic,
+                    &old_config,
+                    "shared-session",
+                    "execution-old",
+                    "30",
+                    &old_events,
+                )
+                .await
+        });
+        let new_adapter = adapter.clone();
+        let new_config = config.clone();
+        let new_events = events.clone();
+        let new_run = tokio::spawn(async move {
+            new_adapter
+                .run_for_execution(
+                    ProcessKind::Generic,
+                    &new_config,
+                    "shared-session",
+                    "execution-new",
+                    "30",
+                    &new_events,
+                )
+                .await
+        });
+
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let processes = adapter.processes.lock().await;
+                if processes.contains_key("execution-old")
+                    && processes.contains_key("execution-new")
+                {
+                    break;
+                }
+                drop(processes);
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both execution-specific children should register");
+
+        adapter
+            .interrupt_execution("shared-session", "execution-old")
+            .await
+            .expect("the stale execution should be interruptible");
+
+        let old_result = timeout(Duration::from_secs(3), old_run)
+            .await
+            .expect("the old execution should stop promptly")
+            .expect("the old execution task should not panic");
+        assert!(old_result.is_err(), "the old execution should report interruption");
+
+        let new_child = adapter
+            .processes
+            .lock()
+            .await
+            .get("execution-new")
+            .cloned()
+            .expect("the new execution must remain registered");
+        assert!(
+            new_child.lock().await.try_wait().unwrap().is_none(),
+            "interrupting the old token must not stop the new execution"
+        );
+
+        adapter
+            .interrupt_execution("shared-session", "execution-new")
+            .await
+            .expect("the new execution should be independently interruptible");
+        let new_result = timeout(Duration::from_secs(3), new_run)
+            .await
+            .expect("the new execution should stop promptly")
+            .expect("the new execution task should not panic");
+        assert!(new_result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn interrupt_before_process_registration_is_applied_to_that_execution() {
         use super::super::adapter::AgentConfig;
         use super::super::commands::ProcessKind;
