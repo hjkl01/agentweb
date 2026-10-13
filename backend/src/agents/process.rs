@@ -31,6 +31,7 @@ pub struct ProcessAdapter {
 struct ProcessRunGuard {
     session_id: String,
     process_id: Option<u32>,
+    child: Arc<Mutex<Child>>,
     processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     interrupted: Arc<Mutex<HashSet<String>>>,
     armed: bool,
@@ -40,10 +41,11 @@ impl ProcessRunGuard {
     fn new(
         session_id: String,
         process_id: Option<u32>,
+        child: Arc<Mutex<Child>>,
         processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
         interrupted: Arc<Mutex<HashSet<String>>>,
     ) -> Self {
-        Self { session_id, process_id, processes, interrupted, armed: true }
+        Self { session_id, process_id, child, processes, interrupted, armed: true }
     }
 
     fn disarm(&mut self) {
@@ -56,28 +58,53 @@ impl Drop for ProcessRunGuard {
         if !self.armed {
             return;
         }
-        #[cfg(unix)]
-        if let Some(pid) = self.process_id {
-            // Cancellation cannot await an async signal. Use the OS utility as a
-            // best-effort process-group cleanup; kill_on_drop remains the direct
-            // child fallback.
-            let group = format!("-{pid}");
-            if let Err(error) = std::process::Command::new("kill")
-                .args(["-KILL", &group])
-                .status()
-            {
-                tracing::warn!(session_id = %self.session_id, %error, "failed to kill agent process group after task cancellation");
+
+        let session_id = self.session_id.clone();
+        let process_id = self.process_id;
+        let child = self.child.clone();
+        let processes = self.processes.clone();
+        let interrupted = self.interrupted.clone();
+
+        // Avoid blocking a Tokio worker thread from Drop. Schedule asynchronous
+        // termination and remove only this run's entry to protect a later run.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                #[cfg(unix)]
+                if let Some(pid) = process_id {
+                    let group = format!("-{pid}");
+                    if let Err(error) = Command::new("kill").args(["-KILL", &group]).status().await {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            %error,
+                            "failed to kill agent process group after task cancellation"
+                        );
+                    }
+                }
+
+                if let Err(error) = ProcessAdapter::stop_child(&child).await {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        %error,
+                        "failed to stop agent child after task cancellation"
+                    );
+                }
+
+                let mut process_map = processes.lock().await;
+                if process_map
+                    .get(&session_id)
+                    .is_some_and(|registered| Arc::ptr_eq(registered, &child))
+                {
+                    process_map.remove(&session_id);
+                    interrupted.lock().await.remove(&session_id);
+                }
+            });
+        } else {
+            // Runtime-shutdown fallback: issue a synchronous process-group kill.
+            #[cfg(unix)]
+            if let Some(pid) = self.process_id {
+                let group = format!("-{pid}");
+                let _ = std::process::Command::new("kill").args(["-KILL", &group]).status();
             }
-        }
-        if let Ok(mut processes) = self.processes.try_lock() {
-            processes.remove(&self.session_id);
-        } else {
-            tracing::warn!(session_id = %self.session_id, "could not synchronously clear process registry during task cancellation");
-        }
-        if let Ok(mut interrupted) = self.interrupted.try_lock() {
-            interrupted.remove(&self.session_id);
-        } else {
-            tracing::warn!(session_id = %self.session_id, "could not synchronously clear interruption marker during task cancellation");
         }
     }
 }
@@ -250,6 +277,7 @@ impl ProcessAdapter {
         let mut run_guard = ProcessRunGuard::new(
             session_id.to_owned(),
             process_id,
+            child.clone(),
             self.processes.clone(),
             self.interrupted.clone(),
         );
