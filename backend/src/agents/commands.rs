@@ -59,7 +59,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             args.extend(["--prompt".into(), message.into()]);
         }
         ProcessKind::Qwen => {
-            args = vec!["--output-format".into(), "stream-json".into()];
+            args = vec!["--output-format".into(), "stream-json".into(), "--include-partial-messages".into()];
             if let Some(id) = &config.native_session_id {
                 args.extend(["--resume".into(), id.clone()]);
             }
