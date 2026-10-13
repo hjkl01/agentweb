@@ -242,8 +242,26 @@ impl ProcessAdapter {
             Ok::<(), anyhow::Error>(())
         });
         let status = loop {
-            if let Some(status) = child.lock().await.try_wait()? {
-                break status;
+            match child.lock().await.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => {
+                    // A transient wait error must not detach the reader tasks or
+                    // discard the process handle. Retry monitoring, and make a
+                    // best-effort stop so a still-running child can be reaped.
+                    tracing::warn!(
+                        session_id = %session_id,
+                        %error,
+                        "failed to poll agent process status; retrying"
+                    );
+                    if let Err(stop_error) = Self::stop_child(&child).await {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            %stop_error,
+                            "failed to stop agent process after wait error"
+                        );
+                    }
+                }
             }
             sleep(Duration::from_millis(50)).await;
         };
