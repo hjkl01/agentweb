@@ -208,7 +208,7 @@ async fn execute_run(state: AppState, run_id: &str) {
         Err(_) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("读取会话失败")).await; return; }
     };
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
-    let session_worker_id = Uuid::new_v4().to_string();
+    let session_worker_id = format!("{}:{}", state.worker_id, Uuid::new_v4());
     let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
