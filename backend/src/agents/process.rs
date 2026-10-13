@@ -492,7 +492,7 @@ impl ProcessAdapter {
                     session_id: session_id.into(),
                 })
                 .await;
-            return Err(AgentRunError::Interrupted.into());
+            return Err(AgentRunError::interrupted(result.native_session_id.clone()).into());
         }
         if let Err(error) = output_result {
             events
@@ -501,7 +501,11 @@ impl ProcessAdapter {
                     message: error.to_string(),
                 })
                 .await;
-            return Err(error);
+            return Err(AgentRunError::failed(
+                error.to_string(),
+                result.native_session_id.clone(),
+            )
+            .into());
         }
         if status.success() {
             events
@@ -517,7 +521,11 @@ impl ProcessAdapter {
                     message: format!("agent exited with status {status}"),
                 })
                 .await;
-            Err(anyhow!("agent exited with status {status}"))
+            Err(AgentRunError::failed(
+                format!("agent exited with status {status}"),
+                result.native_session_id.clone(),
+            )
+            .into())
         }
     }
     #[cfg(unix)]
