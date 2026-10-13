@@ -432,3 +432,33 @@ impl AgentAdapter for ProcessAdapter {
     }
 }
 pub use super::session::run_session;
+
+
+#[cfg(test)]
+mod tests {
+    use super::ProcessAdapter;
+    use std::sync::Arc;
+    use tokio::{process::Command, sync::Mutex};
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_child_terminates_a_running_process_and_is_safe_to_repeat() {
+        let child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep should be available on Unix");
+        let child = Arc::new(Mutex::new(child));
+
+        ProcessAdapter::stop_child(&child)
+            .await
+            .expect("the running child should be stopped");
+        assert!(
+            child.lock().await.try_wait().expect("wait should succeed").is_some(),
+            "the child should have exited after stop_child"
+        );
+
+        ProcessAdapter::stop_child(&child)
+            .await
+            .expect("stopping an already exited child should be harmless");
+    }
+}
