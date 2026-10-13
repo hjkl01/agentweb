@@ -231,7 +231,15 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         let Some(execution_id) = execution_id else {
             return StatusCode::CONFLICT;
         };
-        let adapter = s.agents.adapter(&session.agent_id).await;
+        let agent_kind: String = match sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+            .bind(&session.agent_id)
+            .fetch_optional(&s.db)
+            .await
+        {
+            Ok(value) => value.unwrap_or_else(|| session.agent_id.clone()),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let adapter = s.agents.adapter(&agent_kind).await;
         if adapter.interrupt(&id, &execution_id).await.is_err() {
             // Keep the session record if the agent process could not be stopped.
             return StatusCode::BAD_GATEWAY;
