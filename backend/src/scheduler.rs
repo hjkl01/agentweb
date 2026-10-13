@@ -1,5 +1,5 @@
 use crate::{agents::{process::run_session, AgentManager}, api::Session, events::EventBus, state::AppState};
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, Duration, SecondsFormat, Timelike, Utc};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use std::{sync::Arc, time::Duration as StdDuration};
@@ -211,7 +211,7 @@ pub fn start(state: AppState) {
             if let Err(error) = recover_expired(&state.db).await { tracing::warn!(%error, "scheduled task recovery failed"); continue; }
             if let Err(error) = materialize_due(&state.db).await { tracing::warn!(%error, "scheduled task scan failed"); continue; }
             match claim(&state.db, &state.worker_id).await {
-                Ok(Some(id)) => { execute_run(state.clone(), &id).await; }
+                Ok(Some(id)) => { let state = state.clone(); tokio::spawn(async move { execute_run(state, &id).await; }); }
                 Ok(None) => {},
                 Err(error) => tracing::warn!(%error, "scheduled task claim failed"),
             }
