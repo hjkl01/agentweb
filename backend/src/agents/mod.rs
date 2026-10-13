@@ -60,9 +60,26 @@ impl AgentManager {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        let mut first_error = None;
         for adapter in adapters {
-            adapter.interrupt(session_id).await?;
+            if let Err(error) = adapter.interrupt(session_id).await {
+                // Try every adapter even if one fails. A session can have stale
+                // processes from an earlier agent configuration, and returning
+                // early could leave those processes running without an interrupt
+                // attempt.
+                tracing::warn!(
+                    session_id = %session_id,
+                    %error,
+                    "failed to interrupt an agent adapter; continuing with remaining adapters"
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
         }
-        Ok(())
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
