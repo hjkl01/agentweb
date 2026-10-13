@@ -68,7 +68,7 @@ pub async fn send_message(
         .await
         .is_err()
     {
-        let _=sqlx::query("UPDATE sessions SET status='error',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(Utc::now().to_rfc3339()).bind(&id).bind(&s.worker_id).execute(&s.db).await;
+        let _=sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(Utc::now().to_rfc3339()).bind(&id).bind(&s.worker_id).execute(&s.db).await;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
