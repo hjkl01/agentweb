@@ -223,9 +223,12 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         }
     }
     // A send request may claim the session after the initial read/interrupt.
-    // Never delete a session that has become running in the meantime.
-    match sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
+    // Keep live leases, but allow deleting a running record whose lease expired
+    // (the owning worker's monitor will observe the missing row and interrupt).
+    let now = Utc::now().to_rfc3339();
+    match sqlx::query("DELETE FROM sessions WHERE id=? AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
         .bind(&id)
+        .bind(&now)
         .execute(&s.db)
         .await
     {
