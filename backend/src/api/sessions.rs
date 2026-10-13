@@ -196,7 +196,11 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         Err(e) => return e,
     };
     if session.status == "running" {
-        let _ = s.agents.interrupt(&id).await;
+        // Keep the session record if the agent process could not be stopped.
+        // Deleting it here would hide a potentially still-running child process.
+        if s.agents.interrupt(&id).await.is_err() {
+            return StatusCode::BAD_GATEWAY;
+        }
     }
     match sqlx::query("DELETE FROM sessions WHERE id=?")
         .bind(&id)
