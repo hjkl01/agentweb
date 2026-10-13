@@ -42,11 +42,11 @@ export function useSessionEvents(options: Options) {
         api<Session>(`/sessions/${active}`),
         api<AgentEvent[]>(`/sessions/${active}/activity`),
       ]);
-      if (disposed) return;
+      if (disposed) return session;
       let restoredMessages = messages;
       if (session.status === "running") {
-        // The backend replays the current turn. Clear only an assistant message that
-        // belongs to the latest user turn, so replayed deltas replace stale partial text.
+        // Clear only the latest assistant turn before replaying events buffered
+        // while the HTTP snapshot was loading.
         restoredMessages = [...messages];
         let lastUserIndex = -1;
         for (let index = restoredMessages.length - 1; index >= 0; index -= 1) {
@@ -74,8 +74,8 @@ export function useSessionEvents(options: Options) {
       }
       options.setFiles(files);
       options.setStream("");
-      // Completed sessions can restore persisted activity. Running sessions replay
-      // the active turn over WebSocket, so applying history here would duplicate it.
+      // Running sessions replay the active turn over WebSocket. Completed sessions
+      // restore activity history if the backend has any.
       options.setActivity(
         session.status === "running"
           ? []
@@ -86,56 +86,99 @@ export function useSessionEvents(options: Options) {
       );
       options.setActivityOpen(false);
       options.setError(undefined);
+      return session;
     };
+
     const connect = () => {
       if (disposed) return;
+      let snapshotReady = false;
+      const pendingEvents: string[] = [];
       const protocol = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(
+      const connection = new WebSocket(
         `${protocol}://${location.host}/api/sessions/${active}/events`,
       );
-      ws.onopen = () => {
+      ws = connection;
+
+      connection.onopen = () => {
         reconnectDelay = 500;
         options.setError(undefined);
-        // Reconcile session state in case the completion event was emitted before this socket connected.
-        options.refreshSessions().catch(console.error);
-      };
-      ws.onerror = () => {
-        if (!disposed) options.setError("WebSocket 连接失败，正在重试。");
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        reconnectTimer = setTimeout(async () => {
-          try {
-            await loadState(true);
-          } catch (error) {
+        // Subscribe first, then fetch the HTTP snapshot. Buffer live events while
+        // the snapshot loads so fast agents cannot finish in the subscription gap.
+        loadState(true)
+          .then((session) => {
+            if (disposed || ws !== connection) return;
+            snapshotReady = true;
+            for (const raw of pendingEvents.splice(0)) {
+              if (
+                session.agent_id === "pi" &&
+                session.status !== "running" &&
+                isTranscriptBackedMessageEvent(raw)
+              ) {
+                // pi's completed transcript is already in the snapshot. Replaying its
+                // deltas would duplicate the assistant text.
+                continue;
+              }
+              handleEvent(raw, active, options);
+            }
+            options.refreshSessions().catch(console.error);
+          })
+          .catch((error) => {
+            if (disposed || ws !== connection) return;
             options.setError(
               error instanceof Error ? error.message : String(error),
             );
-          }
-          options.refreshSessions().catch(console.error);
+            // Force a clean reconnect rather than leaving an open socket whose
+            // events are buffered forever after a failed snapshot.
+            connection.close();
+          });
+      };
+      connection.onerror = () => {
+        if (!disposed) options.setError("WebSocket 连接失败，正在重试。");
+      };
+      connection.onclose = () => {
+        if (disposed) return;
+        reconnectTimer = setTimeout(() => {
           connect();
         }, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 8000);
       };
-      ws.onmessage = (event) => handleEvent(event.data, active, options);
+      connection.onmessage = (event) => {
+        if (!snapshotReady) {
+          // Bound memory use if the HTTP snapshot stalls. Reconnecting will trigger
+          // a fresh snapshot and recover native-session-backed transcripts.
+          if (pendingEvents.length >= 2048) {
+            connection.close();
+            return;
+          }
+          pendingEvents.push(event.data);
+          return;
+        }
+        handleEvent(event.data, active, options);
+      };
     };
 
-    loadState()
-      .then(() => {
-        if (!disposed) connect();
-      })
-      .catch((error) => {
-        if (!disposed)
-          options.setError(
-            error instanceof Error ? error.message : String(error),
-          );
-      });
+    // Establish the event subscription before reading state; doing this in the
+    // opposite order can miss an entire response from a fast Agent.
+    connect();
     return () => {
       disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
   }, [active]);
+}
+
+function isTranscriptBackedMessageEvent(raw: string) {
+  try {
+    const event = JSON.parse(raw) as AgentEvent;
+    return (
+      event.type === "message.started" ||
+      event.type === "message.delta" ||
+      event.type === "message.completed"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function handleEvent(raw: string, active: string, options: Options) {
@@ -202,14 +245,24 @@ function handleEvent(raw: string, active: string, options: Options) {
     event.type === "error" ||
     event.type === "session.completed";
   if (activityEvent) {
-    if (event.type !== "session.completed" && event.type !== "message.completed" && event.type !== "agent.error" && event.type !== "error") {
+    if (
+      event.type !== "session.completed" &&
+      event.type !== "message.completed" &&
+      event.type !== "agent.error" &&
+      event.type !== "error"
+    ) {
       options.setActivityOpen(true);
     }
     options.setActivity((items) => applyAgentEvent(items, event));
   }
-  if (event.type.startsWith("file."))
+  if (event.type.startsWith("file.")) {
     options.setWorkspaceRevision((value) => value + 1);
-  if (event.type === "session.completed" || event.type === "agent.error" || event.type === "error") {
+  }
+  if (
+    event.type === "session.completed" ||
+    event.type === "agent.error" ||
+    event.type === "error"
+  ) {
     options.setActivityOpen(false);
     options.setWorkspaceRevision((value) => value + 1);
     options.refreshActiveSession(active).catch(console.error);
