@@ -221,7 +221,14 @@ async fn main() -> Result<()> {
             .unwrap_or_default();
         for row in rows {
             let id = sqlx::Row::get::<String, _>(&row, 0);
-            let agent_kind = sqlx::Row::get::<String, _>(&row, 1);
+            let agent_id = sqlx::Row::get::<String, _>(&row, 1);
+            let agent_kind: String = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+                .bind(&agent_id)
+                .fetch_optional(&shutdown_db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(agent_id);
             let execution_id = sqlx::Row::get::<String, _>(&row, 2);
             let now = Utc::now().to_rfc3339();
             let changed = sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
