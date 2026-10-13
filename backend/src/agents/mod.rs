@@ -88,10 +88,10 @@ impl AgentManager {
 #[cfg(test)]
 mod tests {
     use super::{AgentAdapter, AgentConfig, AgentManager};
-    use crate::{agents::models::AgentModel, events::EventBus};
+    use crate::{agents::{adapter::AgentRunResult, models::AgentModel}, events::EventBus};
     use anyhow::{bail, Result};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
 
     struct MockAdapter {
         interrupt_calls: Arc<AtomicUsize>,
@@ -106,7 +106,7 @@ mod tests {
             _session_id: &str,
             _message: &str,
             _events: &EventBus,
-        ) -> Result<adapter::AgentRunResult> {
+        ) -> Result<AgentRunResult> {
             bail!("send_message is not used in this test")
         }
 
