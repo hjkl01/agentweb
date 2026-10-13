@@ -44,20 +44,6 @@ async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str
         }
     }
 }
-async fn persist_stream(
-    db: sqlx::SqlitePool,
-    session_id: String,
-    message_id: String,
-    worker_id: String,
-    events: EventBus,
-) {
-    let mut rx = events.subscribe();
-    let mut pending = String::new();
-    let mut ticker = time::interval(Duration::from_millis(100));
-    loop {
-        tokio::select! { result=rx.recv()=>match result { Ok(AgentEvent::MessageDelta{session_id:id,text}) if id==session_id=>pending.push_str(&text), Ok(AgentEvent::MessageCompleted{session_id:id})|Ok(AgentEvent::SessionCompleted{session_id:id}) if id==session_id=>{if !pending.is_empty(){let _=sqlx::query("UPDATE messages SET content=content||? WHERE id=? AND EXISTS (SELECT 1 FROM sessions WHERE id=? AND status='running' AND worker_id=? AND lease_until>?)").bind(&pending).bind(&message_id).bind(&session_id).bind(&worker_id).bind(Utc::now().to_rfc3339()).execute(&db).await;}return;}, Ok(_)=>{}, Err(_)=>return}, _=ticker.tick()=>{if !pending.is_empty(){let chunk=std::mem::take(&mut pending);let changed=sqlx::query("UPDATE messages SET content=content||? WHERE id=? AND EXISTS (SELECT 1 FROM sessions WHERE id=? AND status='running' AND worker_id=? AND lease_until>?)").bind(&chunk).bind(&message_id).bind(&session_id).bind(&worker_id).bind(Utc::now().to_rfc3339()).execute(&db).await; if changed.map(|r|r.rows_affected()==0).unwrap_or(true){return;}}}}
-    }
-}
 
 fn mention_paths(message: &str) -> Vec<String> {
     let mut paths = Vec::new();
@@ -347,19 +333,6 @@ pub async fn run_session(
     config.model = session.model.clone();
     let kind = config.id.clone();
     let message = expand_mentions(&message, &session.workspace).await;
-    let assistant_id = uuid::Uuid::new_v4().to_string();
-    let created_at = Utc::now().to_rfc3339();
-    let inserted=sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=? AND status='running' AND worker_id=? AND lease_until>?)").bind(&assistant_id).bind(&session.id).bind("assistant").bind("").bind(&created_at).bind(&session.id).bind(&worker_id).bind(&created_at).execute(&db).await;
-    if inserted.map(|r| r.rows_affected() == 0).unwrap_or(true) {
-        return;
-    }
-    let persist_task = tokio::spawn(persist_stream(
-        db.clone(),
-        session.id.clone(),
-        assistant_id.clone(),
-        worker_id.clone(),
-        worker_events.clone(),
-    ));
     let adapter = agents.adapter(&kind).await;
     let monitor_adapter = adapter.clone();
     let monitor_db = db.clone();
@@ -424,23 +397,6 @@ pub async fn run_session(
             let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
             match updated {
                 Ok(update_result) if update_result.rows_affected() == 1 => {
-                    if !result.assistant_text.is_empty() {
-                        if let Err(error) = sqlx::query(
-                            "UPDATE messages SET content=? WHERE id=? AND session_id=?",
-                        )
-                        .bind(result.assistant_text)
-                        .bind(&assistant_id)
-                        .bind(&session.id)
-                        .execute(&db)
-                        .await
-                        {
-                            tracing::error!(
-                                session_id = %session.id,
-                                %error,
-                                "failed to persist final assistant message"
-                            );
-                        }
-                    }
                     // Publish completion only after the database confirms the session
                     // transitioned from running to idle. Otherwise clients may refresh
                     // and still observe a stale running state.
@@ -468,7 +424,6 @@ pub async fn run_session(
         }
         Err(error) => {
             monitor.abort();
-            persist_task.abort();
             let interrupted = error.downcast_ref::<AgentRunError>().is_some();
             finish_session(
                 &db,
@@ -477,25 +432,6 @@ pub async fn run_session(
                 if interrupted { "interrupted" } else { "error" },
             )
             .await;
-            let content: Option<String> =
-                sqlx::query_scalar("SELECT content FROM messages WHERE id=? AND session_id=?")
-                    .bind(&assistant_id)
-                    .bind(&session.id)
-                    .fetch_optional(&db)
-                    .await
-                    .unwrap_or(None);
-            if content
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default()
-                .is_empty()
-            {
-                let _ = sqlx::query("DELETE FROM messages WHERE id=? AND session_id=?")
-                    .bind(&assistant_id)
-                    .bind(&session.id)
-                    .execute(&db)
-                    .await;
-            }
             if !interrupted {
                 worker_events
                     .publish(AgentEvent::Error {
@@ -513,13 +449,10 @@ mod tests {
     use super::*;
     use sqlx::SqlitePool;
 
-    // The frontend refreshes its session list when session.completed arrives (its only trigger),
-    // so the status it reads must already be final, otherwise the UI stays "running" forever.
-    // The trigger snapshots sessions.status in the transaction that writes the event row, which is
-    // exactly what the frontend then reads. Which of the two writes SQLite serializes first is up
-    // to the write lock, so a regression is caught most of the time - never a false failure.
+    // Session lifecycle remains in the metadata table; chat transcripts and session events
+    // must not be written to SQLite.
     #[tokio::test]
-    async fn session_completed_is_published_only_after_the_status_is_finalized() {
+    async fn session_completion_updates_metadata_without_persisting_chat_content() {
         let workspace =
             std::env::temp_dir().join(format!("agentweb-race-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -536,11 +469,6 @@ mod tests {
         sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)").bind(now.to_rfc3339()).bind(now.to_rfc3339()).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO runtime_settings(key,value) VALUES('agent_paths','{\"echo\":\"/bin/echo\"}')").execute(&db).await.unwrap();
         sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,created_at,updated_at,worker_id,lease_until) VALUES('s1','echo','t',?,'running',?,?,'w1',?)").bind(workspace.to_string_lossy().into_owned()).bind(now.to_rfc3339()).bind(now.to_rfc3339()).bind(&lease).execute(&db).await.unwrap();
-        sqlx::query("CREATE TABLE status_at_publish(status TEXT)")
-            .execute(&db)
-            .await
-            .unwrap();
-        sqlx::query("CREATE TRIGGER record_status AFTER INSERT ON agent_events WHEN NEW.event_type='session.completed' BEGIN INSERT INTO status_at_publish(status) VALUES((SELECT status FROM sessions WHERE id=NEW.session_id)); END").execute(&db).await.unwrap();
         let session = Session {
             id: "s1".into(),
             agent_id: "echo".into(),
@@ -561,29 +489,23 @@ mod tests {
             "w1".into(),
         )
         .await;
-        let mut recorded = None;
-        for _ in 0..200 {
-            recorded = sqlx::query_scalar::<_, String>("SELECT status FROM status_at_publish")
-                .fetch_optional(&db)
+        let status: String = sqlx::query_scalar("SELECT status FROM sessions WHERE id='s1'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let message_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id='s1'")
+                .fetch_one(&db)
                 .await
                 .unwrap();
-            if recorded.is_some() {
-                break;
-            }
-            time::sleep(Duration::from_millis(20)).await;
-        }
-        let content: String = sqlx::query_scalar(
-            "SELECT content FROM messages WHERE session_id='s1' AND role='assistant'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
+        let persisted_event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_events WHERE session_id='s1'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert_eq!(
-            recorded.as_deref(),
-            Some("idle"),
-            "session.completed must not be published while the session still looks running"
-        );
-        assert_eq!(content.trim(), "hi");
+        assert_eq!(status, "idle", "session status should be finalized");
+        assert_eq!(message_count, 0, "chat content must not be persisted");
+        assert_eq!(persisted_event_count, 0, "session events must remain transient");
     }
 }
