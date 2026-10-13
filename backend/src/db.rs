@@ -9,6 +9,12 @@ use uuid::Uuid;
 
 pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
+    // Remove legacy chat transcripts/activity payloads from earlier versions.
+    // New conversation content is owned exclusively by each Agent's native session.
+    sqlx::query("DELETE FROM messages").execute(pool).await?;
+    sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
+        .execute(pool)
+        .await?;
     seed_builtin_agents(pool).await?;
     Ok(())
 }
