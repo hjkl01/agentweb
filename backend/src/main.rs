@@ -211,16 +211,31 @@ async fn main() -> Result<()> {
             "Shutdown signal received, stopping agents owned by worker {}",
             shutdown_worker
         );
-        let rows = sqlx::query("SELECT id FROM sessions WHERE status='running' AND worker_id=?")
-            .bind(&shutdown_worker)
+        // Execution tokens are prefixed with the process worker ID. Only stop
+        // sessions owned by this backend process; other processes may share SQLite.
+        let owner_pattern = format!("{}:%", shutdown_worker);
+        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND worker_id LIKE ?")
+            .bind(&owner_pattern)
             .fetch_all(&shutdown_db)
             .await
             .unwrap_or_default();
-        let now = Utc::now().to_rfc3339();
-        let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND worker_id=?").bind(&now).bind(&shutdown_worker).execute(&shutdown_db).await;
         for row in rows {
             let id = sqlx::Row::get::<String, _>(&row, 0);
-            let _ = shutdown_agents.interrupt(&id).await;
+            let agent_kind = sqlx::Row::get::<String, _>(&row, 1);
+            let execution_id = sqlx::Row::get::<String, _>(&row, 2);
+            let now = Utc::now().to_rfc3339();
+            let changed = sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(&now)
+                .bind(&id)
+                .bind(&execution_id)
+                .execute(&shutdown_db)
+                .await;
+            if matches!(changed, Ok(result) if result.rows_affected() == 1) {
+                let adapter = shutdown_agents.adapter(&agent_kind).await;
+                if let Err(error) = adapter.interrupt(&id, &execution_id).await {
+                    tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to stop agent during backend shutdown");
+                }
+            }
         }
     };
     axum::serve(
