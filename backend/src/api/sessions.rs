@@ -222,13 +222,18 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             return StatusCode::BAD_GATEWAY;
         }
     }
-    match sqlx::query("DELETE FROM sessions WHERE id=?")
+    // A send request may claim the session after the initial read/interrupt.
+    // Never delete a session that has become running in the meantime.
+    match sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
         .bind(&id)
         .execute(&s.db)
         .await
     {
         Ok(r) if r.rows_affected() == 1 => StatusCode::NO_CONTENT,
-        Ok(_) => StatusCode::NOT_FOUND,
+        Ok(_) => match load_session(&s.db, &id).await {
+            Ok(_) => StatusCode::CONFLICT,
+            Err(status) => status,
+        },
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
