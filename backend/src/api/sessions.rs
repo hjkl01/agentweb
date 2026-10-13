@@ -190,6 +190,30 @@ pub async fn get_session(
 ) -> Result<Json<Session>, StatusCode> {
     Ok(Json(load_session(&s.db, &id).await?))
 }
+
+pub async fn restart_missing_session(
+    Path(id): Path<String>,
+    State(s): State<AppState>,
+) -> Result<Json<Session>, StatusCode> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE sessions SET native_session_id=NULL,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='missing' AND worker_id IS NULL",
+    )
+    .bind(&now)
+    .bind(&id)
+    .execute(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() != 1 {
+        let session = load_session(&s.db, &id).await?;
+        return if session.status == "running" {
+            Err(StatusCode::CONFLICT)
+        } else {
+            Err(StatusCode::CONFLICT)
+        };
+    }
+    Ok(Json(load_session(&s.db, &id).await?))
+}
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
     let session = match load_session(&s.db, &id).await {
         Ok(v) => v,
