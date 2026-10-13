@@ -236,7 +236,13 @@ async fn execute_run(state: AppState, run_id: &str) {
         renew_run_lease(renew_db, renew_run, renew_session, renew_worker, renew_session_worker, lease_lost_tx).await;
     });
     let session_id_for_run = session.id.clone();
-    let agent_kind_for_run = session.agent_id.clone();
+    let agent_kind_for_run: String = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(&session.agent_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| session.agent_id.clone());
     let run_future = run_session(
         state.db.clone(),
         state.agents.clone(),
