@@ -21,7 +21,7 @@ const MAX_DIRECTORY_LISTING_FILES: usize = 200;
 const SESSION_LEASE_SECONDS: i64 = 30;
 
 async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) {
-    let _ = sqlx::query("UPDATE sessions SET status=?,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
+    let _ = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
 }
 async fn persist_stream(
     db: sqlx::SqlitePool,
@@ -400,7 +400,7 @@ pub async fn run_session(
                 );
             }
             let now = Utc::now().to_rfc3339();
-            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
+            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
             match updated {
                 Ok(update_result) if update_result.rows_affected() == 1 => {
                     if !result.assistant_text.is_empty() {
