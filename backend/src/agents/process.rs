@@ -113,6 +113,23 @@ impl ProcessAdapter {
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn indicates_missing_native_session(stderr: &str) -> bool {
+        let text = stderr.to_ascii_lowercase();
+        [
+            "session not found",
+            "no session found",
+            "session does not exist",
+            "session doesn't exist",
+            "unknown session",
+            "invalid session id",
+            "could not find session",
+            "cannot find session",
+            "session file not found",
+        ]
+        .iter()
+        .any(|pattern| text.contains(pattern))
+    }
     fn native_session(kind: ProcessKind, value: &Value) -> Option<String> {
         match kind {
             ProcessKind::Codex => codex_events::is_session_event(value)
@@ -369,11 +386,20 @@ impl ProcessAdapter {
         });
         let err_sid = sid.clone();
         let err_events = events.clone();
+        let stderr_capture = Arc::new(Mutex::new(String::new()));
+        let captured_stderr = stderr_capture.clone();
         let err = tokio::spawn(async move {
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Some(line) = lines.next_line().await? {
                     if !line.trim().is_empty() {
+                        {
+                            let mut captured = captured_stderr.lock().await;
+                            if captured.len() < 16 * 1024 {
+                                captured.push_str(&line);
+                                captured.push('\n');
+                            }
+                        }
                         err_events
                             .publish(AgentEvent::ToolOutput {
                                 session_id: err_sid.clone(),
@@ -515,17 +541,25 @@ impl ProcessAdapter {
                 .await;
             Ok(result)
         } else {
+            let stderr = stderr_capture.lock().await.clone();
+            let missing_session = Self::indicates_missing_native_session(&stderr);
+            let message = if missing_session {
+                "The native Agent session could not be found. It may have been deleted; start a new session to continue.".to_owned()
+            } else {
+                format!("agent exited with status {status}")
+            };
             events
                 .publish(AgentEvent::Error {
                     session_id: session_id.into(),
-                    message: format!("agent exited with status {status}"),
+                    message: message.clone(),
                 })
                 .await;
-            Err(AgentRunError::failed(
-                format!("agent exited with status {status}"),
-                result.native_session_id.clone(),
-            )
-            .into())
+            let error = if missing_session {
+                AgentRunError::missing_session(message, result.native_session_id.clone())
+            } else {
+                AgentRunError::failed(message, result.native_session_id.clone())
+            };
+            Err(error.into())
         }
     }
     #[cfg(unix)]
