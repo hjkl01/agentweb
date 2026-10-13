@@ -372,23 +372,35 @@ pub async fn run_session(
     let monitor_id = session.id.clone();
     let monitor_worker = worker_id.clone();
     let monitor = tokio::spawn(async move {
-        let mut ticker = time::interval_at(
-            time::Instant::now() + Duration::from_secs(2),
-            Duration::from_secs(2),
-        );
+        // Keep checking until send_message returns. A stop can race with process
+        // registration: interrupt() may initially find no child, so exiting the
+        // monitor after that first attempt could allow the child to start anyway.
+        let mut ticker = time::interval(Duration::from_millis(200));
+        let mut last_renewal = time::Instant::now();
         loop {
             ticker.tick().await;
             let now = Utc::now();
             let now_text = now.to_rfc3339();
-            let lease_until = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
-            let row = sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
+            let row = match sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
                 .bind(&monitor_id)
                 .fetch_optional(&monitor_db)
                 .await
-                .unwrap_or(None);
+            {
+                Ok(row) => row,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %monitor_id,
+                        worker_id = %monitor_worker,
+                        %error,
+                        "failed to check session ownership; retrying interruption check"
+                    );
+                    let _ = monitor_adapter.interrupt(&monitor_id).await;
+                    continue;
+                }
+            };
             let Some(row) = row else {
                 let _ = monitor_adapter.interrupt(&monitor_id).await;
-                return;
+                continue;
             };
             let status: String = sqlx::Row::get(&row, 0);
             let owner: Option<String> = sqlx::Row::get(&row, 1);
@@ -400,13 +412,30 @@ pub async fn run_session(
                     .map(|v| v <= now_text.as_str())
                     .unwrap_or(true)
             {
+                // Do not exit: the child may not have registered yet. Repeated
+                // attempts stop it if registration completes after this check.
                 let _ = monitor_adapter.interrupt(&monitor_id).await;
-                return;
+                continue;
             }
-            let renewed=sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&lease_until).bind(&now_text).bind(&monitor_id).bind(&monitor_worker).execute(&monitor_db).await;
-            if renewed.map(|r| r.rows_affected() != 1).unwrap_or(true) {
-                let _ = monitor_adapter.interrupt(&monitor_id).await;
-                return;
+
+            if last_renewal.elapsed() < Duration::from_secs(2) {
+                continue;
+            }
+            let lease_until = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
+            let renewed = sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(&lease_until)
+                .bind(&now_text)
+                .bind(&monitor_id)
+                .bind(&monitor_worker)
+                .execute(&monitor_db)
+                .await;
+            match renewed {
+                Ok(result) if result.rows_affected() == 1 => {
+                    last_renewal = time::Instant::now();
+                }
+                Ok(_) | Err(_) => {
+                    let _ = monitor_adapter.interrupt(&monitor_id).await;
+                }
             }
         }
     });
