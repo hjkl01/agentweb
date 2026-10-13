@@ -105,15 +105,12 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<String>, sqlx::
     let now = Utc::now();
     let now_text = stamp(now);
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
-    let mut tx = pool.begin().await?;
-    let row = sqlx::query("SELECT id FROM scheduled_task_runs WHERE status='queued' ORDER BY scheduled_at,created_at LIMIT 1")
-        .fetch_optional(&mut *tx).await?;
-    let Some(row) = row else { tx.commit().await?; return Ok(None); };
-    let id: String = row.get(0);
-    let updated = sqlx::query("UPDATE scheduled_task_runs SET status='running',lease_owner=?,lease_until=?,started_at=COALESCE(started_at,?),updated_at=? WHERE id=? AND status='queued'")
-        .bind(worker).bind(lease).bind(&now_text).bind(&now_text).bind(&id).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok((updated.rows_affected() == 1).then_some(id))
+    // One UPDATE ... RETURNING is the linearization point for concurrent workers.
+    sqlx::query_scalar::<_, String>(
+        "UPDATE scheduled_task_runs SET status='running',lease_owner=?,lease_until=?,started_at=COALESCE(started_at,?),updated_at=? WHERE id=(SELECT id FROM scheduled_task_runs WHERE status='queued' ORDER BY scheduled_at,created_at LIMIT 1) AND status='queued' RETURNING id"
+    )
+        .bind(worker).bind(lease).bind(&now_text).bind(&now_text)
+        .fetch_optional(pool).await
 }
 
 async fn renew_run_lease(pool: SqlitePool, run_id: String, worker: String) {
