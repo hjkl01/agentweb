@@ -107,7 +107,7 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     if dt <= now { return Err(StatusCode::BAD_REQUEST); }
-    Ok(Some(dt.to_rfc3339()))
+    Ok(Some(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
 }
 
 pub async fn list(State(s): State<AppState>) -> Result<Json<Vec<Value>>, StatusCode> {
