@@ -16,6 +16,18 @@ export function useSessionActions({ setSessions }: Options) {
     },
     [setSessions],
   );
+  const restartMissingSession = useCallback(
+    async (sessionId: string) => {
+      const session = await api<Session>(`/sessions/${sessionId}/restart`, {
+        method: "POST",
+      });
+      setSessions((items) =>
+        items.map((item) => (item.id === sessionId ? session : item)),
+      );
+      return session;
+    },
+    [setSessions],
+  );
   const setModel = useCallback(
     async (sessionId: string, model?: string) => {
       const session = await api<Session>(`/sessions/${sessionId}/model`, {
@@ -133,6 +145,7 @@ export function useSessionActions({ setSessions }: Options) {
   );
   return {
     createSession,
+    restartMissingSession,
     setModel,
     setAgent,
     sendMessage,
