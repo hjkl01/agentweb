@@ -292,6 +292,7 @@ mod tests {
         let url = format!("sqlite://{}?mode=rwc", path.display());
         let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(5).connect(&url).await.unwrap();
         sqlx::query("CREATE TABLE scheduled_task_runs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL, status TEXT NOT NULL, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, agent_session_id TEXT, summary TEXT, error_message TEXT, lease_owner TEXT, lease_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
         pool
     }
 
@@ -321,8 +322,6 @@ mod tests {
     #[tokio::test]
     async fn expired_run_waits_for_live_session_lease_before_requeueing() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL, lease_until TEXT)")
-            .execute(&pool).await.unwrap();
         let now = Utc::now();
         let expired = stamp(now - Duration::minutes(1));
         let live = stamp(now + Duration::minutes(1));
@@ -357,8 +356,6 @@ mod tests {
     #[tokio::test]
     async fn session_lease_is_renewed_only_by_its_owner() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)")
-            .execute(&pool).await.unwrap();
         let old = stamp(Utc::now() - Duration::seconds(1));
         sqlx::query("INSERT INTO sessions(id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-a',?,?)")
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
