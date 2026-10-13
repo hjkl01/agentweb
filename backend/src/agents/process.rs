@@ -126,6 +126,12 @@ impl ProcessAdapter {
             "could not find session",
             "cannot find session",
             "session file not found",
+            "session file does not exist",
+            "no such session",
+            "thread not found",
+            "no thread found",
+            "could not resume session",
+            "no conversation found",
         ]
         .iter()
         .any(|pattern| text.contains(pattern))
