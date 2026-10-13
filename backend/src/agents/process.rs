@@ -462,6 +462,88 @@ mod tests {
             .expect("stopping an already exited child should be harmless");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn concurrent_runs_for_one_session_do_not_spawn_duplicate_processes() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{sleep, Duration, timeout};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .expect("sessions table should be created");
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .expect("agent_events table should be created");
+        let events = EventBus::new(db);
+        let adapter = Arc::new(ProcessAdapter::new());
+        let config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let first_adapter = adapter.clone();
+        let first_config = config.clone();
+        let first_events = events.clone();
+        let first = tokio::spawn(async move {
+            first_adapter
+                .run(ProcessKind::Generic, &first_config, "same-session", "30", &first_events)
+                .await
+        });
+
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if adapter.processes.lock().await.contains_key("same-session") {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the first run should register its process");
+
+        let second = adapter
+            .run(ProcessKind::Generic, &config, "same-session", "30", &events)
+            .await;
+        assert!(
+            second.is_err(),
+            "a concurrent run for the same session must be rejected"
+        );
+        assert!(
+            second
+                .expect_err("the duplicate run should fail")
+                .to_string()
+                .contains("session already has a running agent process")
+        );
+
+        adapter
+            .interrupt_process("same-session")
+            .await
+            .expect("the first process should be interruptible");
+        let first_result = timeout(Duration::from_secs(3), first)
+            .await
+            .expect("the first run should finish after interruption")
+            .expect("the first task should not panic");
+        assert!(first_result.is_err());
+        assert!(
+            !adapter.processes.lock().await.contains_key("same-session"),
+            "the process registry should be cleaned after interruption"
+        );
+    }
+
     // The process monitor must not wait forever when a descendant inherits the
     // agent's output pipes after the direct agent process exits.
     #[cfg(target_os = "linux")]
