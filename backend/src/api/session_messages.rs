@@ -43,8 +43,9 @@ pub async fn send_message(
     let now = Utc::now();
     let now_text = now.to_rfc3339();
     let lease_until = (now + Duration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
+    let worker_id = uuid::Uuid::new_v4().to_string();
     let claimed=sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
-        .bind(&s.worker_id).bind(&lease_until).bind(&now_text).bind(&id).bind(&now_text).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .bind(&worker_id).bind(&lease_until).bind(&now_text).bind(&id).bind(&now_text).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if claimed.rows_affected() == 0 {
         load_session(&s.db, &id).await?;
         return Err(StatusCode::CONFLICT);
@@ -58,7 +59,7 @@ pub async fn send_message(
             if let Err(error) = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
-                .bind(&s.worker_id)
+                .bind(&worker_id)
                 .execute(&s.db)
                 .await
             {
@@ -86,7 +87,7 @@ pub async fn send_message(
             let _ = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
-                .bind(&s.worker_id)
+                .bind(&worker_id)
                 .execute(&s.db)
                 .await;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -99,7 +100,6 @@ pub async fn send_message(
     let events = s.events.clone();
     let db = s.db.clone();
     let agents = s.agents.clone();
-    let worker_id = s.worker_id.clone();
     let execution_session_id = session.id.clone();
     tokio::spawn(async move {
         tracing::info!(session_id = %execution_session_id, worker_id = %worker_id, "starting agent session execution");
