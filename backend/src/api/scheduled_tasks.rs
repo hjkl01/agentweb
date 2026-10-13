@@ -47,7 +47,11 @@ fn validate(v: &TaskInput) -> Result<(), StatusCode> {
         _ => return Err(StatusCode::BAD_REQUEST),
     }
     if !matches!(v.session_strategy.as_str(), "new" | "reuse") { return Err(StatusCode::BAD_REQUEST); }
-    if (v.session_strategy == "reuse") != v.reuse_session_id.as_deref().is_some_and(|s| !s.trim().is_empty()) { return Err(StatusCode::BAD_REQUEST); }
+    match v.session_strategy.as_str() {
+        "new" if v.reuse_session_id.is_some() => return Err(StatusCode::BAD_REQUEST),
+        "reuse" if !v.reuse_session_id.as_deref().is_some_and(|s| !s.trim().is_empty()) => return Err(StatusCode::BAD_REQUEST),
+        _ => {}
+    }
     Ok(())
 }
 
@@ -132,6 +136,12 @@ pub async fn create(State(s): State<AppState>, Json(v): Json<TaskInput>) -> Resu
 pub async fn update(Path(id): Path<String>, State(s): State<AppState>, Json(v): Json<TaskInput>) -> Result<Json<Value>, StatusCode> {
     validate(&v)?;
     crate::api::build_agent_config(&s.db, v.agent_id.trim()).await.map_err(|_| StatusCode::BAD_REQUEST)?;
+    if v.session_strategy == "reuse" {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=?")
+            .bind(v.reuse_session_id.as_deref().unwrap_or(""))
+            .fetch_one(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if exists == 0 { return Err(StatusCode::BAD_REQUEST); }
+    }
     let next = initial_next(&v)?;
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query("UPDATE scheduled_tasks SET name=?,prompt=?,agent_id=?,working_directory=?,model=?,schedule_type=?,schedule_config=?,timezone=?,session_strategy=?,reuse_session_id=?,enabled=?,next_run_at=?,updated_at=? WHERE id=?")
