@@ -103,7 +103,7 @@ pub async fn interrupt(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let now = Utc::now().to_rfc3339();
     let changed = sqlx::query(
-        "UPDATE sessions SET status='interrupted',updated_at=? WHERE id=? AND status='running'",
+        "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running'",
     )
     .bind(&now)
     .bind(&id)
