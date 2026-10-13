@@ -149,9 +149,12 @@ pub async fn update(Path(id): Path<String>, State(s): State<AppState>, Json(v): 
     if result.rows_affected()==0 { return Err(StatusCode::NOT_FOUND); }
     get(Path(id), State(s)).await
 }
-pub async fn delete(Path(id): Path<String>, State(s): State<AppState>) -> Result<StatusCode, StatusCode> {
-    let result=sqlx::query("DELETE FROM scheduled_tasks WHERE id=?").bind(id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
-    if result.rows_affected()==0 { return Err(StatusCode::NOT_FOUND); }
+pub async fn delete(Path(id):Path<String>,State(s):State<AppState>)->Result<StatusCode,StatusCode>{
+    let exists:i64=sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?").bind(&id).fetch_one(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if exists==0 { return Err(StatusCode::NOT_FOUND); }
+    let result=sqlx::query("DELETE FROM scheduled_tasks WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(&id).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected()==0 { return Err(StatusCode::CONFLICT); }
     Ok(StatusCode::NO_CONTENT)
 }
 async fn set_enabled(s: &AppState, id: &str, enabled: bool) -> Result<(), StatusCode> {
