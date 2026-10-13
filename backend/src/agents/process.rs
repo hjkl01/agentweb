@@ -152,9 +152,17 @@ impl ProcessAdapter {
         #[cfg(unix)]
         if let Some(pid) = process.id() {
             let group = format!("-{pid}");
+            // Ask the whole process group to exit first; killing the direct child
+            // below remains the fallback if the external signal command fails.
             let _ = Command::new("kill").args(["-TERM", &group]).status().await;
         }
-        let _ = process.kill().await;
+        if let Err(error) = process.kill().await {
+            // A process that exited after the group signal is already stopped.
+            // Only report a failure when the child is still running.
+            if process.try_wait()?.is_none() {
+                return Err(error.into());
+            }
+        }
         Ok(())
     }
     pub async fn run(
