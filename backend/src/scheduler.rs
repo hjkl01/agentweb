@@ -238,4 +238,36 @@ mod tests {
     fn invalid_cron_is_rejected() {
         assert!(next_cron(&serde_json::json!({"expression":"not cron"}), Utc::now(), "UTC").is_none());
     }
+    async fn test_pool() -> SqlitePool {
+        let path = std::env::temp_dir().join(format!("agentweb-scheduler-{}.db", Uuid::new_v4()));
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(5).connect(&url).await.unwrap();
+        sqlx::query("CREATE TABLE scheduled_task_runs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL, status TEXT NOT NULL, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, agent_session_id TEXT, summary TEXT, error_message TEXT, lease_owner TEXT, lease_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn two_workers_cannot_claim_the_same_run() {
+        let pool = test_pool().await;
+        let now = stamp(Utc::now());
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES('r1','t1','task','queued',?,?,?)")
+            .bind(&now).bind(&now).bind(&now).execute(&pool).await.unwrap();
+        let p1 = pool.clone();
+        let p2 = pool.clone();
+        let (a,b) = tokio::join!(claim(&p1,"worker-a"),claim(&p2,"worker-b"));
+        let claimed = [a.unwrap(),b.unwrap()].into_iter().flatten().count();
+        assert_eq!(claimed, 1, "only one worker may claim a queued run");
+    }
+
+    #[tokio::test]
+    async fn expired_running_lease_is_requeued_after_worker_crash() {
+        let pool = test_pool().await;
+        let old = stamp(Utc::now() - Duration::minutes(1));
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'dead-worker',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+        recover_expired(&pool).await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'").fetch_one(&pool).await.unwrap();
+        assert_eq!(status,"queued");
+    }
+
 }
