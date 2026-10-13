@@ -114,6 +114,8 @@ pub async fn interrupt(
     Path(id): Path<String>,
     State(s): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let session = load_session(&s.db, &id).await?;
+    let agent_kind = session.agent_id;
     // Capture the current execution token first. The conditional update below
     // prevents a concurrent lease takeover from being interrupted by this request.
     let execution_id: Option<String> = sqlx::query_scalar(
@@ -146,6 +148,8 @@ pub async fn interrupt(
         ));
     }
     s.agents
+        .adapter(&agent_kind)
+        .await
         .interrupt(&id, &execution_id)
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
