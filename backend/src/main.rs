@@ -21,7 +21,7 @@ use sqlx::{
 use std::{net::SocketAddr, path::Path, str::FromStr};
 use tower_http::{
     services::{ServeDir, ServeFile},
-    trace::TraceLayer,
+    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
@@ -177,7 +177,12 @@ async fn main() -> Result<()> {
         .fallback_service(
             ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
         .with_state(state.clone());
     let bind_addr = std::env::var("AGENTWEB_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

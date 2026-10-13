@@ -268,11 +268,71 @@ pub async fn workspace_diff(
         .args(["diff", "HEAD", "--no-ext-diff", "--binary"])
         .output()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-    if !output.status.success() {
-        return Err(StatusCode::BAD_GATEWAY);
-    }
-    let mut diff = String::from_utf8_lossy(&output.stdout).into_owned();
+        .map_err(|error| {
+            tracing::error!(workspace = %root.display(), %error, "failed to start git diff");
+            StatusCode::BAD_GATEWAY
+        })?;
+    let mut diff = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    } else {
+        // New workspaces may not be Git repositories, and a newly initialized
+        // repository may not have a HEAD commit yet. Neither should break the
+        // conversation's diff panel.
+        let repository = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .await
+            .map_err(|error| {
+                tracing::error!(workspace = %root.display(), %error, "failed to inspect workspace Git status");
+                StatusCode::BAD_GATEWAY
+            })?;
+        if !repository.status.success() {
+            tracing::debug!(workspace = %root.display(), "workspace is not a Git repository; returning an empty diff");
+            return Ok(Json(serde_json::json!({
+                "status": "ok",
+                "diff": "",
+                "truncated": false
+            })));
+        }
+
+        // A Git repository without a first commit has no resolvable HEAD.
+        // Show staged and unstaged changes separately as a best-effort diff.
+        let cached = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["diff", "--cached", "--no-ext-diff", "--binary"])
+            .output()
+            .await
+            .map_err(|error| {
+                tracing::error!(workspace = %root.display(), %error, "failed to read cached Git diff");
+                StatusCode::BAD_GATEWAY
+            })?;
+        let unstaged = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["diff", "--no-ext-diff", "--binary"])
+            .output()
+            .await
+            .map_err(|error| {
+                tracing::error!(workspace = %root.display(), %error, "failed to read unstaged Git diff");
+                StatusCode::BAD_GATEWAY
+            })?;
+        if !cached.status.success() || !unstaged.status.success() {
+            tracing::warn!(
+                workspace = %root.display(),
+                cached_status = %cached.status,
+                unstaged_status = %unstaged.status,
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "git diff HEAD failed and fallback diff commands also failed"
+            );
+            return Err(StatusCode::BAD_GATEWAY);
+        }
+        let mut fallback = String::from_utf8_lossy(&cached.stdout).into_owned();
+        fallback.push_str(&String::from_utf8_lossy(&unstaged.stdout));
+        fallback
+    };
     let mut truncated = false;
     if diff.len() > MAX_DIFF_TOTAL_BYTES {
         let cut = diff[..MAX_DIFF_TOTAL_BYTES]
