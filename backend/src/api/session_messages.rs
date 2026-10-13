@@ -43,6 +43,7 @@ pub async fn send_message(
         return Err(StatusCode::CONFLICT);
     }
     let session = load_session(&s.db, &id).await?;
+    tracing::info!(session_id = %id, agent_id = %session.agent_id, worker_id = %s.worker_id, message_bytes = v.message.len(), "accepted chat message");
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
         let title = format!("Chat {}", now.format("%Y-%m-%d %H:%M"));
         if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
@@ -70,9 +71,12 @@ pub async fn send_message(
     let db = s.db.clone();
     let agents = s.agents.clone();
     let worker_id = s.worker_id.clone();
+    let execution_session_id = session.id.clone();
     tokio::spawn(async move {
+        tracing::info!(session_id = %execution_session_id, worker_id = %worker_id, "starting agent session execution");
         crate::agents::process::run_session(db, agents, session, v.message, events, worker_id)
             .await;
+        tracing::info!(session_id = %execution_session_id, "agent session execution task returned");
     });
     Ok(Json(serde_json::json!({"status":"started", "title":title})))
 }
