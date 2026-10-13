@@ -221,7 +221,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     if !matches!(linked, Ok(ref result) if result.rows_affected() == 1) {
         let release_time = stamp(Utc::now());
         let _ = sqlx::query("UPDATE sessions SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
-            .bind(&release_time).bind(&session.id).bind(&state.worker_id).execute(&state.db).await;
+            .bind(&release_time).bind(&session.id).bind(&session_worker_id).execute(&state.db).await;
         tracing::warn!(%run_id, session_id = %session.id, "run ownership changed during setup; released session without starting Agent");
         return;
     }
@@ -240,7 +240,7 @@ async fn execute_run(state: AppState, run_id: &str) {
         session,
         prompt,
         state.events.clone(),
-        state.worker_id.clone(),
+        session_worker_id.clone(),
     );
     tokio::pin!(run_future);
     tokio::select! {
