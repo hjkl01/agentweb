@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
         }
     });
     let state = state::AppState::new(pool);
-    scheduler::start(state.clone());
+    state.start_scheduler();
     let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| {
         // `make build` copies index.html straight into ./frontend, vite's dev output lives in ./frontend/dist
         if Path::new("./frontend/index.html").is_file() {
