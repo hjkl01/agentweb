@@ -156,10 +156,19 @@ async fn renew_run_lease(
 }
 
 async fn execute_run(state: AppState, run_id: &str) {
-    let row = match sqlx::query("SELECT r.task_id,t.prompt,t.agent_id,t.working_directory,t.model,t.session_strategy,t.reuse_session_id FROM scheduled_task_runs r JOIN scheduled_tasks t ON t.id=r.task_id WHERE r.id=?")
-        .bind(run_id).fetch_optional(&state.db).await {
+    // Revalidate ownership before doing any setup work. A worker may have been
+    // delayed after claim while another worker recovered and reclaimed this run.
+    let row = match sqlx::query("SELECT r.task_id,t.prompt,t.agent_id,t.working_directory,t.model,t.session_strategy,t.reuse_session_id FROM scheduled_task_runs r JOIN scheduled_tasks t ON t.id=r.task_id WHERE r.id=? AND r.status='running' AND r.lease_owner=?")
+        .bind(run_id).bind(&state.worker_id).fetch_optional(&state.db).await {
         Ok(Some(row)) => row,
-        _ => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("任务或任务配置不存在")).await; return; }
+        // No row means this worker no longer owns the run (or it was removed).
+        // Never mutate the run here: it may already belong to another worker.
+        Ok(None) => return,
+        Err(error) => {
+            tracing::error!(%run_id, %error, "failed to load task for claimed run");
+            finish_run(&state.db, run_id, &state.worker_id, "failed", Some("读取任务配置失败")).await;
+            return;
+        }
     };
     let task_id: String = row.get(0);
     let prompt: String = row.get(1);
