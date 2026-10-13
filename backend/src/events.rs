@@ -398,6 +398,25 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
+    fn transient_events_round_trip_through_relay_json() {
+        let event = AgentEvent::ToolOutput {
+            session_id: "session-1".into(),
+            tool: "terminal".into(),
+            output: "line one\\nline two".into(),
+        };
+        let payload = serde_json::to_string(&event).unwrap();
+        let decoded: AgentEvent = serde_json::from_str(&payload).unwrap();
+        match decoded {
+            AgentEvent::ToolOutput { session_id, tool, output } => {
+                assert_eq!(session_id, "session-1");
+                assert_eq!(tool, "terminal");
+                assert_eq!(output, "line one\\nline two");
+            }
+            _ => panic!("relay payload decoded to the wrong event type"),
+        }
+    }
+
+    #[test]
     fn retries_only_sqlite_busy_and_locked_codes() {
         for code in ["5", "6", "261", "262"] {
             assert!(
