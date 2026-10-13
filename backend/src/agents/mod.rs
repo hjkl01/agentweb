@@ -45,6 +45,9 @@ impl AgentManager {
         }
         let adapter: Arc<dyn AgentAdapter> = match kind {
             "codex" => Arc::new(CodexAdapter::new()),
+            "claude-code" | "claude" => Arc::new(GenericAdapter::with_kind(ProcessKind::Claude)),
+            "gemini-cli" | "gemini" => Arc::new(GenericAdapter::with_kind(ProcessKind::Gemini)),
+            "qwen-code" | "qwen" => Arc::new(GenericAdapter::with_kind(ProcessKind::Qwen)),
             "opencode" => Arc::new(OpenCodeAdapter::new()),
             "pi" => Arc::new(PiAdapter::new()),
             _ => Arc::new(GenericAdapter::new()),
