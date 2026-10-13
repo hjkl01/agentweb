@@ -179,8 +179,8 @@ pub async fn run_now(Path(id):Path<String>,State(s):State<AppState>)->Result<Jso
     let now=Utc::now().to_rfc3339();
     let run_id=Uuid::new_v4().to_string();
     // A single conditional INSERT avoids a check-then-insert race between callers.
-    let inserted=sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) SELECT ?,?,?, 'queued',?,?,? WHERE NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
-        .bind(&run_id).bind(&id).bind(name).bind(&now).bind(&now).bind(&now).bind(&id)
+    let inserted=sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) SELECT ?,?,?, 'queued',?,?,? WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE id=?) AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(&run_id).bind(&id).bind(name).bind(&now).bind(&now).bind(&now).bind(&id).bind(&id)
         .execute(&s.db).await.map_err(|e| { tracing::error!(%e, task_id=%id, "queue manual run failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     if inserted.rows_affected()!=1 { return Err(StatusCode::CONFLICT); }
     Ok(Json(json!({"run_id":run_id,"status":"queued"})))
