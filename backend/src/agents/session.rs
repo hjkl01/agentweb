@@ -414,14 +414,26 @@ pub async fn run_session(
         }
         Err(error) => {
             monitor.abort();
-            let interrupted = error.downcast_ref::<AgentRunError>().is_some();
-            finish_session(
-                &db,
-                &session.id,
-                &worker_id,
-                if interrupted { "interrupted" } else { "error" },
-            )
-            .await;
+            let run_error = error.downcast_ref::<AgentRunError>();
+            let interrupted = run_error.is_some_and(|run_error| run_error.interrupted);
+            let native_session_id =
+                run_error.and_then(|run_error| run_error.native_session_id.as_deref());
+            let now = Utc::now().to_rfc3339();
+            let updated = sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(native_session_id)
+                .bind(if interrupted { "interrupted" } else { "error" })
+                .bind(&now)
+                .bind(&session.id)
+                .bind(&worker_id)
+                .execute(&db)
+                .await;
+            if let Err(update_error) = updated {
+                tracing::error!(
+                    session_id = %session.id,
+                    %update_error,
+                    "failed to save native session ID while finalizing failed agent run"
+                );
+            }
             if !interrupted {
                 worker_events
                     .publish(AgentEvent::Error {
