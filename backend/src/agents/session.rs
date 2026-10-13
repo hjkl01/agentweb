@@ -389,7 +389,16 @@ pub async fn run_session(
     {
         Ok(result) => {
             monitor.abort();
-            persist_task.abort();
+            // Process adapters publish MessageCompleted immediately before returning.
+            // Let the persistence task consume that event and flush its pending delta
+            // before the session leaves the running state; aborting here can race it.
+            if let Err(error) = persist_task.await {
+                tracing::warn!(
+                    session_id = %session.id,
+                    %error,
+                    "assistant stream persistence task ended before completion"
+                );
+            }
             let now = Utc::now().to_rfc3339();
             let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
             match updated {
