@@ -57,35 +57,19 @@ impl AgentManager {
         adapter
     }
 
-    pub async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
-        let adapters = self
-            .adapters
-            .lock()
+    pub async fn interrupt(
+        &self,
+        kind: &str,
+        session_id: &str,
+        execution_id: &str,
+    ) -> Result<()> {
+        // An execution token belongs to one adapter only. Broadcasting a
+        // pre-start cancellation marker to every adapter would leak markers and
+        // could affect unrelated future runs.
+        self.adapter(kind)
             .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut first_error = None;
-        for adapter in adapters {
-            if let Err(error) = adapter.interrupt(session_id, execution_id).await {
-                // Try every adapter even if one fails. A session can have stale
-                // processes from an earlier agent configuration, and returning
-                // early could leave those processes running without an interrupt
-                // attempt.
-                tracing::warn!(
-                    session_id = %session_id,
-                    %error,
-                    "failed to interrupt an agent adapter; continuing with remaining adapters"
-                );
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-            }
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+            .interrupt(session_id, execution_id)
+            .await
     }
 }
 
@@ -130,7 +114,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupt_attempts_all_adapters_when_one_fails() {
+    async fn interrupt_targets_only_the_selected_adapter() {
         let manager = AgentManager::new();
         let failed_calls = Arc::new(AtomicUsize::new(0));
         let successful_calls = Arc::new(AtomicUsize::new(0));
@@ -153,11 +137,11 @@ mod tests {
             );
         }
 
-        let result = manager.interrupt("test-session", "test-execution").await;
+        let result = manager.interrupt("failing", "test-session", "test-execution").await;
 
         assert!(result.is_err(), "the first adapter error must be returned");
         assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(successful_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(successful_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -172,7 +156,7 @@ mod tests {
             }),
         );
 
-        assert!(manager.interrupt("test-session", "test-execution").await.is_ok());
+        assert!(manager.interrupt("successful", "test-session", "test-execution").await.is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
