@@ -603,4 +603,47 @@ mod tests {
         assert_eq!(message_count, 0, "chat content must not be persisted");
         assert_eq!(persisted_event_count, 0, "session events must remain transient");
     }
+
+    #[tokio::test]
+    async fn stale_worker_cannot_finalize_session_owned_by_new_worker() {
+        let workspace =
+            std::env::temp_dir().join(format!("agentweb-stale-worker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let db = SqlitePool::connect(&format!(
+            "sqlite://{}/test.db?mode=rwc",
+            workspace.display()
+        ))
+        .await
+        .unwrap();
+        sqlx::migrate!().run(&db).await.unwrap();
+        let now = Utc::now();
+        let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
+        sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)")
+            .bind(now.to_rfc3339())
+            .bind(now.to_rfc3339())
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,created_at,updated_at,worker_id,lease_until) VALUES('s1','echo','t',?,'running',?,?,'worker-new',?)")
+            .bind(workspace.to_string_lossy().into_owned())
+            .bind(now.to_rfc3339())
+            .bind(now.to_rfc3339())
+            .bind(&lease)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let finalized = finish_session(&db, "s1", "worker-old", "idle").await;
+        let (status, owner): (String, Option<String>) =
+            sqlx::query_as("SELECT status,worker_id FROM sessions WHERE id='s1'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+
+        db.close().await;
+        std::fs::remove_dir_all(&workspace).unwrap();
+        assert!(!finalized, "a stale worker must not finalize a newer worker's session");
+        assert_eq!(status, "running");
+        assert_eq!(owner.as_deref(), Some("worker-new"));
+    }
 }
