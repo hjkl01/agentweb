@@ -529,6 +529,89 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn aborting_run_cleans_up_process_group_and_session_registry() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{sleep, timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .expect("sessions table should be created");
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .expect("agent_events table should be created");
+        let events = EventBus::new(db);
+        let adapter = Arc::new(ProcessAdapter::new());
+        let config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let run_adapter = adapter.clone();
+        let run = tokio::spawn(async move {
+            run_adapter
+                .run(ProcessKind::Generic, &config, "cancelled-run", "30", &events)
+                .await
+        });
+
+        let pid = timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(child) = adapter.processes.lock().await.get("cancelled-run").cloned() {
+                    if let Some(pid) = child.lock().await.id() {
+                        break pid;
+                    }
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the process should register before cancellation");
+
+        run.abort();
+        timeout(Duration::from_secs(2), async {
+            while !run.is_finished() {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the aborted run should finish promptly");
+
+        assert!(
+            !adapter.processes.lock().await.contains_key("cancelled-run"),
+            "aborting the run must clear its process registry entry"
+        );
+        assert!(
+            !adapter.interrupted.lock().await.contains("cancelled-run"),
+            "aborting the run must not leave an interruption marker"
+        );
+
+        let group = format!("-{pid}");
+        let probe = Command::new("kill")
+            .args(["-0", &group])
+            .status()
+            .await
+            .expect("kill should be available on Unix");
+        assert!(
+            !probe.success(),
+            "the process group should no longer exist after task cancellation"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn concurrent_runs_for_one_session_do_not_spawn_duplicate_processes() {
         use super::super::adapter::AgentConfig;
         use super::super::commands::ProcessKind;
