@@ -172,9 +172,16 @@ pub async fn disable(Path(id):Path<String>,State(s):State<AppState>)->Result<Jso
 
 pub async fn run_now(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Value>,StatusCode>{
     let row=sqlx::query("SELECT name FROM scheduled_tasks WHERE id=?").bind(&id).fetch_optional(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    let name:String=row.get(0); let now=Utc::now().to_rfc3339(); let run_id=Uuid::new_v4().to_string();
+    let name:String=row.get(0);
+    let now=Utc::now().to_rfc3339();
+    let run_id=Uuid::new_v4().to_string();
+    let mut tx=s.db.begin().await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let active:i64=sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running')")
+        .bind(&id).fetch_one(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if active>0 { return Err(StatusCode::CONFLICT); }
     sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?)")
-        .bind(&run_id).bind(id).bind(name).bind(&now).bind(&now).bind(&now).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+        .bind(&run_id).bind(&id).bind(name).bind(&now).bind(&now).bind(&now).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit().await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(json!({"run_id":run_id,"status":"queued"})))
 }
 #[derive(Deserialize)] pub struct HistoryQuery { pub limit: Option<i64>, pub offset: Option<i64> }
