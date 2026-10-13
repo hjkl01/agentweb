@@ -118,6 +118,17 @@ impl ProcessAdapter {
             ProcessKind::Codex => codex_events::is_session_event(value)
                 .then(|| codex_events::native_session_id(value))
                 .flatten(),
+            ProcessKind::Claude | ProcessKind::Gemini | ProcessKind::Qwen => {
+                let (raw_type, native_id, _, _) = event_parser::parsed(value);
+                let typ = raw_type.to_ascii_lowercase();
+                if native_id.is_some()
+                    && (typ.contains("init") || typ.contains("session") || typ == "system")
+                {
+                    native_id
+                } else {
+                    None
+                }
+            }
             ProcessKind::Pi => {
                 let typ = value
                     .get("type")
