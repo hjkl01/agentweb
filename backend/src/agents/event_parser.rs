@@ -39,11 +39,26 @@ pub fn parsed(value: &Value) -> (String, Option<String>, Option<String>, Option<
         .or_else(|| {
             nested_string(
                 value,
-                &["item", "part", "message", "content"],
+                &["event", "delta", "item", "part", "message", "content"],
                 &["delta", "text", "output", "content"],
             )
         })
-        .or_else(|| nested_string(value, &["assistantMessageEvent"], &["delta", "content"]));
+        .or_else(|| nested_string(value, &["assistantMessageEvent"], &["delta", "content"]))
+        .or_else(|| {
+            value.get("content").and_then(Value::as_array).map(|parts| {
+                parts.iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<String>()
+            }).filter(|text| !text.is_empty())
+        })
+        .or_else(|| {
+            value.get("message").and_then(|message| message.get("content"))
+                .and_then(Value::as_array).map(|parts| {
+                    parts.iter()
+                        .filter_map(|part| part.get("text").and_then(Value::as_str))
+                        .collect::<String>()
+                }).filter(|text| !text.is_empty())
+        });
     let name = string(value, &["tool", "tool_name", "toolName", "name", "command"]).or_else(|| {
         nested_string(
             value,
