@@ -628,6 +628,33 @@ mod tests {
             !adapter.interrupted.lock().await.contains("exit-race"),
             "the interruption marker must not leak into the next run"
         );
+
+        // Reusing the same session immediately must not consume a stale interrupt
+        // marker left by the previous process lifecycle.
+        let next_config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+        let next_result = timeout(
+            Duration::from_secs(3),
+            adapter.run(
+                ProcessKind::Generic,
+                &next_config,
+                "exit-race",
+                "0.1",
+                &events,
+            ),
+        )
+        .await
+        .expect("the next run should finish promptly");
+        assert!(
+            next_result.is_ok(),
+            "a subsequent run should not inherit the previous run's interruption"
+        );
     }
 
     // The process monitor must not wait forever when a descendant inherits the
