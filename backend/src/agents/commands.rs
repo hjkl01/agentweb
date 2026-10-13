@@ -5,6 +5,9 @@ use tokio::process::Command;
 #[derive(Clone, Copy)]
 pub enum ProcessKind {
     Codex,
+    Claude,
+    Gemini,
+    Qwen,
     OpenCode,
     Pi,
     Generic,
@@ -34,6 +37,36 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 args.extend(["--model".into(), model.clone()]);
             }
             args.push(message.into());
+        }
+        ProcessKind::Claude => {
+            args = vec!["--print".into(), "--output-format".into(), "stream-json".into(), "--verbose".into()];
+            if let Some(id) = &config.native_session_id {
+                args.extend(["--resume".into(), id.clone()]);
+            }
+            if let Some(model) = &config.model {
+                args.extend(["--model".into(), model.clone()]);
+            }
+            args.extend(["-p".into(), message.into()]);
+        }
+        ProcessKind::Gemini => {
+            args = vec!["--output-format".into(), "stream-json".into()];
+            if let Some(id) = &config.native_session_id {
+                args.extend(["--resume".into(), id.clone()]);
+            }
+            if let Some(model) = &config.model {
+                args.extend(["--model".into(), model.clone()]);
+            }
+            args.extend(["--prompt".into(), message.into()]);
+        }
+        ProcessKind::Qwen => {
+            args = vec!["--output-format".into(), "stream-json".into()];
+            if let Some(id) = &config.native_session_id {
+                args.extend(["--resume".into(), id.clone()]);
+            }
+            if let Some(model) = &config.model {
+                args.extend(["--model".into(), model.clone()]);
+            }
+            args.extend(["-p".into(), message.into()]);
         }
         ProcessKind::Pi => {
             args.extend(["--mode".into(), "json".into()]);
