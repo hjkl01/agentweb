@@ -531,12 +531,10 @@ impl ProcessAdapter {
             return Err(AgentRunError::interrupted(result.native_session_id.clone()).into());
         }
         if let Err(error) = output_result {
-            events
-                .publish(AgentEvent::Error {
-                    session_id: session_id.into(),
-                    message: error.to_string(),
-                })
-                .await;
+            // The session lifecycle layer publishes the user-facing error after
+            // it has finalized the session state. Publishing here as well caused
+            // duplicate errors and could surface a stale failure after ownership
+            // of the session had moved to another worker.
             return Err(AgentRunError::failed(
                 error.to_string(),
                 result.native_session_id.clone(),
@@ -558,12 +556,8 @@ impl ProcessAdapter {
             } else {
                 format!("agent exited with status {status}")
             };
-            events
-                .publish(AgentEvent::Error {
-                    session_id: session_id.into(),
-                    message: message.clone(),
-                })
-                .await;
+            // run_session publishes the error after persisting the final
+            // status, so this layer must not emit a duplicate or stale error.
             let error = if missing_session {
                 AgentRunError::missing_session(message, result.native_session_id.clone())
             } else {
