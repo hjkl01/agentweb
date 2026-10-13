@@ -84,7 +84,7 @@ export function useSessionEvents(options: Options) {
               [],
             ),
       );
-      options.setActivityOpen(false);
+      options.setActivityOpen(session.status === "running");
       options.setError(undefined);
       return session;
     };
@@ -231,8 +231,9 @@ function handleEvent(raw: string, active: string, options: Options) {
     });
   }
   if (event.type === "message.completed") {
+    // A message can complete just before the session status changes to idle.
+    // Keep activity expanded until the authoritative session-completed/error event.
     options.setStream("");
-    options.setActivityOpen(false);
   }
   const activityEvent =
     event.type.startsWith("thinking.") ||
