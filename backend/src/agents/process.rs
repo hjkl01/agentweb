@@ -332,8 +332,15 @@ impl ProcessAdapter {
                 ))
             }
         };
-        self.processes.lock().await.remove(session_id);
-        let was_interrupted = self.interrupted.lock().await.remove(session_id);
+        // Remove the process entry and its interruption marker atomically with
+        // respect to new runs. Otherwise a new run can register between these
+        // operations and consume the previous run's stale interruption marker.
+        let was_interrupted = {
+            let mut processes = self.processes.lock().await;
+            let mut interrupted = self.interrupted.lock().await;
+            processes.remove(session_id);
+            interrupted.remove(session_id)
+        };
         let result = result.lock().await.clone();
         if was_interrupted {
             events
