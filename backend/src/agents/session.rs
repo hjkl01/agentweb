@@ -394,7 +394,6 @@ pub async fn run_session(
                         %error,
                         "failed to check session ownership; retrying interruption check"
                     );
-                    let _ = monitor_adapter.interrupt(&monitor_id).await;
                     continue;
                 }
             };
@@ -433,8 +432,16 @@ pub async fn run_session(
                 Ok(result) if result.rows_affected() == 1 => {
                     last_renewal = time::Instant::now();
                 }
-                Ok(_) | Err(_) => {
+                Ok(_) => {
                     let _ = monitor_adapter.interrupt(&monitor_id).await;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %monitor_id,
+                        worker_id = %monitor_worker,
+                        %error,
+                        "failed to renew session lease; will retry"
+                    );
                 }
             }
         }
