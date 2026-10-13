@@ -355,7 +355,7 @@ impl ProcessAdapter {
         // contains_key check and spawn duplicate agent processes.
         let mut processes = self.processes.lock().await;
         if processes.contains_key(execution_id) {
-            return Err(anyhow!("execution already has a running agent process"));
+            return Err(anyhow!("session already has a running agent process"));
         }
         let command = commands::build(kind, config, message)?;
         let mut command = Self::wrap_process_group(command);
@@ -613,9 +613,10 @@ impl ProcessAdapter {
         let child = {
             let processes = self.processes.lock().await;
             let child = processes.get(execution_id).cloned();
-            if child.is_some() {
-                self.interrupted.lock().await.insert(execution_id.to_owned());
-            }
+            // Record cancellation even before spawn registration. run_for_execution
+            // checks this marker immediately after registering the child, closing
+            // the stop-vs-start race for this specific execution token.
+            self.interrupted.lock().await.insert(execution_id.to_owned());
             child
         };
         if let Some(child) = child {
