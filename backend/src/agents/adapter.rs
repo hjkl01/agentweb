@@ -6,16 +6,34 @@ use std::{error::Error, fmt};
 
 use super::models::AgentModel;
 
-#[derive(Debug, Clone, Copy)]
-pub enum AgentRunError {
-    Interrupted,
+#[derive(Debug, Clone)]
+pub struct AgentRunError {
+    pub interrupted: bool,
+    pub native_session_id: Option<String>,
+    message: String,
+}
+
+impl AgentRunError {
+    pub fn interrupted(native_session_id: Option<String>) -> Self {
+        Self {
+            interrupted: true,
+            native_session_id,
+            message: "agent process interrupted".into(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>, native_session_id: Option<String>) -> Self {
+        Self {
+            interrupted: false,
+            native_session_id,
+            message: message.into(),
+        }
+    }
 }
 
 impl fmt::Display for AgentRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interrupted => f.write_str("agent process interrupted"),
-        }
+        f.write_str(&self.message)
     }
 }
 
