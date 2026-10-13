@@ -23,6 +23,6 @@ pub use session_websocket::ws_events;
 pub(crate) use sessions::load_session;
 pub use sessions::{
     create_session, delete_session, get_session, list_sessions, rename_session, set_session_agent,
-    set_session_model, toggle_pin, Session,
+    set_session_model, toggle_pin, restart_missing_session, Session,
 };
 pub use workspace::{workspace_diff, workspace_file, workspace_files};
