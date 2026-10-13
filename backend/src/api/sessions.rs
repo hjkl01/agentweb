@@ -205,12 +205,8 @@ pub async fn restart_missing_session(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() != 1 {
-        let session = load_session(&s.db, &id).await?;
-        return if session.status == "running" {
-            Err(StatusCode::CONFLICT)
-        } else {
-            Err(StatusCode::CONFLICT)
-        };
+        load_session(&s.db, &id).await?;
+        return Err(StatusCode::CONFLICT);
     }
     Ok(Json(load_session(&s.db, &id).await?))
 }
