@@ -137,6 +137,16 @@ pub async fn interrupt(
         ));
     };
 
+    // Stop the exact process first. Do not clear the database lease before
+    // interruption succeeds, otherwise a failed stop can leave a live process
+    // whose owner can no longer renew or finalize the session.
+    s.agents
+        .adapter(&agent_kind)
+        .await
+        .interrupt(&id, &execution_id)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
     let now = Utc::now().to_rfc3339();
     let changed = sqlx::query(
         "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?",
@@ -152,11 +162,5 @@ pub async fn interrupt(
             serde_json::json!({"status":load_session(&s.db,&id).await?.status}),
         ));
     }
-    s.agents
-        .adapter(&agent_kind)
-        .await
-        .interrupt(&id, &execution_id)
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(serde_json::json!({"status":"interrupted"})))
 }
