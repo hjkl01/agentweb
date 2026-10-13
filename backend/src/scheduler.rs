@@ -236,6 +236,7 @@ async fn execute_run(state: AppState, run_id: &str) {
         renew_run_lease(renew_db, renew_run, renew_session, renew_worker, renew_session_worker, lease_lost_tx).await;
     });
     let session_id_for_run = session.id.clone();
+    let agent_kind_for_run = session.agent_id.clone();
     let run_future = run_session(
         state.db.clone(),
         state.agents.clone(),
@@ -249,7 +250,7 @@ async fn execute_run(state: AppState, run_id: &str) {
         _ = &mut run_future => {}
         _ = &mut lease_lost_rx => {
             tracing::error!(%run_id, session_id = %session_id_for_run, "interrupting scheduled Agent because its lease was lost");
-            if let Err(error) = state.agents.interrupt(&session_id_for_run, &session_worker_id).await {
+            if let Err(error) = state.agents.adapter(&agent_kind_for_run).await.interrupt(&session_id_for_run, &session_worker_id).await {
                 tracing::error!(%run_id, session_id = %session_id_for_run, %error, "failed to interrupt scheduled Agent after lease loss");
             }
             // Allow run_session to observe the interruption and perform its normal
