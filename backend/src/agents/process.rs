@@ -232,6 +232,13 @@ impl ProcessAdapter {
                     .await;
             }
         }
+        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+        if matches!(kind, ProcessKind::Claude | ProcessKind::Qwen)
+            && event_type == "assistant"
+            && !result.lock().await.assistant_text.is_empty()
+        {
+            return;
+        }
         if let Some(text) = Self::provider_text(kind, session_id, &value, events).await {
             result.lock().await.assistant_text.push_str(&text);
             events
