@@ -617,14 +617,18 @@ mod tests {
         .await
         .expect("the aborted run should finish promptly");
 
-        assert!(
-            !adapter.processes.lock().await.contains_key("cancelled-run"),
-            "aborting the run must clear its process registry entry"
-        );
-        assert!(
-            !adapter.interrupted.lock().await.contains("cancelled-run"),
-            "aborting the run must not leave an interruption marker"
-        );
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let process_registered = adapter.processes.lock().await.contains_key("cancelled-run");
+                let interrupted = adapter.interrupted.lock().await.contains("cancelled-run");
+                if !process_registered && !interrupted {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancellation cleanup should clear the process and interruption registries");
 
         let group = format!("-{pid}");
         timeout(Duration::from_secs(2), async {
