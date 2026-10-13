@@ -280,15 +280,53 @@ impl ProcessAdapter {
         {
             Ok(result) => result,
             Err(_) => {
+                let mut cleanup_error = None;
                 #[cfg(unix)]
                 if let Some(pid) = process_id {
                     let group = format!("-{pid}");
-                    let _ = Command::new("kill").args(["-KILL", &group]).status().await;
+                    match Command::new("kill").args(["-KILL", &group]).status().await {
+                        Ok(status) if status.success() => {}
+                        Ok(status) => {
+                            cleanup_error = Some(format!(
+                                "process-group kill exited with status {status}"
+                            ));
+                        }
+                        Err(error) => {
+                            cleanup_error = Some(format!(
+                                "failed to execute process-group kill: {error}"
+                            ));
+                        }
+                    }
+                    if cleanup_error.is_some() {
+                        if let Err(error) = Self::stop_child(&child).await {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                %error,
+                                "failed to stop direct child after process-group cleanup failed"
+                            );
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    cleanup_error = Some(
+                        "process-group cleanup is unavailable on this platform".to_owned(),
+                    );
+                }
+                if let Some(error) = cleanup_error.as_deref() {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        %error,
+                        "failed to clean up descendants after agent output stream timeout"
+                    );
                 }
                 out_abort.abort();
                 err_abort.abort();
                 Err(anyhow!(
-                    "agent output streams did not close within 5 seconds after process exit"
+                    "agent output streams did not close within 5 seconds after process exit{}",
+                    cleanup_error
+                        .map(|error| format!("; descendant cleanup warning: {error}"))
+                        .unwrap_or_default()
                 ))
             }
         };
