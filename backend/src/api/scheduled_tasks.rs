@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use axum::{extract::{Path, Query, State}, http::StatusCode, Json};
 use chrono::{Datelike, Timelike, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
@@ -159,7 +159,7 @@ async fn set_enabled(s: &AppState, id: &str, enabled: bool) -> Result<(), Status
     let row=sqlx::query("SELECT schedule_type,schedule_config,timezone FROM scheduled_tasks WHERE id=?").bind(id).fetch_optional(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let kind:String=row.get(0); let config:String=row.get(1); let timezone:String=row.get(2);
     let config:Value=serde_json::from_str(&config).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
-    let next=if enabled { if kind=="once" { let at=config.get("at").and_then(Value::as_str).unwrap_or(""); if chrono::DateTime::parse_from_rfc3339(at).map(|d|d.with_timezone(&Utc)>Utc::now()).unwrap_or(false) {Some(at.to_owned())} else {None} } else {
+    let next=if enabled { if kind=="once" { let at=config.get("at").and_then(Value::as_str).unwrap_or(""); if let Ok(parsed)=chrono::DateTime::parse_from_rfc3339(at) { let parsed=parsed.with_timezone(&Utc); if parsed>Utc::now() {Some(parsed.to_rfc3339_opts(chrono::SecondsFormat::Millis,true))} else {Some(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis,true))} } else {None} } else {
         // Enabling recurring tasks schedules from now, avoiding a burst of historical runs.
         if kind=="interval" { Some((Utc::now()+chrono::Duration::seconds(config.get("seconds").and_then(Value::as_i64).unwrap_or(60))).to_rfc3339()) }
         else { initial_next(&TaskInput{name:"x".into(),prompt:"x".into(),agent_id:"x".into(),working_directory:".".into(),model:None,schedule_type:kind.clone(),schedule_config:config,timezone,session_strategy:"new".into(),reuse_session_id:None,enabled:true})? }
