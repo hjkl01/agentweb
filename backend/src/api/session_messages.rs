@@ -7,8 +7,6 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::Deserialize;
-use sqlx::Row;
-use uuid::Uuid;
 
 const SESSION_LEASE_SECONDS: i64 = 30;
 
@@ -16,10 +14,9 @@ pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    // Conversation content belongs to the Agent's native session, not SQLite.
     load_session(&s.db, &id).await?;
-    let rows = sqlx::query("SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at, rowid")
-        .bind(&id).fetch_all(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(rows.into_iter().map(|r| serde_json::json!({"id":r.get::<String,_>(0),"role":r.get::<String,_>(1),"content":r.get::<String,_>(2),"created_at":r.get::<String,_>(3)})).collect()))
+    Ok(Json(Vec::new()))
 }
 
 #[derive(Deserialize)]
@@ -58,20 +55,6 @@ pub async fn send_message(
         return Err(StatusCode::CONFLICT);
     }
     let session = load_session(&s.db, &id).await?;
-    if sqlx::query("INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,?,?,?)")
-        .bind(Uuid::new_v4().to_string())
-        .bind(&id)
-        .bind("user")
-        .bind(&v.message)
-        .bind(&now_text)
-        .execute(&s.db)
-        .await
-        .is_err()
-    {
-        let _=sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(Utc::now().to_rfc3339()).bind(&id).bind(&s.worker_id).execute(&s.db).await;
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
         let title = build_title(&v.message);
         if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
