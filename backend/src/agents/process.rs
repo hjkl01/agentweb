@@ -30,6 +30,7 @@ pub struct ProcessAdapter {
 // leaving a stale session entry behind.
 struct ProcessRunGuard {
     session_id: String,
+    execution_id: String,
     process_id: Option<u32>,
     child: Arc<Mutex<Child>>,
     processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
@@ -40,12 +41,13 @@ struct ProcessRunGuard {
 impl ProcessRunGuard {
     fn new(
         session_id: String,
+        execution_id: String,
         process_id: Option<u32>,
         child: Arc<Mutex<Child>>,
         processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
         interrupted: Arc<Mutex<HashSet<String>>>,
     ) -> Self {
-        Self { session_id, process_id, child, processes, interrupted, armed: true }
+        Self { session_id, execution_id, process_id, child, processes, interrupted, armed: true }
     }
 
     fn disarm(&mut self) {
@@ -60,6 +62,7 @@ impl Drop for ProcessRunGuard {
         }
 
         let session_id = self.session_id.clone();
+        let execution_id = self.execution_id.clone();
         let process_id = self.process_id;
         let child = self.child.clone();
         let processes = self.processes.clone();
@@ -91,11 +94,11 @@ impl Drop for ProcessRunGuard {
 
                 let mut process_map = processes.lock().await;
                 if process_map
-                    .get(&session_id)
+                    .get(&execution_id)
                     .is_some_and(|registered| Arc::ptr_eq(registered, &child))
                 {
-                    process_map.remove(&session_id);
-                    interrupted.lock().await.remove(&session_id);
+                    process_map.remove(&execution_id);
+                    interrupted.lock().await.remove(&execution_id);
                 }
             });
         } else {
@@ -335,12 +338,24 @@ impl ProcessAdapter {
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
+        self.run_for_execution(kind, config, session_id, session_id, message, events).await
+    }
+
+    pub async fn run_for_execution(
+        &self,
+        kind: ProcessKind,
+        config: &AgentConfig,
+        session_id: &str,
+        execution_id: &str,
+        message: &str,
+        events: &EventBus,
+    ) -> Result<AgentRunResult> {
         // Keep the process-map lock until the newly spawned child is registered.
         // Otherwise two concurrent runs for the same session can both pass the
         // contains_key check and spawn duplicate agent processes.
         let mut processes = self.processes.lock().await;
-        if processes.contains_key(session_id) {
-            return Err(anyhow!("session already has a running agent process"));
+        if processes.contains_key(execution_id) {
+            return Err(anyhow!("execution already has a running agent process"));
         }
         let command = commands::build(kind, config, message)?;
         let mut command = Self::wrap_process_group(command);
@@ -350,16 +365,17 @@ impl ProcessAdapter {
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
         let child = Arc::new(Mutex::new(child_process));
-        processes.insert(session_id.to_owned(), child.clone());
+        processes.insert(execution_id.to_owned(), child.clone());
         drop(processes);
         let mut run_guard = ProcessRunGuard::new(
             session_id.to_owned(),
+            execution_id.to_owned(),
             process_id,
             child.clone(),
             self.processes.clone(),
             self.interrupted.clone(),
         );
-        if self.interrupted.lock().await.contains(session_id) {
+        if self.interrupted.lock().await.contains(execution_id) {
             // Do not return early here: stdout/stderr readers and the normal
             // process-monitor cleanup still need to run even if the first stop
             // attempt fails. Keeping the child in the process map also allows a
@@ -517,8 +533,8 @@ impl ProcessAdapter {
         let was_interrupted = {
             let mut processes = self.processes.lock().await;
             let mut interrupted = self.interrupted.lock().await;
-            processes.remove(session_id);
-            interrupted.remove(session_id)
+            processes.remove(execution_id);
+            interrupted.remove(execution_id)
         };
         run_guard.disarm();
         let result = result.lock().await.clone();
@@ -590,15 +606,20 @@ impl ProcessAdapter {
         command
     }
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
+        self.interrupt_execution(session_id, session_id).await
+    }
+
+    pub async fn interrupt_execution(&self, session_id: &str, execution_id: &str) -> Result<()> {
         let child = {
             let processes = self.processes.lock().await;
-            let child = processes.get(session_id).cloned();
+            let child = processes.get(execution_id).cloned();
             if child.is_some() {
-                self.interrupted.lock().await.insert(session_id.to_owned());
+                self.interrupted.lock().await.insert(execution_id.to_owned());
             }
             child
         };
         if let Some(child) = child {
+            tracing::info!(session_id = %session_id, execution_id = %execution_id, "interrupting agent execution");
             Self::stop_child(&child).await?;
         }
         Ok(())
@@ -611,14 +632,15 @@ impl AgentAdapter for ProcessAdapter {
         &self,
         config: &AgentConfig,
         session_id: &str,
+        execution_id: &str,
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
-        self.run(ProcessKind::Generic, config, session_id, message, events)
+        self.run_for_execution(ProcessKind::Generic, config, session_id, execution_id, message, events)
             .await
     }
-    async fn interrupt(&self, session_id: &str) -> Result<()> {
-        self.interrupt_process(session_id).await
+    async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
+        self.interrupt_execution(session_id, execution_id).await
     }
 }
 pub use super::session::run_session;
