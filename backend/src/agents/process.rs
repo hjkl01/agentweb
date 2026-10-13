@@ -193,6 +193,12 @@ impl ProcessAdapter {
                         .and_then(|message| message.get("role"))
                         .and_then(Value::as_str)
                         == Some("assistant")
+                    || value
+                        .get("event")
+                        .and_then(|event| event.get("delta"))
+                        .and_then(|delta| delta.get("type"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| kind == "text_delta")
             }
         }
     }
