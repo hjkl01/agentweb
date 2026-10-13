@@ -173,7 +173,11 @@ impl ProcessAdapter {
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
-        if self.processes.lock().await.contains_key(session_id) {
+        // Keep the process-map lock until the newly spawned child is registered.
+        // Otherwise two concurrent runs for the same session can both pass the
+        // contains_key check and spawn duplicate agent processes.
+        let mut processes = self.processes.lock().await;
+        if processes.contains_key(session_id) {
             return Err(anyhow!("session already has a running agent process"));
         }
         let command = commands::build(kind, config, message)?;
@@ -183,10 +187,8 @@ impl ProcessAdapter {
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
         let child = Arc::new(Mutex::new(child_process));
-        self.processes
-            .lock()
-            .await
-            .insert(session_id.to_owned(), child.clone());
+        processes.insert(session_id.to_owned(), child.clone());
+        drop(processes);
         if self.interrupted.lock().await.contains(session_id) {
             // Do not return early here: stdout/stderr readers and the normal
             // process-monitor cleanup still need to run even if the first stop
