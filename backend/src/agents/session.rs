@@ -413,7 +413,7 @@ pub async fn run_session(
             {
                 // Do not exit: the child may not have registered yet. Repeated
                 // attempts stop it if registration completes after this check.
-                let _ = monitor_adapter.interrupt(&monitor_id).await;
+                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
                 continue;
             }
 
@@ -433,7 +433,7 @@ pub async fn run_session(
                     last_renewal = time::Instant::now();
                 }
                 Ok(_) => {
-                    let _ = monitor_adapter.interrupt(&monitor_id).await;
+                    let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
                 }
                 Err(error) => {
                     tracing::warn!(
