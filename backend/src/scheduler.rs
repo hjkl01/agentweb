@@ -137,7 +137,8 @@ async fn renew_run_lease(
     pool: SqlitePool,
     run_id: String,
     session_id: String,
-    worker: String,
+    run_worker: String,
+    session_worker: String,
     lease_lost: tokio::sync::oneshot::Sender<()>,
 ) {
     let mut ticker = time::interval(StdDuration::from_secs((LEASE_SECONDS as u64 / 3).max(1)));
@@ -145,10 +146,10 @@ async fn renew_run_lease(
         ticker.tick().await;
         // Renew both leases together. If either lease is lost, notify the caller so
         // it can interrupt the Agent rather than letting an unowned task continue.
-        if !renew_run_lease_once(&pool, &run_id, &worker).await
-            || !renew_session_lease_once(&pool, &session_id, &worker).await
+        if !renew_run_lease_once(&pool, &run_id, &run_worker).await
+            || !renew_session_lease_once(&pool, &session_id, &session_worker).await
         {
-            tracing::warn!(%run_id, %session_id, %worker, "scheduled task lost its run or session lease");
+            tracing::warn!(%run_id, %session_id, run_worker = %run_worker, session_worker = %session_worker, "scheduled task lost its run or session lease");
             let _ = lease_lost.send(());
             return;
         }
@@ -229,9 +230,10 @@ async fn execute_run(state: AppState, run_id: &str) {
     let renew_run = run_id.to_owned();
     let renew_session = session.id.clone();
     let renew_worker = state.worker_id.clone();
+    let renew_session_worker = session_worker_id.clone();
     let (lease_lost_tx, mut lease_lost_rx) = tokio::sync::oneshot::channel();
     let heartbeat = tokio::spawn(async move {
-        renew_run_lease(renew_db, renew_run, renew_session, renew_worker, lease_lost_tx).await;
+        renew_run_lease(renew_db, renew_run, renew_session, renew_worker, renew_session_worker, lease_lost_tx).await;
     });
     let session_id_for_run = session.id.clone();
     let run_future = run_session(
