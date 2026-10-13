@@ -21,8 +21,65 @@ use tokio::{
 
 #[derive(Default)]
 pub struct ProcessAdapter {
-    processes: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
-    interrupted: Mutex<HashSet<String>>,
+    processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    interrupted: Arc<Mutex<HashSet<String>>>,
+}
+
+// Tokio tasks can be aborted at any await point. This guard makes cancellation
+// clean up the registered process and its interruption marker rather than
+// leaving a stale session entry behind.
+struct ProcessRunGuard {
+    session_id: String,
+    process_id: Option<u32>,
+    processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    interrupted: Arc<Mutex<HashSet<String>>>,
+    armed: bool,
+}
+
+impl ProcessRunGuard {
+    fn new(
+        session_id: String,
+        process_id: Option<u32>,
+        processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+        interrupted: Arc<Mutex<HashSet<String>>>,
+    ) -> Self {
+        Self { session_id, process_id, processes, interrupted, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ProcessRunGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        #[cfg(unix)]
+        if let Some(pid) = self.process_id {
+            // Cancellation cannot await an async signal. Use the OS utility as a
+            // best-effort process-group cleanup; kill_on_drop remains the direct
+            // child fallback.
+            let group = format!("-{pid}");
+            if let Err(error) = std::process::Command::new("kill")
+                .args(["-KILL", &group])
+                .status()
+            {
+                tracing::warn!(session_id = %self.session_id, %error, "failed to kill agent process group after task cancellation");
+            }
+        }
+        if let Ok(mut processes) = self.processes.try_lock() {
+            processes.remove(&self.session_id);
+        } else {
+            tracing::warn!(session_id = %self.session_id, "could not synchronously clear process registry during task cancellation");
+        }
+        if let Ok(mut interrupted) = self.interrupted.try_lock() {
+            interrupted.remove(&self.session_id);
+        } else {
+            tracing::warn!(session_id = %self.session_id, "could not synchronously clear interruption marker during task cancellation");
+        }
+    }
 }
 
 impl ProcessAdapter {
@@ -182,6 +239,7 @@ impl ProcessAdapter {
         }
         let command = commands::build(kind, config, message)?;
         let mut command = Self::wrap_process_group(command);
+        command.kill_on_drop(true);
         let mut child_process = command.spawn()?;
         let process_id = child_process.id();
         let stdout = child_process.stdout.take();
@@ -189,6 +247,12 @@ impl ProcessAdapter {
         let child = Arc::new(Mutex::new(child_process));
         processes.insert(session_id.to_owned(), child.clone());
         drop(processes);
+        let mut run_guard = ProcessRunGuard::new(
+            session_id.to_owned(),
+            process_id,
+            self.processes.clone(),
+            self.interrupted.clone(),
+        );
         if self.interrupted.lock().await.contains(session_id) {
             // Do not return early here: stdout/stderr readers and the normal
             // process-monitor cleanup still need to run even if the first stop
@@ -341,6 +405,7 @@ impl ProcessAdapter {
             processes.remove(session_id);
             interrupted.remove(session_id)
         };
+        run_guard.disarm();
         let result = result.lock().await.clone();
         if was_interrupted {
             events
