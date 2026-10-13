@@ -113,18 +113,19 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<String>, sqlx::
         .fetch_optional(pool).await
 }
 
+async fn renew_run_lease_once(pool: &SqlitePool, run_id: &str, worker: &str) -> bool {
+    let now = Utc::now();
+    let now_text = stamp(now);
+    let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
+    matches!(sqlx::query("UPDATE scheduled_task_runs SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=?")
+        .bind(lease).bind(now_text).bind(run_id).bind(worker).execute(pool).await, Ok(r) if r.rows_affected() == 1)
+}
+
 async fn renew_run_lease(pool: SqlitePool, run_id: String, worker: String) {
     let mut ticker = time::interval(StdDuration::from_secs(LEASE_SECONDS as u64 / 3));
     loop {
         ticker.tick().await;
-        let now = Utc::now();
-        let now_text = stamp(now);
-        let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
-        match sqlx::query("UPDATE scheduled_task_runs SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=?")
-            .bind(lease).bind(now_text).bind(&run_id).bind(&worker).execute(&pool).await {
-                Ok(r) if r.rows_affected() == 1 => {},
-                _ => return,
-            }
+        if !renew_run_lease_once(&pool, &run_id, &worker).await { return; }
     }
 }
 
@@ -266,5 +267,15 @@ mod tests {
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'").fetch_one(&pool).await.unwrap();
         assert_eq!(status,"queued");
     }
+    #[tokio::test]
+    async fn running_worker_can_renew_lease_but_other_worker_cannot() {
+        let pool = test_pool().await;
+        let old = stamp(Utc::now() - Duration::seconds(1));
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'worker-a',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+        assert!(renew_run_lease_once(&pool, "r1", "worker-a").await);
+        assert!(!renew_run_lease_once(&pool, "r1", "worker-b").await);
+    }
+
 
 }
