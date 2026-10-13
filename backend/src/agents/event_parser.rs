@@ -43,6 +43,7 @@ pub fn parsed(value: &Value) -> (String, Option<String>, Option<String>, Option<
                 &["delta", "text", "output", "content"],
             )
         })
+        .or_else(|| value.pointer("/event/delta/text").and_then(Value::as_str).map(str::to_owned))
         .or_else(|| nested_string(value, &["assistantMessageEvent"], &["delta", "content"]))
         .or_else(|| {
             value.get("content").and_then(Value::as_array).map(|parts| {
