@@ -216,9 +216,24 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         Err(e) => return e,
     };
     if session.status == "running" {
-        // Keep the session record if the agent process could not be stopped.
-        // Deleting it here would hide a potentially still-running child process.
-        if s.agents.interrupt(&id).await.is_err() {
+        // Stop only the execution currently recorded for this session. The token
+        // predicate protects a newer execution if a lease takeover races deletion.
+        let execution_id: Option<String> = match sqlx::query_scalar(
+            "SELECT worker_id FROM sessions WHERE id=? AND status='running'",
+        )
+        .bind(&id)
+        .fetch_optional(&s.db)
+        .await
+        {
+            Ok(value) => value.flatten(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let Some(execution_id) = execution_id else {
+            return StatusCode::CONFLICT;
+        };
+        let adapter = s.agents.adapter(&session.agent_id).await;
+        if adapter.interrupt(&id, &execution_id).await.is_err() {
+            // Keep the session record if the agent process could not be stopped.
             return StatusCode::BAD_GATEWAY;
         }
     }
