@@ -65,7 +65,7 @@ pub async fn send_message(
             {
                 tracing::error!(
                     session_id = %id,
-                    worker_id = %s.worker_id,
+                    worker_id = %worker_id,
                     %error,
                     "failed to release session claim after loading the session failed"
                 );
@@ -73,7 +73,7 @@ pub async fn send_message(
             return Err(status);
         }
     };
-    tracing::info!(session_id = %id, agent_id = %session.agent_id, worker_id = %s.worker_id, message_bytes = v.message.len(), "accepted chat message");
+    tracing::info!(session_id = %id, agent_id = %session.agent_id, worker_id = %worker_id, message_bytes = v.message.len(), "accepted chat message");
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
         let title = format!("Chat {}", now.format("%Y-%m-%d %H:%M"));
         if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
