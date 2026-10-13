@@ -235,9 +235,30 @@ impl ProcessAdapter {
         let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
         if matches!(kind, ProcessKind::Claude | ProcessKind::Qwen)
             && event_type == "assistant"
-            && !result.lock().await.assistant_text.is_empty()
         {
-            return;
+            if let Some(final_text) = event_parser::parsed(&value).2 {
+                let accumulated = result.lock().await.assistant_text.clone();
+                if !accumulated.is_empty() {
+                    if accumulated.ends_with(&final_text) {
+                        // The final assistant event repeats text already streamed.
+                        return;
+                    }
+                    if let Some(remainder) = final_text.strip_prefix(&accumulated) {
+                        // Preserve any suffix that was not included in partial events.
+                        if !remainder.is_empty() {
+                            let text = remainder.to_owned();
+                            result.lock().await.assistant_text.push_str(&text);
+                            events
+                                .publish(AgentEvent::MessageDelta {
+                                    session_id: session_id.into(),
+                                    text,
+                                })
+                                .await;
+                        }
+                        return;
+                    }
+                }
+            }
         }
         if let Some(text) = Self::provider_text(kind, session_id, &value, events).await {
             result.lock().await.assistant_text.push_str(&text);
