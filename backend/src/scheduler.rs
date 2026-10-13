@@ -129,17 +129,23 @@ async fn renew_session_lease_once(pool: &SqlitePool, session_id: &str, worker: &
         .bind(lease).bind(now_text).bind(session_id).bind(worker).execute(pool).await, Ok(r) if r.rows_affected() == 1)
 }
 
-async fn renew_run_lease(pool: SqlitePool, run_id: String, session_id: String, worker: String) {
+async fn renew_run_lease(
+    pool: SqlitePool,
+    run_id: String,
+    session_id: String,
+    worker: String,
+    lease_lost: tokio::sync::oneshot::Sender<()>,
+) {
     let mut ticker = time::interval(StdDuration::from_secs((LEASE_SECONDS as u64 / 3).max(1)));
     loop {
         ticker.tick().await;
-        // Renew both leases together. If the session lease expires while its task-run
-        // lease remains valid, another worker could claim the same session and launch
-        // a second Agent process against it.
+        // Renew both leases together. If either lease is lost, notify the caller so
+        // it can interrupt the Agent rather than letting an unowned task continue.
         if !renew_run_lease_once(&pool, &run_id, &worker).await
             || !renew_session_lease_once(&pool, &session_id, &worker).await
         {
             tracing::warn!(%run_id, %session_id, %worker, "scheduled task lost its run or session lease");
+            let _ = lease_lost.send(());
             return;
         }
     }
@@ -199,10 +205,32 @@ async fn execute_run(state: AppState, run_id: &str) {
     let renew_run = run_id.to_owned();
     let renew_session = session.id.clone();
     let renew_worker = state.worker_id.clone();
+    let (lease_lost_tx, mut lease_lost_rx) = tokio::sync::oneshot::channel();
     let heartbeat = tokio::spawn(async move {
-        renew_run_lease(renew_db, renew_run, renew_session, renew_worker).await;
+        renew_run_lease(renew_db, renew_run, renew_session, renew_worker, lease_lost_tx).await;
     });
-    run_session(state.db.clone(), state.agents.clone(), session, prompt, state.events.clone(), state.worker_id.clone()).await;
+    let session_id_for_run = session.id.clone();
+    let run_future = run_session(
+        state.db.clone(),
+        state.agents.clone(),
+        session,
+        prompt,
+        state.events.clone(),
+        state.worker_id.clone(),
+    );
+    tokio::pin!(run_future);
+    tokio::select! {
+        _ = &mut run_future => {}
+        _ = &mut lease_lost_rx => {
+            tracing::error!(%run_id, session_id = %session_id_for_run, "interrupting scheduled Agent because its lease was lost");
+            if let Err(error) = state.agents.interrupt(&session_id_for_run).await {
+                tracing::error!(%run_id, session_id = %session_id_for_run, %error, "failed to interrupt scheduled Agent after lease loss");
+            }
+            // Allow run_session to observe the interruption and perform its normal
+            // session finalization before the task-run lease is released.
+            run_future.await;
+        }
+    }
     heartbeat.abort();
     let status: Option<String> = sqlx::query_scalar("SELECT status FROM sessions WHERE id=?").bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
     let (final_status, error) = match status.as_deref() {
