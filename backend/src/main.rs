@@ -7,6 +7,7 @@ mod db;
 mod events;
 mod installation;
 mod openapi;
+mod scheduler;
 mod state;
 mod terminal;
 
@@ -73,6 +74,7 @@ async fn main() -> Result<()> {
         }
     });
     let state = state::AppState::new(pool);
+    scheduler::start(state.clone());
     let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| {
         // `make build` copies index.html straight into ./frontend, vite's dev output lives in ./frontend/dist
         if Path::new("./frontend/index.html").is_file() {
@@ -83,6 +85,12 @@ async fn main() -> Result<()> {
     });
     let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
+        .route("/scheduled-tasks", get(api::list_scheduled_tasks).post(api::create_scheduled_task))
+        .route("/scheduled-tasks/{id}", get(api::get_scheduled_task).put(api::update_scheduled_task).delete(api::delete_scheduled_task))
+        .route("/scheduled-tasks/{id}/enable", axum::routing::post(api::enable_scheduled_task))
+        .route("/scheduled-tasks/{id}/disable", axum::routing::post(api::disable_scheduled_task))
+        .route("/scheduled-tasks/{id}/run-now", axum::routing::post(api::run_scheduled_task_now))
+        .route("/scheduled-tasks/{id}/runs", get(api::scheduled_task_history))
         .route("/auth/password", axum::routing::put(auth::change_password))
         .route("/auth/sessions", get(auth::list_sessions))
         .route(
