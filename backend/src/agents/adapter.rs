@@ -10,6 +10,7 @@ use super::models::AgentModel;
 pub struct AgentRunError {
     pub interrupted: bool,
     pub native_session_id: Option<String>,
+    pub native_session_missing: bool,
     message: String,
 }
 
@@ -18,14 +19,28 @@ impl AgentRunError {
         Self {
             interrupted: true,
             native_session_id,
+            native_session_missing: false,
             message: "agent process interrupted".into(),
         }
     }
 
     pub fn failed(message: impl Into<String>, native_session_id: Option<String>) -> Self {
+        Self::failed_with_session_state(message, native_session_id, false)
+    }
+
+    pub fn missing_session(message: impl Into<String>, native_session_id: Option<String>) -> Self {
+        Self::failed_with_session_state(message, native_session_id, true)
+    }
+
+    fn failed_with_session_state(
+        message: impl Into<String>,
+        native_session_id: Option<String>,
+        native_session_missing: bool,
+    ) -> Self {
         Self {
             interrupted: false,
             native_session_id,
+            native_session_missing,
             message: message.into(),
         }
     }
