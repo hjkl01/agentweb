@@ -114,12 +114,29 @@ pub async fn interrupt(
     Path(id): Path<String>,
     State(s): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Capture the current execution token first. The conditional update below
+    // prevents a concurrent lease takeover from being interrupted by this request.
+    let execution_id: Option<String> = sqlx::query_scalar(
+        "SELECT worker_id FROM sessions WHERE id=? AND status='running'",
+    )
+    .bind(&id)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .flatten();
+    let Some(execution_id) = execution_id else {
+        return Ok(Json(
+            serde_json::json!({"status":load_session(&s.db,&id).await?.status}),
+        ));
+    };
+
     let now = Utc::now().to_rfc3339();
     let changed = sqlx::query(
-        "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running'",
+        "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?",
     )
     .bind(&now)
     .bind(&id)
+    .bind(&execution_id)
     .execute(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -129,7 +146,7 @@ pub async fn interrupt(
         ));
     }
     s.agents
-        .interrupt(&id)
+        .interrupt(&id, &execution_id)
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(serde_json::json!({"status":"interrupted"})))
