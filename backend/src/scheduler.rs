@@ -277,5 +277,20 @@ mod tests {
         assert!(!renew_run_lease_once(&pool, "r1", "worker-b").await);
     }
 
+    #[tokio::test]
+    async fn many_missed_interval_occurrences_coalesce_to_one_run() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
+            .execute(&pool).await.unwrap();
+        let old = stamp(Utc::now() - Duration::hours(4));
+        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t1','task','do it','codex','/tmp','interval','{\\"seconds\\":60}','UTC',?,1,?)")
+            .bind(&old).bind(&old).execute(&pool).await.unwrap();
+        materialize_due(&pool).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t1'").fetch_one(&pool).await.unwrap();
+        let next: String = sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t1'").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1, "downtime must not create a backlog of missed interval runs");
+        assert!(chrono::DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc) > Utc::now());
+    }
+
 
 }
