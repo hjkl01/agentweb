@@ -461,4 +461,55 @@ mod tests {
             .await
             .expect("stopping an already exited child should be harmless");
     }
+
+    // The process monitor must not wait forever when a descendant inherits the
+    // agent's output pipes after the direct agent process exits.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn descendant_inherited_pipe_stays_open_until_process_group_is_killed() {
+        use tokio::io::AsyncReadExt;
+        use tokio::time::{timeout, Duration};
+
+        let mut child = Command::new("setsid")
+            .args(["sh", "-c", "sleep 30 & exit 0"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("setsid and sh should be available on Linux");
+        let pid = child.id().expect("spawned process should have a PID");
+        let mut stdout = child.stdout.take().expect("stdout should be piped");
+        let mut stderr = child.stderr.take().expect("stderr should be piped");
+
+        let status = timeout(Duration::from_secs(2), child.wait())
+            .await
+            .expect("the direct shell should exit promptly")
+            .expect("waiting for the shell should succeed");
+        assert!(status.success());
+
+        let mut output = Vec::new();
+        assert!(
+            timeout(Duration::from_millis(100), stdout.read_to_end(&mut output))
+                .await
+                .is_err(),
+            "the background descendant should keep stdout open"
+        );
+
+        let group = format!("-{pid}");
+        let kill_status = Command::new("kill")
+            .args(["-KILL", &group])
+            .status()
+            .await
+            .expect("kill should be available on Linux");
+        assert!(kill_status.success(), "the process group should be killed");
+
+        timeout(Duration::from_secs(2), stdout.read_to_end(&mut output))
+            .await
+            .expect("stdout should close after the descendant is killed")
+            .expect("reading stdout should succeed");
+        let mut error_output = Vec::new();
+        timeout(Duration::from_secs(2), stderr.read_to_end(&mut error_output))
+            .await
+            .expect("stderr should close after the descendant is killed")
+            .expect("reading stderr should succeed");
+    }
 }
