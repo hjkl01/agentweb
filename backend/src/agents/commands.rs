@@ -39,7 +39,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             args.push(message.into());
         }
         ProcessKind::Claude => {
-            args = vec!["--print".into(), "--output-format".into(), "stream-json".into(), "--verbose".into()];
+            args = vec!["--output-format".into(), "stream-json".into(), "--verbose".into()];
             if let Some(id) = &config.native_session_id {
                 args.extend(["--resume".into(), id.clone()]);
             }
