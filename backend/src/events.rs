@@ -416,6 +416,36 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn tcp_relay_delivers_transient_events_to_another_bus() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, mut receiver) = broadcast::channel(8);
+        let server_sender = sender.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            receive_relay_events(stream, server_sender).await;
+        });
+        let stream = TcpStream::connect(address).await.unwrap();
+        let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+        let expected = AgentEvent::MessageDelta {
+            session_id: "relay-session".into(),
+            text: "live delta".into(),
+        };
+        framed.send(serde_json::to_string(&expected).unwrap()).await.unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await.unwrap().unwrap();
+        match received {
+            AgentEvent::MessageDelta { session_id, text } => {
+                assert_eq!(session_id, "relay-session");
+                assert_eq!(text, "live delta");
+            }
+            _ => panic!("TCP relay delivered the wrong event type"),
+        }
+        drop(framed);
+        server.abort();
+    }
+
     #[test]
     fn retries_only_sqlite_busy_and_locked_codes() {
         for code in ["5", "6", "261", "262"] {
