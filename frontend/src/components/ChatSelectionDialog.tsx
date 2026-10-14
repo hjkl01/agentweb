@@ -79,6 +79,15 @@ export function ChatSelectionDialog({
           </button>
         </div>
         <div className="model-picker">
+          <label className="model-picker-label">工作区目录</label>
+          <input
+            value={workspace}
+            onChange={(e) => setWorkspace(e.target.value)}
+            placeholder="例如：my-project"
+            autoComplete="off"
+            required
+          />
+          <small className="field-hint">填写工作区根目录下的相对路径；目录不存在时会自动创建。</small>
           <label className="model-picker-label">Agent</label>
           <select value={agentId} onChange={(e) => chooseAgent(e.target.value)}>
             <option value="">请选择已安装 Agent</option>
@@ -116,7 +125,7 @@ export function ChatSelectionDialog({
           <button
             className="primary-button create-chat-button"
             disabled={!canCreate}
-            onClick={() => onCreate(agentId, model || undefined, workspace.trim())
+            onClick={() => onCreate(agentId, model || undefined, workspace.trim())}
           >
             <Bot size={15} /> 开始对话
           </button>
@@ -126,7 +135,7 @@ export function ChatSelectionDialog({
               onClick={() =>
                 onDefaultChange(agentId || undefined, model || undefined)
               }
-              disabled={!canCreate}
+              disabled={!agentId}
             >
               <Settings size={15} /> 设为默认
             </button>
