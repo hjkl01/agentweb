@@ -59,6 +59,16 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     let Some(path) = find_by_suffix(root, &suffix, native_session_id) else {
         return Vec::new();
     };
+    // Keep a single transcript refresh from allocating unbounded memory.
+    // Typical conversations are far smaller; oversized/corrupt files fail
+    // closed instead of blocking the API worker with a huge JSONL parse.
+    const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Vec::new();
+    };
+    if !metadata.is_file() || metadata.len() > MAX_TRANSCRIPT_BYTES {
+        return Vec::new();
+    }
     // The agent may append to the JSONL file while the UI refreshes it.
     // A partial final UTF-8 sequence or JSON object should not hide all prior
     // messages; lossy decoding lets the line parser skip only the incomplete
@@ -66,6 +76,10 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     let Ok(bytes) = std::fs::read(&path) else {
         return Vec::new();
     };
+    // Recheck after reading to handle growth between metadata() and read().
+    if bytes.len() as u64 > MAX_TRANSCRIPT_BYTES {
+        return Vec::new();
+    }
     let content = String::from_utf8_lossy(&bytes);
     parse_messages(&content, native_session_id)
 }
@@ -119,9 +133,14 @@ fn find_by_suffix(dir: &Path, suffix: &str, native_session_id: &str) -> Option<P
                 let Ok(file) = std::fs::File::open(&path) else {
                     continue;
                 };
-                let mut reader = std::io::BufReader::new(file);
+                // A malicious candidate may have an enormous first line.
+                // Read at most 64 KiB for the header before JSON validation.
+                const MAX_HEADER_BYTES: u64 = 64 * 1024;
+                let mut reader = std::io::BufReader::new(file).take(MAX_HEADER_BYTES);
                 let mut first_line = String::new();
-                if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err() {
+                if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
+                    || first_line.len() as u64 >= MAX_HEADER_BYTES
+                {
                     continue;
                 }
                 let Ok(header) = serde_json::from_str::<Value>(&first_line) else {
@@ -333,6 +352,24 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "correct session");
+    }
+
+    #[test]
+    fn rejects_header_larger_than_header_limit() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pi-transcript-long-header-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("2026-01-01T00-00-00-000Z_large-id.jsonl");
+        let mut content = String::from(r#"{"type":"session","id":"large-id","padding":""#);
+        content.push_str(&"x".repeat(70 * 1024));
+        content.push_str(r#""}"#);
+        std::fs::write(&file, content).unwrap();
+
+        assert!(find_by_suffix(&dir, "_large-id.jsonl", "large-id").is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
