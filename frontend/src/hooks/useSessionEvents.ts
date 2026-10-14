@@ -31,6 +31,11 @@ export function useSessionEvents(options: Options) {
     let ws: WebSocket | undefined;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let reconnectDelay = 500;
+    // A session switch must never display the previous session's transcript.
+    // loadState(true) intentionally preserves local messages during reconnects,
+    // so clear session-scoped state here before opening the new subscription.
+    options.setMessages([]);
+    options.setFiles([]);
     options.setStream("");
     options.setActivity([]);
     options.setActivityOpen(false);
