@@ -120,14 +120,17 @@ pub struct CreateSession {
     pub model: Option<String>,
 }
 async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode> {
-    let base_path = default_workspace_root();
-    fs::create_dir_all(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base = fs::canonicalize(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let name = requested.unwrap_or("").trim();
+    resolve_workspace_under(&default_workspace_root(), name).await
+}
+
+async fn resolve_workspace_under(base_path: &FsPath, name: &str) -> Result<String, StatusCode> {
+    fs::create_dir_all(base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if name.is_empty() || name == "." {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -166,6 +169,7 @@ async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode
     }
     Ok(current.to_string_lossy().into_owned())
 }
+
 pub async fn create_session(
     State(s): State<AppState>,
     Json(v): Json<CreateSession>,
@@ -384,4 +388,56 @@ pub async fn set_session_agent(
         return Err(StatusCode::CONFLICT);
     }
     Ok(Json(load_session(&s.db, &id).await?))
+}
+
+
+#[cfg(test)]
+mod workspace_path_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn rejects_parent_and_absolute_workspace_paths() {
+        let root = temp_root("workspace-path");
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            resolve_workspace_under(&root, "../outside").await.unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            resolve_workspace_under(&root, root.join("absolute").to_str().unwrap())
+                .await
+                .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_escape_before_creating_outside_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("workspace-root");
+        let outside = temp_root("workspace-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let result = resolve_workspace_under(&root, "escape/should-not-exist").await;
+        assert_eq!(result.unwrap_err(), StatusCode::FORBIDDEN);
+        assert!(
+            !outside.join("should-not-exist").exists(),
+            "a rejected symlink path must not create anything outside the workspace root"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
 }
