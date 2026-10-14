@@ -353,7 +353,7 @@ mod tests {
             r#"{"type":"session","id":"session-tail","version":3}"#,
             r#"{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"must not be shown"}}"#,
         ]
-        .join("\\n");
+        .join("\n");
 
         assert!(parse_messages(&content, "session-tail").is_empty());
     }
