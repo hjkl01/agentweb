@@ -89,7 +89,15 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
         }
         ProcessKind::Generic => args.push(message.into()),
     }
-    let mut command = if let Some(dir) = &config.working_directory {
+    let mut command = if cfg!(test) {
+        // Unit tests use fake executables and intentionally do not require bwrap.
+        let mut command = Command::new(&program);
+        command.args(args);
+        if let Some(dir) = &config.working_directory {
+            command.current_dir(dir);
+        }
+        command
+    } else if let Some(dir) = &config.working_directory {
         #[cfg(target_os = "linux")]
         {
             // Fail closed: an Agent with a workspace must not run unrestricted if
