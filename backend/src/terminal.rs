@@ -143,6 +143,8 @@ async fn run_terminal(
         command.arg("/tmp/agentweb-mounts/home");
         command.arg("--dir");
         command.arg("/tmp/agentweb-mounts/runtimes");
+        command.arg("--dir");
+        command.arg("/tmp/agentweb-mounts/workspace");
         command.arg("--ro-bind");
         command.arg("/data/home");
         command.arg("/tmp/agentweb-mounts/home");
@@ -161,9 +163,38 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("/data/runtimes");
-        command.arg("--bind");
-        command.arg(&workspace);
-        command.arg(&workspace);
+        if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces") {
+            // Keep the selected project reachable via a temporary alias before
+            // hiding /workspaces, so sibling projects are not visible in shell.
+            command.arg("--bind");
+            command.arg(&workspace);
+            command.arg("/tmp/agentweb-mounts/workspace");
+            command.arg("--tmpfs");
+            command.arg("/workspaces");
+            let relative = match workspace.strip_prefix("/workspaces") {
+                Ok(path) => path,
+                Err(_) => {
+                    let mut socket = socket;
+                    let _ = socket.send(Message::Text("Invalid terminal workspace path.".into())).await;
+                    return;
+                }
+            };
+            let mut target = std::path::PathBuf::from("/workspaces");
+            for component in relative.components() {
+                target.push(component.as_os_str());
+                if target != workspace {
+                    command.arg("--dir");
+                    command.arg(&target);
+                }
+            }
+            command.arg("--bind");
+            command.arg("/tmp/agentweb-mounts/workspace");
+            command.arg(&workspace);
+        } else {
+            command.arg("--bind");
+            command.arg(&workspace);
+            command.arg(&workspace);
+        }
         command.arg("--chdir");
         command.arg(&workspace);
         command.arg("--");
