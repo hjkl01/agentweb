@@ -129,7 +129,7 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
                     f.split(',').any(|part| {
                         let (base,step) = part.split_once('/').map(|(a,b)|(a,b.parse::<u32>().unwrap_or(0))).unwrap_or((part,1));
                         if step == 0 { return false; }
-                        let (a,b) = if base=="*" { (*lo,*hi) } else if let Some((a,b))=base.split_once('-') { (a.parse().unwrap_or(u32::MAX),b.parse().unwrap_or(0)) } else { let x=base.parse().unwrap_or(u32::MAX); (x,x) };
+                        let (a,b) = if base=="*" { (*lo,*hi) } else if let Some((a,b))=base.split_once('-') { (a.parse().unwrap_or(u32::MAX),b.parse().unwrap_or(0)) } else { let x=base.parse().unwrap_or(u32::MAX); (x,if part.contains('/') { *hi } else { x }) };
                         *val>=a && *val<=b && (*val-a)%step==0
                     })
                 });
