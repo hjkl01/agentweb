@@ -245,14 +245,20 @@ mod workspace_state_tests {
 
     #[test]
     fn rejects_invalid_relative_state_paths() {
-        let workspace = temp_path("pi-state-workspace");
+        let root = temp_path("pi-state-paths");
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
         std::fs::create_dir_all(&workspace).unwrap();
 
-        assert!(ensure_workspace_state_dir(&workspace, std::path::Path::new("../outside")).is_err());
-        assert!(ensure_workspace_state_dir(&workspace, std::path::Path::new("/tmp/outside")).is_err());
-        assert!(!workspace.parent().unwrap().join("outside").exists());
+        assert!(
+            ensure_workspace_state_dir(&workspace, std::path::Path::new("../outside")).is_err()
+        );
+        assert!(
+            ensure_workspace_state_dir(&workspace, std::path::Path::new("/tmp/outside")).is_err()
+        );
+        assert!(!outside.exists());
 
-        std::fs::remove_dir_all(workspace).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
