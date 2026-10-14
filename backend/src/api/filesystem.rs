@@ -73,7 +73,12 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, Stat
     let needle = needle.to_lowercase();
     let mut pending = vec![root.clone()];
     let mut result = Vec::new();
+    let mut scanned_entries = 0usize;
+    const MAX_SCANNED_ENTRIES: usize = 20_000;
     while let Some(dir) = pending.pop() {
+        if scanned_entries >= MAX_SCANNED_ENTRIES {
+            break;
+        }
         let mut entries = fs::read_dir(&dir)
             .await
             .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -82,7 +87,8 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, Stat
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         {
-            if result.len() >= 2000 {
+            scanned_entries += 1;
+            if result.len() >= 2000 || scanned_entries >= MAX_SCANNED_ENTRIES {
                 break;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -155,7 +161,7 @@ pub async fn tree(
     }
     let current = match query.path.as_deref() {
         None | Some("") => root.clone(),
-        Some(relative) => resolve_tree_path(&root, relative).await?
+        Some(relative) => resolve_tree_path(&root, relative).await?,
     };
     let metadata = fs::metadata(&current)
         .await
