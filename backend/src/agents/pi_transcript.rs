@@ -150,6 +150,19 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
         })
         .collect::<Vec<_>>();
 
+    // A filename match is not enough: only render a transcript whose
+    // session header identifies the native session requested by the database.
+    // This also prevents a malformed or replaced file from being shown as a
+    // different conversation.
+    let Some((_, header)) = entries.first() else {
+        return Vec::new();
+    };
+    if header.get("type").and_then(Value::as_str) != Some("session")
+        || header.get("id").and_then(Value::as_str) != Some(native_session_id)
+    {
+        return Vec::new();
+    }
+
     // Pi v2/v3 sessions are trees. On load, Pi restores the leaf from the last
     // persisted entry, then derives the visible branch by following parentId.
     // Older linear sessions have no parentId fields and remain readable as-is.
@@ -243,6 +256,17 @@ mod tests {
             {"type": "text", "text": "world"},
         ]);
         assert_eq!(text_content(&content).as_deref(), Some("hello\nworld"));
+    }
+
+    #[test]
+    fn rejects_transcript_with_mismatched_session_header() {
+        let content = [
+            r#"{"type":"session","id":"different-session","version":3}"#,
+            r#"{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"wrong conversation"}}"#,
+        ]
+        .join("\n");
+
+        assert!(parse_messages(&content, "requested-session").is_empty());
     }
 
     #[test]
