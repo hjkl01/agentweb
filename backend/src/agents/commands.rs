@@ -177,6 +177,10 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 // temporary mount aliases before masking /data itself.
                 "--dir",
                 "/run/agentweb-mounts",
+                "--dir",
+                "/run/agentweb-mounts/home",
+                "--dir",
+                "/run/agentweb-mounts/runtimes",
                 "--ro-bind",
                 "/data/home",
                 "/run/agentweb-mounts/home",
