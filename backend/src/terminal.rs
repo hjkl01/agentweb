@@ -135,6 +135,20 @@ async fn run_terminal(
         command.arg("/proc");
         command.arg("--tmpfs");
         command.arg("/tmp");
+        // Mask the application data root so the terminal cannot read SQLite
+        // databases. Re-expose required configuration and runtime files read-only.
+        command.arg("--tmpfs");
+        command.arg("/data");
+        command.arg("--dir");
+        command.arg("/data/home");
+        command.arg("--dir");
+        command.arg("/data/runtimes");
+        command.arg("--ro-bind");
+        command.arg("/data/home");
+        command.arg("/data/home");
+        command.arg("--ro-bind");
+        command.arg("/data/runtimes");
+        command.arg("/data/runtimes");
         command.arg("--bind");
         command.arg(&workspace);
         command.arg(&workspace);
