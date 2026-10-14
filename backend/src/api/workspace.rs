@@ -360,15 +360,22 @@ pub async fn workspace_diff(
                 if ignored_relative(&relative) {
                     continue;
                 }
+                // Never read an untracked path through a symlink that escapes
+                // the workspace. Git lists the symlink itself, but metadata/read
+                // follow it and could otherwise disclose an arbitrary host file.
                 let path = root.join(&relative);
-                let metadata = match fs::metadata(&path).await {
-                    Ok(value) => value,
-                    Err(_) => continue,
+                let canonical = match fs::canonicalize(&path).await {
+                    Ok(value) if value.starts_with(&root) => value,
+                    _ => continue,
                 };
-                if !metadata.is_file() || metadata.len() > MAX_DIFF_FILE_BYTES {
+                let metadata = match fs::metadata(&canonical).await {
+                    Ok(value) if value.is_file() => value,
+                    _ => continue,
+                };
+                if metadata.len() > MAX_DIFF_FILE_BYTES {
                     continue;
                 }
-                let bytes = match fs::read(&path).await {
+                let bytes = match fs::read(&canonical).await {
                     Ok(value) => value,
                     Err(_) => continue,
                 };
