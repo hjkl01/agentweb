@@ -47,7 +47,9 @@ fn find_by_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
         if depth > MAX_DEPTH || scanned >= MAX_ENTRIES {
             break;
         }
-        let entries = std::fs::read_dir(&current).ok()?;
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
