@@ -85,7 +85,7 @@ agentweb/
 - npm
 - Linux 工作区隔离依赖：`bubblewrap`（命令 `bwrap`）
 
-Agent 和终端命令会通过 Linux namespace 沙箱启动：系统文件系统只读，当前会话工作区可写，`/tmp` 使用隔离的临时文件系统。若系统没有可用的 `bwrap` 或 namespace 权限，启动会失败，不会自动退回到不受限制的执行方式。当前工作区沙箱仅支持 Linux；macOS/Windows 上的 Agent 与终端执行会被拒绝，直到提供对应平台的沙箱实现。
+Agent 和终端命令会通过 Linux namespace 沙箱启动：系统文件系统只读，当前会话工作区可写，`/tmp` 使用隔离的临时文件系统。 Pi 的原生会话状态会写入工作区内的 `.agentweb-state/pi-sessions/`，不会因此开放宿主 HOME 的写权限；其他 Agent 的原生状态目录兼容性仍需逐一验证。若系统没有可用的 `bwrap` 或 namespace 权限，启动会失败，不会自动退回到不受限制的执行方式。当前工作区沙箱仅支持 Linux；macOS/Windows 上的 Agent 与终端执行会被拒绝，直到提供对应平台的沙箱实现。
 
 Arch Linux 可安装依赖：
 
