@@ -181,6 +181,11 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/tmp/agentweb-mounts/home",
                 "--dir",
                 "/tmp/agentweb-mounts/runtimes",
+                "--dir",
+                "/tmp/agentweb-mounts/workspace",
+                // If workspaces are mounted under /workspaces, retain only the
+                // selected project and hide sibling projects from the Agent.
+                // The alias must be mounted before masking the original parent.
                 "--ro-bind",
                 "/data/home",
                 "/tmp/agentweb-mounts/home",
@@ -202,7 +207,24 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/data/runtimes",
                 "--bind",
             ]);
-            sandbox.arg(&workspace).arg(&workspace);
+            if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces") {
+                sandbox.args(["--bind"]);
+                sandbox.arg(&workspace).arg("/tmp/agentweb-mounts/workspace");
+                sandbox.args(["--tmpfs", "/workspaces"]);
+                let relative = workspace.strip_prefix("/workspaces")
+                    .map_err(|error| anyhow!("cannot isolate workspace parent: {error}"))?;
+                let mut target = std::path::PathBuf::from("/workspaces");
+                for component in relative.components() {
+                    target.push(component.as_os_str());
+                    if target != workspace {
+                        sandbox.args(["--dir"]).arg(&target);
+                    }
+                }
+                sandbox.args(["--bind", "/tmp/agentweb-mounts/workspace"]);
+                sandbox.arg(&workspace);
+            } else {
+                sandbox.args(["--bind"]).arg(&workspace).arg(&workspace);
+            }
             sandbox
                 .args(["--chdir"])
                 .arg(&workspace)
