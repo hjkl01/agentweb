@@ -228,7 +228,14 @@ async fn set_enabled(s: &AppState, id: &str, enabled: bool) -> Result<(), Status
         if kind=="interval" { Some((Utc::now()+chrono::Duration::seconds(config.get("seconds").and_then(Value::as_i64).unwrap_or(60))).to_rfc3339()) }
         else { initial_next(&TaskInput{name:"x".into(),prompt:"x".into(),agent_id:"x".into(),working_directory:".".into(),model:None,schedule_type:kind.clone(),schedule_config:config,timezone,session_strategy:"new".into(),reuse_session_id:None,enabled:true})? }
     }} else {None};
-    sqlx::query("UPDATE scheduled_tasks SET enabled=?,next_run_at=?,updated_at=? WHERE id=?").bind(enabled as i64).bind(next).bind(now).bind(id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = sqlx::query("UPDATE scheduled_tasks SET enabled=?,next_run_at=?,updated_at=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(enabled as i64).bind(next).bind(now).bind(id).bind(id)
+        .execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?")
+            .bind(id).fetch_one(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(if exists == 0 { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT });
+    }
     Ok(())
 }
 pub async fn enable(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Value>,StatusCode>{set_enabled(&s,&id,true).await?;get(Path(id),State(s)).await}
