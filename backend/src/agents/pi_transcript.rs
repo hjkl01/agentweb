@@ -17,10 +17,16 @@ pub struct TranscriptMessage {
 }
 
 fn sessions_root() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("PI_CODING_AGENT_DIR") {
+    // AgentWeb sets this to a workspace-local directory for Pi's writable
+    // session state. Unlike PI_CODING_AGENT_DIR, it is already the sessions
+    // root and must not have another "sessions" component appended.
+    if let Some(dir) = std::env::var_os("PI_CODING_AGENT_SESSION_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    if let Some(dir) = std::env::var_os("PI_CODING_AGENT_DIR") {
         return Some(PathBuf::from(dir).join("sessions"));
     }
-    std::env::var("HOME").ok().map(|home| {
+    std::env::var_os("HOME").map(|home| {
         PathBuf::from(home)
             .join(".pi")
             .join("agent")
@@ -29,18 +35,47 @@ fn sessions_root() -> Option<PathBuf> {
 }
 
 fn find_by_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_by_suffix(&path, suffix) {
-                return Some(found);
+    // Bound traversal and never follow symlinks: a workspace-local session
+    // directory can be edited by Agent tools and must not redirect this reader
+    // into arbitrary host paths or create directory cycles.
+    const MAX_ENTRIES: usize = 20_000;
+    const MAX_DEPTH: usize = 32;
+
+    let mut pending = vec![(dir.to_path_buf(), 0usize)];
+    let mut scanned = 0usize;
+    while let Some((current, depth)) = pending.pop() {
+        if depth > MAX_DEPTH || scanned >= MAX_ENTRIES {
+            break;
+        }
+        let entries = std::fs::read_dir(&current).ok()?;
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            scanned += 1;
+            if scanned > MAX_ENTRIES {
+                return None;
             }
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(suffix))
-        {
-            return Some(path);
+            let path = entry.path();
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                if depth < MAX_DEPTH {
+                    pending.push((path, depth + 1));
+                }
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(suffix))
+            {
+                return Some(path);
+            }
         }
     }
     None
