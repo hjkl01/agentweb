@@ -361,6 +361,7 @@ pub async fn workspace_diff(
             "truncated": true
         })));
     }
+    let mut truncated = false;
     let mut diff = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).into_owned()
     } else {
@@ -416,13 +417,9 @@ pub async fn workspace_diff(
         }
         let mut fallback = String::from_utf8_lossy(&cached.stdout).into_owned();
         fallback.push_str(&String::from_utf8_lossy(&unstaged.stdout));
-        if unstaged.truncated {
-            // Force the shared truncation path below to set the response flag.
-            fallback.push('\n');
-        }
+        truncated = unstaged.truncated;
         fallback
     };
-    let mut truncated = false;
     if diff.len() > MAX_DIFF_TOTAL_BYTES {
         let cut = diff[..MAX_DIFF_TOTAL_BYTES]
             .rfind('\n')
