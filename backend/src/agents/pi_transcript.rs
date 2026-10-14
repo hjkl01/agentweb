@@ -251,9 +251,9 @@ mod tests {
             r#"{"type":"session","id":"session-1","version":3}"#,
             r#"{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":"before compact"}}"#,
             r#"{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":"answer before compact"}}"#,
+            r#"{"type":"message","id":"alt","parentId":"u1","message":{"role":"user","content":"other branch"}}"#,
             r#"{"type":"compaction","id":"c1","parentId":"a1","firstKeptEntryId":"a1","summary":"summary"}"#,
             r#"{"type":"message","id":"u2","parentId":"c1","message":{"role":"user","content":"after compact"}}"#,
-            r#"{"type":"message","id":"alt","parentId":"u1","message":{"role":"user","content":"other branch"}}"#,
         ]
         .join("\n");
 
