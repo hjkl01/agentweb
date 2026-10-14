@@ -34,6 +34,7 @@ export type Session = {
   native_session_id?: string;
   model?: string;
   is_pinned: boolean;
+  workspace_available?: boolean;
 };
 export type ChatMessage = {
   id: string;
