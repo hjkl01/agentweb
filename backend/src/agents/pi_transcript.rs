@@ -164,6 +164,21 @@ pub fn read_messages(native_session_id: &str) -> Vec<TranscriptMessage> {
 }
 
 fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessage> {
+    // The first JSONL record is the session header. Do not let a malformed or
+    // missing header be silently skipped so a later record can masquerade as
+    // the header; malformed records after the header are still ignored below.
+    let Some(first_line) = content.lines().next() else {
+        return Vec::new();
+    };
+    let Ok(header) = serde_json::from_str::<Value>(first_line) else {
+        return Vec::new();
+    };
+    if header.get("type").and_then(Value::as_str) != Some("session")
+        || header.get("id").and_then(Value::as_str) != Some(native_session_id)
+    {
+        return Vec::new();
+    }
+
     let entries = content
         .lines()
         .enumerate()
@@ -329,6 +344,18 @@ mod tests {
         let messages = parse_messages(&content, "session-tail");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "complete message");
+    }
+
+    #[test]
+    fn rejects_transcript_when_session_header_is_malformed() {
+        let content = [
+            r#"{"type":"session","id":"session-tail""#,
+            r#"{"type":"session","id":"session-tail","version":3}"#,
+            r#"{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"must not be shown"}}"#,
+        ]
+        .join("\\n");
+
+        assert!(parse_messages(&content, "session-tail").is_empty());
     }
 
     #[test]
