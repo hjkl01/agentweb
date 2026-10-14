@@ -156,7 +156,9 @@ async fn git_status(
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         MAX_DIFF_TOTAL_BYTES,
     ).await?;
-    if !output.status.success() {
+    if !output.status.success() || output.truncated {
+        // A partial porcelain stream may end halfway through a path; don't
+        // expose misleading status entries when the safety cap is reached.
         return Ok(Default::default());
     }
     let mut result = std::collections::HashMap::new();
@@ -526,6 +528,18 @@ mod workspace_file_safety_tests {
 
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[tokio::test]
+    async fn git_command_output_is_bounded() {
+        let root = temp_root("git-output-limit");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let output = run_git_limited(&root, &["--version"], 1).await.unwrap();
+        assert!(output.truncated);
+        assert_eq!(output.stdout.len(), 1);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
