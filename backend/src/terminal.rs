@@ -100,6 +100,9 @@ async fn run_terminal(
         return;
     }
 
+    #[cfg(not(target_os = "linux"))]
+    let mut command = CommandBuilder::new("/bin/false");
+
     #[cfg(target_os = "linux")]
     let mut command = {
         let workspace = match std::fs::canonicalize(&workspace) {
