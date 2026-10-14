@@ -21,6 +21,7 @@ pub struct Session {
     pub native_session_id: Option<String>,
     pub model: Option<String>,
     pub is_pinned: bool,
+    pub workspace_available: bool,
 }
 fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
     Session {
@@ -32,6 +33,7 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
         native_session_id: row.get(5),
         model: row.get(6),
         is_pinned: row.get::<i64, _>(7) != 0,
+        workspace_available: false,
     }
 }
 fn default_workspace_root() -> PathBuf {
@@ -74,6 +76,7 @@ pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Sess
         return Err(StatusCode::FORBIDDEN);
     }
     session.workspace = workspace.to_string_lossy().into_owned();
+    session.workspace_available = true;
     Ok(session)
 }
 pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
@@ -112,7 +115,24 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
 
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
-    Json(rows.iter().map(session_from_row).collect())
+    let base = match fs::canonicalize(default_workspace_root()).await {
+        Ok(path) => path,
+        Err(_) => return Json(rows.iter().map(session_from_row).collect()),
+    };
+    let mut sessions = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut session = session_from_row(row);
+        if let Ok(workspace) = fs::canonicalize(&session.workspace).await {
+            session.workspace_available = workspace.is_dir()
+                && workspace.starts_with(&base)
+                && workspace != base;
+            if session.workspace_available {
+                session.workspace = workspace.to_string_lossy().into_owned();
+            }
+        }
+        sessions.push(session);
+    }
+    Json(sessions)
 }
 #[derive(Deserialize)]
 pub struct CreateSession {
@@ -209,6 +229,7 @@ pub async fn create_session(
         native_session_id: None,
         model,
         is_pinned: false,
+        workspace_available: true,
     }))
 }
 #[derive(Deserialize)]
