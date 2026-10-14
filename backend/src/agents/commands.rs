@@ -216,9 +216,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 let mut target = std::path::PathBuf::from("/workspaces");
                 for component in relative.components() {
                     target.push(component.as_os_str());
-                    if target != workspace {
-                        sandbox.args(["--dir"]).arg(&target);
-                    }
+                    sandbox.args(["--dir"]).arg(&target);
                 }
                 sandbox.args(["--bind", "/tmp/agentweb-mounts/workspace"]);
                 sandbox.arg(&workspace);
