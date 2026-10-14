@@ -230,24 +230,21 @@ async fn execute_run(state: AppState, run_id: &str) {
         Ok(Some(_)) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("新会话 ID 冲突")).await; return; }
         Err(_) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("读取会话失败")).await; return; }
     };
+    // Link the session before claiming it. If the process crashes immediately
+    // after the session claim, recovery can still see the association and will
+    // respect a live session lease instead of requeueing a duplicate run.
+    let linked = sqlx::query("UPDATE scheduled_task_runs SET agent_session_id=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=?")
+        .bind(&session.id).bind(&now_text).bind(run_id).bind(&state.worker_id).execute(&state.db).await;
+    if !matches!(linked, Ok(ref result) if result.rows_affected() == 1) {
+        tracing::warn!(%run_id, session_id = %session.id, "run ownership changed before session claim; Agent will not start");
+        return;
+    }
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
     let session_worker_id = format!("{}:{}", state.worker_id, Uuid::new_v4());
     let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(&state.db, run_id, &state.worker_id, "failed", Some("会话无法认领，可能正在运行")).await; return;
-    }
-    // Bind the session to the run only if this worker still owns the run.
-    // If ownership changed during session setup, release the session claim and do
-    // not start an Agent that no longer has a valid task lease.
-    let linked = sqlx::query("UPDATE scheduled_task_runs SET agent_session_id=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=?")
-        .bind(&session.id).bind(&now_text).bind(run_id).bind(&state.worker_id).execute(&state.db).await;
-    if !matches!(linked, Ok(ref result) if result.rows_affected() == 1) {
-        let release_time = stamp(Utc::now());
-        let _ = sqlx::query("UPDATE sessions SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
-            .bind(&release_time).bind(&session.id).bind(&session_worker_id).execute(&state.db).await;
-        tracing::warn!(%run_id, session_id = %session.id, "run ownership changed during setup; released session without starting Agent");
-        return;
     }
     let renew_db = state.db.clone();
     let renew_run = run_id.to_owned();
