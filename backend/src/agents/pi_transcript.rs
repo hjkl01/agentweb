@@ -247,7 +247,11 @@ mod tests {
 
     #[test]
     fn reads_only_user_and_assistant_messages() {
-        let dir = std::env::temp_dir().join(format!("pi-transcript-{}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pi-transcript-{}-{unique}", std::process::id()));
         let nested = dir.join(".agentweb-state").join("pi-sessions").join("--workspaces--");
         std::fs::create_dir_all(&nested).unwrap();
         // Pi uses <timestamp>_<session-id>.jsonl; exercise that exact format.
@@ -270,6 +274,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| message.content != "abandoned branch"));
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hi");
         assert_eq!(
