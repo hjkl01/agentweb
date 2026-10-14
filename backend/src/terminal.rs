@@ -118,6 +118,15 @@ async fn run_terminal(
                 return;
             }
         };
+        if workspace == std::path::Path::new("/workspaces") {
+            let mut socket = socket;
+            let _ = socket
+                .send(Message::Text(
+                    "Terminal workspace must be a project directory, not the shared /workspaces root.".into(),
+                ))
+                .await;
+            return;
+        }
         let mut command = CommandBuilder::new("bwrap");
         command.arg("--die-with-parent");
         command.arg("--new-session");
