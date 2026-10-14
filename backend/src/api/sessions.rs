@@ -297,8 +297,9 @@ pub async fn restart_missing_session(
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
     let session = match load_session(&s.db, &id).await {
         Ok(v) => v,
-        Err(StatusCode::NOT_FOUND) => {
-            // A project directory may have been removed manually. Let users
+        Err(StatusCode::NOT_FOUND) | Err(StatusCode::FORBIDDEN) => {
+            // A project directory may have been removed manually, or an old
+            // database row may point outside the permitted workspace root. Let users
             // clean up its orphaned, non-running session record without ever
             // interrupting a running execution whose workspace is unavailable.
             let row = match sqlx::query(
@@ -313,9 +314,15 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
             };
             let orphan = session_from_row(&row);
-            if orphan.status == "running"
-                || fs::canonicalize(&orphan.workspace).await.is_ok()
-            {
+            let base = fs::canonicalize(default_workspace_root()).await;
+            let workspace = fs::canonicalize(&orphan.workspace).await;
+            let workspace_is_valid = match (base, workspace) {
+                (Ok(base), Ok(workspace)) => {
+                    workspace.is_dir() && workspace.starts_with(&base) && workspace != base
+                }
+                _ => false,
+            };
+            if orphan.status == "running" || workspace_is_valid {
                 return StatusCode::NOT_FOUND;
             }
             let result = sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
