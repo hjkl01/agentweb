@@ -34,7 +34,7 @@ fn cron_field_matches(field: &str, value: u32, min: u32, max: u32) -> bool {
         let (lo, hi) = if base == "*" { (min, max) } else if let Some((a,b)) = base.split_once('-') {
             match (a.parse::<u32>(), b.parse::<u32>()) { (Ok(a),Ok(b)) => (a,b), _ => return false }
         } else {
-            match base.parse::<u32>() { Ok(v) => (v,v), Err(_) => return false }
+            match base.parse::<u32>() { Ok(v) if part.contains('/') => (v,max), Ok(v) => (v,v), Err(_) => return false }
         };
         value >= lo && value <= hi && (value-lo) % step == 0
     })
@@ -380,6 +380,13 @@ mod tests {
         let next = next_cron(&serde_json::json!({"expression":"* * * * *"}), now, "UTC").unwrap();
         assert!(next > now && next <= now + Duration::minutes(1));
     }
+    #[test]
+    fn cron_single_value_step_advances_through_field_range() {
+        let after = DateTime::parse_from_rfc3339("2026-01-01T00:05:00Z").unwrap().with_timezone(&Utc);
+        let next = next_cron(&serde_json::json!({"expression":"5/10 * * * *"}), after, "UTC").unwrap();
+        assert_eq!(next.to_rfc3339(), "2026-01-01T00:15:00+00:00");
+    }
+
     #[test]
     fn invalid_cron_is_rejected() {
         assert!(next_cron(&serde_json::json!({"expression":"not cron"}), Utc::now(), "UTC").is_none());
