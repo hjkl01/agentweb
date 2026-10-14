@@ -296,9 +296,21 @@ async fn execute_run(state: AppState, run_id: &str) {
             if let Err(error) = state.agents.adapter(&agent_kind_for_run).await.interrupt(&session_id_for_run, &session_worker_id).await {
                 tracing::error!(%run_id, session_id = %session_id_for_run, %error, "failed to interrupt scheduled Agent after lease loss");
             }
-            // Allow run_session to observe the interruption and perform its normal
-            // session finalization before the task-run lease is released.
-            run_future.await;
+            // The run lease is no longer ours, but the Agent may still be shutting
+            // down (or interrupt may have failed). Keep renewing the session lease
+            // while run_session is alive so recovery cannot launch a duplicate run
+            // merely because the old session lease timed out.
+            let mut session_guard = time::interval(StdDuration::from_secs((LEASE_SECONDS as u64 / 3).max(1)));
+            loop {
+                tokio::select! {
+                    _ = &mut run_future => break,
+                    _ = session_guard.tick() => {
+                        if !renew_session_lease_once(&state.db, &session_id_for_run, &session_worker_id).await {
+                            tracing::warn!(%run_id, session_id = %session_id_for_run, "could not renew session lease while waiting for Agent shutdown");
+                        }
+                    }
+                }
+            }
         }
     }
     heartbeat.abort();
