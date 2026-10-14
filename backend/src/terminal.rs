@@ -139,6 +139,10 @@ async fn run_terminal(
         // before masking /data and hiding the SQLite database from the shell.
         command.arg("--dir");
         command.arg("/run/agentweb-mounts");
+        command.arg("--dir");
+        command.arg("/run/agentweb-mounts/home");
+        command.arg("--dir");
+        command.arg("/run/agentweb-mounts/runtimes");
         command.arg("--ro-bind");
         command.arg("/data/home");
         command.arg("/run/agentweb-mounts/home");
