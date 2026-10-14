@@ -11,6 +11,20 @@ const LEASE_SECONDS: i64 = 30;
 
 fn stamp(t: DateTime<Utc>) -> String { t.to_rfc3339_opts(SecondsFormat::Millis, true) }
 
+fn session_lease_is_live(status: &str, lease_until: Option<&str>, now: DateTime<Utc>) -> bool {
+    if status != "running" {
+        return false;
+    }
+    let Some(lease) = lease_until else {
+        return true;
+    };
+    match DateTime::parse_from_rfc3339(lease) {
+        Ok(lease) => lease.with_timezone(&Utc) >= now,
+        // Unknown lease state must be handled conservatively to avoid duplicate execution.
+        Err(_) => true,
+    }
+}
+
 fn cron_field_matches(field: &str, value: u32, min: u32, max: u32) -> bool {
     field.split(',').any(|part| {
         let mut step_split = part.splitn(2, '/');
@@ -185,12 +199,16 @@ async fn execute_run(state: AppState, run_id: &str) {
     } else {
         Uuid::new_v4().to_string()
     };
-    let session_row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?")
+    let session_row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,lease_until FROM sessions WHERE id=?")
         .bind(&session_id).fetch_optional(&state.db).await;
     let session = match session_row {
         Ok(Some(r)) if strategy == "reuse" => {
             let status: String = r.get(4);
-            if status == "running" { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("目标会话正在执行")).await; return; }
+            let session_lease: Option<String> = r.get(8);
+            if session_lease_is_live(&status, session_lease.as_deref(), Utc::now()) {
+                finish_run(&state.db, run_id, &state.worker_id, "failed", Some("目标会话正在执行或租约状态未知")).await;
+                return;
+            }
             Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0 }
         }
         Ok(None) if strategy == "new" => {
@@ -300,6 +318,23 @@ pub fn start(state: AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn expired_reused_session_lease_can_be_reclaimed() {
+        let now = Utc::now();
+        let expired = stamp(now - Duration::seconds(1));
+        assert!(!session_lease_is_live("running", Some(&expired), now));
+    }
+
+    #[test]
+    fn live_or_unknown_reused_session_lease_is_not_reclaimed() {
+        let now = Utc::now();
+        let live = stamp(now + Duration::seconds(30));
+        assert!(session_lease_is_live("running", Some(&live), now));
+        assert!(session_lease_is_live("running", None, now));
+        assert!(session_lease_is_live("running", Some("invalid"), now));
+        assert!(!session_lease_is_live("idle", None, now));
+    }
+
     #[test]
     fn interval_schedule_skips_missed_occurrences_in_one_step() {
         let now = Utc::now();
