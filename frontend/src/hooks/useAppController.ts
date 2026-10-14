@@ -49,9 +49,9 @@ export function useAppController(
       window.location.href = "/";
     }
   };
-  const createChat = async (agentId?: string, model?: string) => {
+  const createChat = async (agentId: string | undefined, model: string | undefined, workspace: string) => {
     try {
-      const created = await session.createSession(agentId, model);
+      const created = await session.createSession(agentId, model, workspace);
       navigate(sessionPath(created.id));
       setNewChatOpen(false);
       setCatalogOpen(false);
