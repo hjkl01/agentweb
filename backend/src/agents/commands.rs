@@ -227,6 +227,33 @@ mod workspace_state_tests {
     }
 
     #[test]
+    fn pi_command_receives_workspace_session_directory() {
+        let workspace = temp_path("pi-command-state");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config = AgentConfig {
+            id: "pi".into(),
+            command: "pi".into(),
+            working_directory: Some(workspace.to_string_lossy().into_owned()),
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let mut command = build(ProcessKind::Pi, &config, "hello").unwrap();
+        let session_dir = command
+            .as_std_mut()
+            .get_envs()
+            .find(|(key, _)| *key == "PI_CODING_AGENT_SESSION_DIR")
+            .and_then(|(_, value)| value)
+            .expect("Pi session directory environment variable must be set");
+        let session_dir = std::path::PathBuf::from(session_dir);
+        assert!(session_dir.starts_with(workspace.canonicalize().unwrap()));
+        assert!(session_dir.is_dir());
+
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn pi_session_state_is_created_inside_workspace() {
         let workspace = temp_path("pi-state-workspace");
         std::fs::create_dir_all(&workspace).unwrap();
