@@ -100,7 +100,7 @@ async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // This closes the small recovery race where the run lease expires first and a
     // second worker would otherwise claim the run while the old Agent still owns
     // the session.
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND (julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND (s.lease_until IS NULL OR julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
         .bind(&now).bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
@@ -209,7 +209,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     };
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
     let session_worker_id = format!("{}:{}", state.worker_id, Uuid::new_v4());
-    let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
+    let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(&state.db, run_id, &state.worker_id, "failed", Some("会话无法认领，可能正在运行")).await; return;
@@ -370,6 +370,39 @@ mod tests {
         let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
             .fetch_one(&pool).await.unwrap();
         assert_eq!(status, "queued", "must requeue after the associated session lease expires");
+    }
+
+
+    #[tokio::test]
+    async fn expired_run_does_not_requeue_when_running_session_has_no_lease() {
+        let pool = test_pool().await;
+        let old = stamp(Utc::now() - Duration::minutes(1));
+        sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s-no-lease','running',NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-no-lease','t1','task','running',?,'s-no-lease','dead-worker',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-no-lease'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, "running", "an unknown session lease must not trigger a possible duplicate execution");
+    }
+
+    #[tokio::test]
+    async fn expired_run_does_not_requeue_when_session_lease_is_malformed() {
+        let pool = test_pool().await;
+        let old = stamp(Utc::now() - Duration::minutes(1));
+        sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s-bad-lease','running','bad-timestamp')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-bad-lease','t1','task','running',?,'s-bad-lease','dead-worker',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-bad-lease'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, "running", "a malformed session lease must be treated conservatively");
     }
 
     #[tokio::test]
