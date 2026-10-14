@@ -77,11 +77,8 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
     let mut scanned_entries = 0usize;
     let mut truncated = false;
     const MAX_SCANNED_ENTRIES: usize = 20_000;
+
     while let Some(dir) = pending.pop() {
-        if scanned_entries >= MAX_SCANNED_ENTRIES {
-            truncated = true;
-            break;
-        }
         let mut entries = fs::read_dir(&dir)
             .await
             .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -90,11 +87,14 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         {
-            scanned_entries += 1;
-            if result.len() >= 2000 || scanned_entries >= MAX_SCANNED_ENTRIES {
+            // Read one entry beyond the scan budget only to determine whether
+            // more work actually exists; do not process it.
+            if scanned_entries >= MAX_SCANNED_ENTRIES {
                 truncated = true;
                 break;
             }
+            scanned_entries += 1;
+
             let name = entry.file_name().to_string_lossy().into_owned();
             if ignored(&name) {
                 continue;
@@ -119,9 +119,14 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
                 Ok(p) => p.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
+
             if relative.to_lowercase().contains(&needle) {
+                if result.len() >= 2000 {
+                    truncated = true;
+                    break;
+                }
                 result.push(TreeItem {
-                    name: name.clone(),
+                    name,
                     path: relative,
                     kind: if metadata.is_dir() {
                         "directory"
@@ -135,11 +140,11 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
                 pending.push(canonical);
             }
         }
-        if result.len() >= 2000 {
-            truncated = true;
+        if truncated {
             break;
         }
     }
+
     result.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
     Ok((result, truncated))
 }
