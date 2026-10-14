@@ -22,6 +22,7 @@ RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/
     tar \
     git \
     procps-ng \
+    bubblewrap \
     util-linux \
     bash \
     coreutils \
