@@ -203,3 +203,51 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
         .stderr(std::process::Stdio::piped());
     Ok(command)
 }
+
+#[cfg(test)]
+mod workspace_state_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn pi_session_state_is_created_inside_workspace() {
+        let workspace = temp_path("pi-state-workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let state = ensure_workspace_state_dir(
+            &workspace,
+            std::path::Path::new(".agentweb-state/pi-sessions"),
+        )
+        .unwrap();
+
+        assert!(state.starts_with(workspace.canonicalize().unwrap()));
+        assert!(state.is_dir());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_pi_session_state_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = temp_path("pi-state-workspace");
+        let outside = temp_path("pi-state-outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, workspace.join(".agentweb-state")).unwrap();
+
+        let result = ensure_workspace_state_dir(
+            &workspace,
+            std::path::Path::new(".agentweb-state/pi-sessions"),
+        );
+
+        assert!(result.is_err());
+        assert!(!outside.join("pi-sessions").exists());
+        std::fs::remove_dir_all(workspace).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+}
