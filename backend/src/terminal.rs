@@ -100,6 +100,9 @@ async fn run_terminal(
         return;
     }
 
+    let shell = std::env::var("AGENTWEB_TERMINAL_SHELL")
+        .unwrap_or_else(|_| "/bin/bash".into());
+
     #[cfg(not(target_os = "linux"))]
     let mut command = CommandBuilder::new("/bin/false");
 
@@ -115,7 +118,6 @@ async fn run_terminal(
                 return;
             }
         };
-        let shell = std::env::var("AGENTWEB_TERMINAL_SHELL").unwrap_or_else(|_| "/bin/bash".into());
         let mut command = CommandBuilder::new("bwrap");
         command.arg("--die-with-parent");
         command.arg("--new-session");
