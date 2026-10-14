@@ -151,13 +151,11 @@ async fn run_git_limited(
 async fn git_status(
     root: &PathBuf,
 ) -> Result<std::collections::HashMap<String, String>, StatusCode> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-        .output()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let output = run_git_limited(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        MAX_DIFF_TOTAL_BYTES,
+    ).await?;
     if !output.status.success() {
         return Ok(Default::default());
     }
@@ -432,13 +430,18 @@ pub async fn workspace_diff(
         truncated = true;
     }
     if !truncated {
-        let untracked = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["ls-files", "--others", "--exclude-standard", "-z"])
-            .output()
-            .await
-            .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        let untracked = run_git_limited(
+            &root,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+            MAX_DIFF_TOTAL_BYTES,
+        ).await?;
+        if untracked.truncated {
+            return Ok(Json(serde_json::json!({
+                "status": "ok",
+                "diff": diff,
+                "truncated": true
+            })));
+        }
         if untracked.status.success() {
             for entry in untracked
                 .stdout
