@@ -23,7 +23,20 @@ pub async fn list_messages(
     let Some(native_session_id) = session.native_session_id.as_deref() else {
         return Ok(Json(Vec::new()));
     };
-    Ok(Json(read_messages_from_workspace(std::path::Path::new(&session.workspace), native_session_id)))
+    // Reading Pi JSONL is synchronous filesystem traversal plus JSON parsing.
+    // Keep that work off Tokio's async executor so frequent transcript polling
+    // cannot stall unrelated API requests.
+    let workspace = session.workspace.clone();
+    let native_session_id = native_session_id.to_owned();
+    let messages = tokio::task::spawn_blocking(move || {
+        read_messages_from_workspace(std::path::Path::new(&workspace), &native_session_id)
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "Pi transcript reader task failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(messages))
 }
 
 #[derive(Deserialize)]
