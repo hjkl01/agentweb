@@ -27,6 +27,38 @@ fn default_timezone() -> String { "UTC".into() }
 fn default_strategy() -> String { "new".into() }
 fn default_enabled() -> bool { true }
 
+fn cron_field_valid(field: &str, min: u32, max: u32) -> bool {
+    if field.is_empty() { return false; }
+    field.split(',').all(|part| {
+        if part.is_empty() { return false; }
+        let (base, step) = match part.split_once('/') {
+            Some((base, raw_step)) => {
+                let Ok(step) = raw_step.parse::<u32>() else { return false };
+                if step == 0 || base.is_empty() { return false; }
+                (base, step)
+            }
+            None => (part, 1),
+        };
+        let (start, end) = if base == "*" {
+            (min, max)
+        } else if let Some((raw_start, raw_end)) = base.split_once('-') {
+            let (Ok(start), Ok(end)) = (raw_start.parse::<u32>(), raw_end.parse::<u32>()) else { return false };
+            if start > end { return false; }
+            (start, end)
+        } else {
+            let Ok(value) = base.parse::<u32>() else { return false };
+            (value, value)
+        };
+        start >= min && end <= max && start <= end && step > 0
+    })
+}
+
+fn cron_expression_valid(expression: &str) -> bool {
+    let fields: Vec<_> = expression.split_whitespace().collect();
+    fields.len() == 5
+        && fields.iter().zip([(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)])
+            .all(|(field, (min, max))| cron_field_valid(field, min, max))
+}
 fn validate(v: &TaskInput) -> Result<(), StatusCode> {
     if v.name.trim().is_empty() || v.name.chars().count() > 120 || v.prompt.trim().is_empty()
         || v.agent_id.trim().is_empty() || v.working_directory.trim().is_empty() {
@@ -42,7 +74,7 @@ fn validate(v: &TaskInput) -> Result<(), StatusCode> {
         }
         "cron" => {
             let expr = v.schedule_config.get("expression").and_then(Value::as_str).unwrap_or("");
-            if expr.split_whitespace().count() != 5 || !matches!(v.timezone.as_str(), "UTC" | "Etc/UTC") { return Err(StatusCode::BAD_REQUEST); }
+            if !cron_expression_valid(expr) || !matches!(v.timezone.as_str(), "UTC" | "Etc/UTC") { return Err(StatusCode::BAD_REQUEST); }
         }
         _ => return Err(StatusCode::BAD_REQUEST),
     }
@@ -108,6 +140,32 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
     };
     if dt <= now { return Err(StatusCode::BAD_REQUEST); }
     Ok(Some(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
+}
+
+
+#[cfg(test)]
+mod cron_validation_tests {
+    use super::{cron_expression_valid, cron_field_valid};
+
+    #[test]
+    fn accepts_valid_cron_fields() {
+        assert!(cron_expression_valid("*/5 9-17 * * 1-5"));
+        assert!(cron_expression_valid("0 0 1 1 *"));
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_malformed_cron_fields() {
+        for expression in ["99 * * * *", "* 24 * * *", "* * 0 * *", "* * * 13 *", "* * * * 7", "*/0 * * * *", "5-2 * * * *", "1,,2 * * * *", "x * * * *", "* * * *"] {
+            assert!(!cron_expression_valid(expression), "unexpectedly accepted: {}", expression);
+        }
+    }
+
+    #[test]
+    fn rejects_empty_or_invalid_field_parts() {
+        assert!(!cron_field_valid("", 0, 59));
+        assert!(!cron_field_valid("1,", 0, 59));
+        assert!(!cron_field_valid("*/abc", 0, 59));
+    }
 }
 
 pub async fn list(State(s): State<AppState>) -> Result<Json<Vec<Value>>, StatusCode> {
