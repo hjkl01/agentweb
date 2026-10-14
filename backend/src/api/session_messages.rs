@@ -11,6 +11,11 @@ use serde::Deserialize;
 
 const SESSION_LEASE_SECONDS: i64 = 30;
 
+// Bound concurrent filesystem scans and JSON parsing per backend process.
+// Requests wait asynchronously instead of creating an unbounded queue of
+// blocking transcript readers.
+static TRANSCRIPT_READ_LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -26,9 +31,19 @@ pub async fn list_messages(
     // Reading Pi JSONL is synchronous filesystem traversal plus JSON parsing.
     // Keep that work off Tokio's async executor so frequent transcript polling
     // cannot stall unrelated API requests.
+    let permit = TRANSCRIPT_READ_LIMIT
+        .acquire()
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Pi transcript read limiter is unavailable");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
     let workspace = session.workspace.clone();
     let native_session_id = native_session_id.to_owned();
     let messages = tokio::task::spawn_blocking(move || {
+        // Keep the permit for the entire blocking read, including if the HTTP
+        // request is cancelled after the worker has started.
+        let _permit = permit;
         read_messages_from_workspace(std::path::Path::new(&workspace), &native_session_id)
     })
     .await
