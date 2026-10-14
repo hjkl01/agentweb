@@ -148,6 +148,10 @@ export function useSessionEvents(options: Options) {
         reconnectDelay = Math.min(reconnectDelay * 2, 8000);
       };
       connection.onmessage = (event) => {
+        // WebSocket close is asynchronous: a queued message from the previous
+        // session can still arrive after cleanup. Never let an obsolete socket
+        // mutate the newly selected session's UI state.
+        if (disposed || ws !== connection) return;
         if (!snapshotReady) {
           // Bound memory use if the HTTP snapshot stalls. Reconnecting will trigger
           // a fresh snapshot and recover native-session-backed transcripts.
