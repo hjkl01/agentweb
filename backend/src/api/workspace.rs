@@ -69,8 +69,12 @@ async fn read_untracked_file(root: &FsPath, relative: &str) -> Option<Vec<u8>> {
         return None;
     }
     let path = root.join(relative);
-    // Canonicalize before reading so a symlink cannot disclose a file outside
-    // the workspace. Only regular files within the root are eligible for diff.
+    // Reject symlinks entirely so diffs represent the link as a filesystem
+    // entry rather than reading its target, and cannot disclose host files.
+    let link_metadata = fs::symlink_metadata(&path).await.ok()?;
+    if link_metadata.file_type().is_symlink() {
+        return None;
+    }
     let canonical = fs::canonicalize(&path).await.ok()?;
     if !canonical.starts_with(root) {
         return None;
@@ -157,6 +161,15 @@ pub async fn workspace_files(
                 break;
             }
             let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            // Keep symbolic links out of recursive traversal. A link may point
+            // outside the workspace or back to an ancestor and create a cycle.
+            if file_type.is_symlink() {
+                continue;
+            }
             let metadata = entry
                 .metadata()
                 .await
