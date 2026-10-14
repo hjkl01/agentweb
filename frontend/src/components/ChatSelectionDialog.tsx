@@ -27,6 +27,7 @@ export function ChatSelectionDialog({
   const [agentId, setAgentId] = useState(defaultAgentId || "");
   const [model, setModel] = useState(defaultModel || "");
   const [workspace, setWorkspace] = useState("");
+  const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [models, setModels] = useState<AgentModel[]>([]);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
@@ -83,11 +84,15 @@ export function ChatSelectionDialog({
           <input
             value={workspace}
             onChange={(e) => setWorkspace(e.target.value)}
-            placeholder="例如：my-project"
+            placeholder="选择已有目录或输入新目录名"
+            list="agentweb-workspace-options"
             autoComplete="off"
             required
           />
-          <small className="field-hint">填写工作区根目录下的相对路径；目录不存在时会自动创建。</small>
+          <datalist id="agentweb-workspace-options">
+            {workspaces.map((item) => <option key={item} value={item} />)}
+          </datalist>
+          <small className="field-hint">可选择已有工作区，或输入新目录名。路径限定在 AgentWeb 工作区根目录内。</small>
           <label className="model-picker-label">Agent</label>
           <select value={agentId} onChange={(e) => chooseAgent(e.target.value)}>
             <option value="">请选择已安装 Agent</option>
