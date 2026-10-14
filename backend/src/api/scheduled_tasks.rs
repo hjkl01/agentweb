@@ -27,6 +27,8 @@ fn default_timezone() -> String { "UTC".into() }
 fn default_strategy() -> String { "new".into() }
 fn default_enabled() -> bool { true }
 
+fn step_split_is_present(part: &str) -> bool { part.contains('/') }
+
 fn cron_field_valid(field: &str, min: u32, max: u32) -> bool {
     if field.is_empty() { return false; }
     field.split(',').all(|part| {
@@ -47,7 +49,7 @@ fn cron_field_valid(field: &str, min: u32, max: u32) -> bool {
             (start, end)
         } else {
             let Ok(value) = base.parse::<u32>() else { return false };
-            (value, value)
+            if step_split_is_present(part) { (value, max) } else { (value, value) }
         };
         start >= min && end <= max && start <= end && step > 0
     })
@@ -158,6 +160,11 @@ mod cron_validation_tests {
         for expression in ["99 * * * *", "* 24 * * *", "* * 0 * *", "* * * 13 *", "* * * * 7", "*/0 * * * *", "5-2 * * * *", "1,,2 * * * *", "x * * * *", "* * * *"] {
             assert!(!cron_expression_valid(expression), "unexpectedly accepted: {}", expression);
         }
+    }
+
+    #[test]
+    fn accepts_single_value_with_step_as_range_to_field_max() {
+        assert!(cron_field_valid("5/10", 0, 59));
     }
 
     #[test]
