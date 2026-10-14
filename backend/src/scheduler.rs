@@ -100,7 +100,7 @@ async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // This closes the small recovery race where the run lease expires first and a
     // second worker would otherwise claim the run while the old Agent still owns
     // the session.
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?))) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND (julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND (julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
         .bind(&now).bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
@@ -413,4 +413,18 @@ mod tests {
     }
 
 
+
+    #[tokio::test]
+    async fn malformed_run_lease_is_recovered_instead_of_stuck_forever() {
+        let pool = test_pool().await;
+        let now = stamp(Utc::now());
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,lease_owner,lease_until,created_at,updated_at) VALUES('r-malformed','t1','task','running',?,'dead-worker','not-a-timestamp',?,?)")
+            .bind(&now).bind(&now).bind(&now).execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+
+        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-malformed'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(status, "queued", "invalid lease timestamps must be treated as expired");
+    }
 }
