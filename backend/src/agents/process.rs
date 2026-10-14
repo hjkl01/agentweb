@@ -360,7 +360,15 @@ impl ProcessAdapter {
         let command = commands::build(kind, config, message)?;
         let mut command = Self::wrap_process_group(command);
         command.kill_on_drop(true);
-        let mut child_process = command.spawn()?;
+        let mut child_process = command.spawn().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow!(
+                    "failed to start agent process: sandbox launch was denied by the OS ({error}); check bubblewrap namespace support and the container's seccomp/AppArmor policy"
+                )
+            } else {
+                anyhow!("failed to spawn agent process: {error}")
+            }
+        })?;
         let process_id = child_process.id();
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
