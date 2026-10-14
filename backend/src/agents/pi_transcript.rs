@@ -198,6 +198,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pi-transcript-{}", std::process::id()));
         let nested = dir.join(".agentweb-state").join("pi-sessions").join("--workspaces--");
         std::fs::create_dir_all(&nested).unwrap();
+        // Pi uses <timestamp>_<session-id>.jsonl; exercise that exact format.
         let file = nested.join("2026-01-01T00-00-00-000Z_abc123.jsonl");
         std::fs::write(
             &file,
