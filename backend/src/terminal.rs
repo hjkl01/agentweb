@@ -138,17 +138,17 @@ async fn run_terminal(
         // Preserve only required read-only directories under temporary aliases
         // before masking /data and hiding the SQLite database from the shell.
         command.arg("--dir");
-        command.arg("/run/agentweb-mounts");
+        command.arg("/tmp/agentweb-mounts");
         command.arg("--dir");
-        command.arg("/run/agentweb-mounts/home");
+        command.arg("/tmp/agentweb-mounts/home");
         command.arg("--dir");
-        command.arg("/run/agentweb-mounts/runtimes");
+        command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("--ro-bind");
         command.arg("/data/home");
-        command.arg("/run/agentweb-mounts/home");
+        command.arg("/tmp/agentweb-mounts/home");
         command.arg("--ro-bind");
         command.arg("/data/runtimes");
-        command.arg("/run/agentweb-mounts/runtimes");
+        command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("--tmpfs");
         command.arg("/data");
         command.arg("--dir");
@@ -156,10 +156,10 @@ async fn run_terminal(
         command.arg("--dir");
         command.arg("/data/runtimes");
         command.arg("--ro-bind");
-        command.arg("/run/agentweb-mounts/home");
+        command.arg("/tmp/agentweb-mounts/home");
         command.arg("/data/home");
         command.arg("--ro-bind");
-        command.arg("/run/agentweb-mounts/runtimes");
+        command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("/data/runtimes");
         command.arg("--bind");
         command.arg(&workspace);
