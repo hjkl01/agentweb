@@ -7,6 +7,11 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 10s
+    # Bubblewrap creates nested Linux namespaces for workspace isolation.
+    # Docker's default seccomp profile blocks the namespace syscalls it needs.
+    # Keep the app unprivileged; do not use privileged: true or add SYS_ADMIN.
+    security_opt:
+      - seccomp=unconfined
     ports:
       - "8080:8080"
     volumes:
