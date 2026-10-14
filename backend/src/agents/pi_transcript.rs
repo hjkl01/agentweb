@@ -211,9 +211,9 @@ mod tests {
         )
         .unwrap();
 
-        std::env::set_var("PI_CODING_AGENT_DIR", &dir);
-        let messages = read_messages("abc123");
-        std::env::remove_var("PI_CODING_AGENT_DIR");
+        // Use an explicit root so this test is independent of process-wide
+        // environment variables and can safely run alongside other tests.
+        let messages = read_messages_from_root(&dir.join("sessions"), "abc123");
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(messages.len(), 2);
