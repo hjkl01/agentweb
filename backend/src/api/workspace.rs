@@ -266,6 +266,9 @@ pub async fn workspace_files(
         }
     }
     for (path, status) in &statuses {
+        if out.len() >= MAX_WORKSPACE_ENTRIES {
+            break;
+        }
         if status == "deleted" && !out.iter().any(|item| item["path"].as_str() == Some(path)) {
             out.push(serde_json::json!({ "name": path.rsplit('/').next().unwrap_or(path), "path": path, "kind": "file", "size": 0, "status": status }));
         }
