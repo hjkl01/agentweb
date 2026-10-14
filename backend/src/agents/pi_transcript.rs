@@ -140,11 +140,63 @@ pub fn read_messages(native_session_id: &str) -> Vec<TranscriptMessage> {
 }
 
 fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessage> {
+    let entries = content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .map(|entry| (index, entry))
+        })
+        .collect::<Vec<_>>();
+
+    // Pi v2/v3 sessions are trees. On load, Pi restores the leaf from the last
+    // persisted entry, then derives the visible branch by following parentId.
+    // Older linear sessions have no parentId fields and remain readable as-is.
+    let has_tree_links = entries.iter().any(|(_, entry)| entry.get("parentId").is_some());
+    let active_ids = if has_tree_links {
+        let by_id = entries
+            .iter()
+            .filter_map(|(_, entry)| {
+                entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id.to_owned(), entry))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut active = std::collections::HashSet::new();
+        let mut current = entries
+            .iter()
+            .rev()
+            .find_map(|(_, entry)| {
+                (entry.get("type").and_then(Value::as_str) != Some("session"))
+                    .then(|| entry.get("id").and_then(Value::as_str))
+                    .flatten()
+            });
+        while let Some(id) = current {
+            if !active.insert(id.to_owned()) {
+                break;
+            }
+            current = by_id
+                .get(id)
+                .and_then(|entry| entry.get("parentId"))
+                .and_then(Value::as_str);
+        }
+        Some(active)
+    } else {
+        None
+    };
+
     let mut messages = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for (index, entry) in entries {
+        if let Some(active_ids) = &active_ids {
+            let Some(id) = entry.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if !active_ids.contains(id) {
+                continue;
+            }
+        }
         if entry.get("type").and_then(Value::as_str) != Some("message") {
             continue;
         }
@@ -204,9 +256,10 @@ mod tests {
             &file,
             [
                 r#"{"type":"session","id":"abc123"}"#,
-                r#"{"type":"message","id":"m1","timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
-                r#"{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"yo"}]}}"#,
-                r#"{"type":"message","id":"m3","message":{"role":"toolResult","content":[{"type":"text","text":"out"}]}}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                r#"{"type":"message","id":"m2","parentId":"m1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"yo"}]}}"#,
+                r#"{"type":"message","id":"m3","parentId":"m1","message":{"role":"user","content":"abandoned branch"}}"#,
+                r#"{"type":"message","id":"m4","parentId":"m2","message":{"role":"toolResult","content":[{"type":"text","text":"out"}]}}"#,
             ]
             .join("\n"),
         )
