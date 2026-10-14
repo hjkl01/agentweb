@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FileItem } from "../types";
 
 type TreeNode = {
@@ -153,15 +153,21 @@ export function FileTree({ files, filter, onOpenFile }: Props) {
   const fullTree = useMemo(() => buildTree(files), [files]);
   const tree = useMemo(() => filterTree(fullTree, filter), [fullTree, filter]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const autoExpandedRoots = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const rootDirectories = fullTree
       .filter((node) => node.kind === "directory")
       .map((node) => node.path);
-    if (rootDirectories.length === 0) return;
+    const newlyAddedRoots = rootDirectories.filter(
+      (path) => !autoExpandedRoots.current.has(path),
+    );
+    if (newlyAddedRoots.length === 0) return;
+
+    newlyAddedRoots.forEach((path) => autoExpandedRoots.current.add(path));
     setExpanded((current) => {
       const next = new Set(current);
-      rootDirectories.forEach((path) => next.add(path));
+      newlyAddedRoots.forEach((path) => next.add(path));
       return next;
     });
   }, [fullTree]);
