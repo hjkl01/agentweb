@@ -92,17 +92,16 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         let path = entry.path();
-        let metadata = match fs::metadata(&path).await {
-            Ok(metadata) if metadata.is_dir() => metadata,
+        match fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_dir() => {}
             _ => continue,
-        };
-        let _ = metadata;
+        }
         let canonical = match fs::canonicalize(&path).await {
             Ok(path) if path.starts_with(&base) => path,
             _ => continue,
         };
         if let Ok(relative) = canonical.strip_prefix(&base) {
-            workspaces.push(relative.to_string_lossy().replace('\\\\', "/"));
+            workspaces.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
     workspaces.sort();
