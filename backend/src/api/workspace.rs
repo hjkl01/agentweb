@@ -448,7 +448,13 @@ pub async fn workspace_diff(
         fallback
     };
     if diff.len() > MAX_DIFF_TOTAL_BYTES {
-        let cut = diff[..MAX_DIFF_TOTAL_BYTES]
+        // The byte limit may land inside a multi-byte UTF-8 character.
+        // Find a valid boundary before searching for the last complete line.
+        let mut end = MAX_DIFF_TOTAL_BYTES;
+        while end > 0 && !diff.is_char_boundary(end) {
+            end -= 1;
+        }
+        let cut = diff[..end]
             .rfind('\n')
             .map(|n| n + 1)
             .unwrap_or(0);
@@ -552,6 +558,16 @@ mod workspace_file_safety_tests {
 
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn append_diff_truncates_only_at_utf8_boundaries() {
+        let mut diff = String::new();
+        let block = format!("{}你\n", "x".repeat(MAX_DIFF_TOTAL_BYTES - 2));
+        let truncated = append_diff(&mut diff, &block);
+        assert!(truncated);
+        assert!(diff.is_char_boundary(diff.len()));
+        assert!(diff.len() <= MAX_DIFF_TOTAL_BYTES);
     }
 
     #[tokio::test]
