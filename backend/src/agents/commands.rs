@@ -243,7 +243,7 @@ mod workspace_state_tests {
         let session_dir = command
             .as_std_mut()
             .get_envs()
-            .find(|(key, _)| *key == "PI_CODING_AGENT_SESSION_DIR")
+            .find(|(key, _)| key == std::ffi::OsStr::new("PI_CODING_AGENT_SESSION_DIR"))
             .and_then(|(_, value)| value)
             .expect("Pi session directory environment variable must be set");
         let session_dir = std::path::PathBuf::from(session_dir);
