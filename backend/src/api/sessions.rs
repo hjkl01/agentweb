@@ -115,7 +115,11 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
 
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
-    let base = match fs::canonicalize(default_workspace_root()).await {
+    let base_path = default_workspace_root();
+    if fs::create_dir_all(&base_path).await.is_err() {
+        return Json(rows.iter().map(session_from_row).collect());
+    }
+    let base = match fs::canonicalize(&base_path).await {
         Ok(path) => path,
         Err(_) => return Json(rows.iter().map(session_from_row).collect()),
     };
