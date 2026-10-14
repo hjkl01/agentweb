@@ -182,10 +182,8 @@ async fn run_terminal(
             let mut target = std::path::PathBuf::from("/workspaces");
             for component in relative.components() {
                 target.push(component.as_os_str());
-                if target != workspace {
-                    command.arg("--dir");
-                    command.arg(&target);
-                }
+                command.arg("--dir");
+                command.arg(&target);
             }
             command.arg("--bind");
             command.arg("/tmp/agentweb-mounts/workspace");
