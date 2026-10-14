@@ -246,6 +246,50 @@ mod tests {
     }
 
     #[test]
+    fn keeps_active_messages_across_compaction_and_ignores_other_branches() {
+        let content = [
+            r#"{"type":"session","id":"session-1","version":3}"#,
+            r#"{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":"before compact"}}"#,
+            r#"{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":"answer before compact"}}"#,
+            r#"{"type":"compaction","id":"c1","parentId":"a1","firstKeptEntryId":"a1","summary":"summary"}"#,
+            r#"{"type":"message","id":"u2","parentId":"c1","message":{"role":"user","content":"after compact"}}"#,
+            r#"{"type":"message","id":"alt","parentId":"u1","message":{"role":"user","content":"other branch"}}"#,
+        ]
+        .join("\n");
+
+        let messages = parse_messages(&content, "session-1");
+        let contents = messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec!["before compact", "answer before compact", "after compact"]
+        );
+    }
+
+    #[test]
+    fn handles_missing_parent_and_cyclic_parent_links_without_panicking() {
+        let missing_parent = [
+            r#"{"type":"session","id":"session-2","version":3}"#,
+            r#"{"type":"message","id":"u1","parentId":"deleted-entry","message":{"role":"user","content":"surviving leaf"}}"#,
+        ]
+        .join("\n");
+        let messages = parse_messages(&missing_parent, "session-2");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "surviving leaf");
+
+        let cycle = [
+            r#"{"type":"session","id":"session-3","version":3}"#,
+            r#"{"type":"message","id":"a","parentId":"b","message":{"role":"user","content":"A"}}"#,
+            r#"{"type":"message","id":"b","parentId":"a","message":{"role":"assistant","content":"B"}}"#,
+        ]
+        .join("\n");
+        let messages = parse_messages(&cycle, "session-3");
+        assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
     fn reads_only_user_and_assistant_messages() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
