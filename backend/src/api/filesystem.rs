@@ -2,7 +2,8 @@ use super::sessions::get_session;
 use crate::state::AppState;
 use axum::{
     extract::{Path as AxumPath, Query, State},
-    http::StatusCode,
+    http::{header::HeaderName, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -143,7 +144,7 @@ pub async fn tree(
     AxumPath(id): AxumPath<String>,
     State(state): State<AppState>,
     Query(query): Query<TreeQuery>,
-) -> Result<Json<Vec<TreeItem>>, StatusCode> {
+) -> Result<Response, StatusCode> {
     let session = get_session(AxumPath(id), State(state))
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?
@@ -157,7 +158,16 @@ pub async fn tree(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        return Ok(Json(search_tree(&root, search).await?));
+        let result = search_tree(&root, search).await?;
+        let truncated = result.len() >= 2000;
+        let mut response = Json(result).into_response();
+        if truncated {
+            response.headers_mut().insert(
+                HeaderName::from_static("x-results-truncated"),
+                HeaderValue::from_static("true"),
+            );
+        }
+        return Ok(response);
     }
     let current = match query.path.as_deref() {
         None | Some("") => root.clone(),
@@ -214,7 +224,15 @@ pub async fn tree(
             .cmp(b.kind)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    Ok(Json(result))
+    let truncated = result.len() >= 2000;
+    let mut response = Json(result).into_response();
+    if truncated {
+        response.headers_mut().insert(
+            HeaderName::from_static("x-results-truncated"),
+            HeaderValue::from_static("true"),
+        );
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
