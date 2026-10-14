@@ -5,6 +5,7 @@
 //! `message` entry carries the provider message that agentweb renders.
 use serde::Serialize;
 use serde_json::Value;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
