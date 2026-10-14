@@ -100,7 +100,7 @@ async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // This closes the small recovery race where the run lease expires first and a
     // second worker would otherwise claim the run while the old Agent still owns
     // the session.
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND s.lease_until>=?))")
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?))) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND s.lease_until IS NOT NULL AND (julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
         .bind(&now).bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
