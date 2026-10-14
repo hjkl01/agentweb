@@ -115,6 +115,8 @@ async fn materialize_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let now = stamp(Utc::now());
+    sqlx::query("UPDATE scheduled_task_runs SET status='failed',finished_at=?,error_message=COALESCE(error_message,'parent task missing'),lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM scheduled_tasks t WHERE t.id=scheduled_task_runs.task_id)")
+        .bind(&now).bind(&now).execute(pool).await?;
     // Do not requeue a run while its associated session still has a live lease.
     // This closes the small recovery race where the run lease expires first and a
     // second worker would otherwise claim the run while the old Agent still owns
