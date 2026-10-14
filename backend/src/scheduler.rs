@@ -554,6 +554,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn orphaned_queued_run_is_failed_without_touching_valid_queue() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY)")
+            .execute(&pool).await.unwrap();
+        let now = stamp(Utc::now());
+        sqlx::query("INSERT INTO scheduled_tasks(id) VALUES('existing-task')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES('orphan','deleted-task','deleted','queued',?,?,?),('valid','existing-task','valid','queued',?,?,?)")
+            .bind(&now).bind(&now).bind(&now)
+            .bind(&now).bind(&now).bind(&now)
+            .execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+
+        let orphan: (String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status,error_message,lease_owner FROM scheduled_task_runs WHERE id='orphan'"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(orphan.0, "failed");
+        assert!(orphan.1.as_deref().is_some_and(|message| message.contains("parent task missing")));
+        assert_eq!(orphan.2, None);
+        let valid: String = sqlx::query_scalar(
+            "SELECT status FROM scheduled_task_runs WHERE id='valid'"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(valid, "queued", "valid tasks must remain queued");
+    }
+
+    #[tokio::test]
     async fn malformed_run_lease_is_recovered_instead_of_stuck_forever() {
         let pool = test_pool().await;
         let now = stamp(Utc::now());
