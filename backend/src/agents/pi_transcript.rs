@@ -207,15 +207,18 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
     // Older linear sessions have no parentId fields and remain readable as-is.
     let has_tree_links = entries.iter().any(|(_, entry)| entry.get("parentId").is_some());
     let active_ids = if has_tree_links {
-        let by_id = entries
-            .iter()
-            .filter_map(|(_, entry)| {
-                entry
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(|id| (id.to_owned(), entry))
-            })
-            .collect::<std::collections::HashMap<_, _>>();
+        let mut by_id = std::collections::HashMap::new();
+        for (_, entry) in &entries {
+            let Some(id) = entry.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            // IDs identify nodes in Pi's session tree. A duplicate makes
+            // parent traversal ambiguous, so fail closed rather than choosing
+            // an arbitrary branch based on JSONL ordering.
+            if by_id.insert(id.to_owned(), entry).is_some() {
+                return Vec::new();
+            }
+        }
         let mut active = std::collections::HashSet::new();
         let mut current = entries
             .iter()
@@ -390,6 +393,18 @@ mod tests {
             contents,
             vec!["before compact", "answer before compact", "after compact"]
         );
+    }
+
+    #[test]
+    fn rejects_tree_with_duplicate_entry_ids() {
+        let content = [
+            r#"{"type":"session","id":"session-duplicate","version":3}"#,
+            r#"{"type":"message","id":"same","parentId":null,"message":{"role":"user","content":"first"}} "#,
+            r#"{"type":"message","id":"same","parentId":null,"message":{"role":"assistant","content":"ambiguous duplicate"}}"#,
+        ]
+        .join("\n");
+
+        assert!(parse_messages(&content, "session-duplicate").is_empty());
     }
 
     #[test]
