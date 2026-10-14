@@ -272,6 +272,37 @@ pub async fn restart_missing_session(
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
     let session = match load_session(&s.db, &id).await {
         Ok(v) => v,
+        Err(StatusCode::NOT_FOUND) => {
+            // A project directory may have been removed manually. Let users
+            // clean up its orphaned, non-running session record without ever
+            // interrupting a running execution whose workspace is unavailable.
+            let row = match sqlx::query(
+                "SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?",
+            )
+            .bind(&id)
+            .fetch_optional(&s.db)
+            .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => return StatusCode::NOT_FOUND,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            let orphan = session_from_row(&row);
+            if orphan.status == "running"
+                || fs::canonicalize(&orphan.workspace).await.is_ok()
+            {
+                return StatusCode::NOT_FOUND;
+            }
+            let result = sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
+                .bind(&id)
+                .execute(&s.db)
+                .await;
+            return match result {
+                Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT,
+                Ok(_) => StatusCode::CONFLICT,
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+        }
         Err(e) => return e,
     };
     if session.status == "running" {
