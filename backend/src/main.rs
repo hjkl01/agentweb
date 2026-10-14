@@ -213,9 +213,12 @@ async fn main() -> Result<()> {
         );
         // Execution tokens are prefixed with the process worker ID. Only stop
         // sessions owned by this backend process; other processes may share SQLite.
-        let owner_pattern = format!("{}:%", shutdown_worker);
-        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND worker_id LIKE ?")
-            .bind(&owner_pattern)
+        // Match an exact worker prefix instead of LIKE, where '_' and '%' in a
+        // worker ID would otherwise be interpreted as wildcard characters.
+        let owner_prefix = format!("{}:", shutdown_worker);
+        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND substr(worker_id,1,length(?))=?")
+            .bind(&owner_prefix)
+            .bind(&owner_prefix)
             .fetch_all(&shutdown_db)
             .await
             .unwrap_or_default();
@@ -230,18 +233,27 @@ async fn main() -> Result<()> {
                 .flatten()
                 .unwrap_or(agent_id);
             let execution_id = sqlx::Row::get::<String, _>(&row, 2);
+            let adapter = shutdown_agents.adapter(&agent_kind).await;
+
+            // Stop the exact execution before releasing its lease. If stopping
+            // fails, leave the ownership record intact so another worker cannot
+            // claim this session until the lease expires.
+            if let Err(error) = adapter.interrupt(&id, &execution_id).await {
+                tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to stop agent during backend shutdown; preserving lease");
+                continue;
+            }
+
             let now = Utc::now().to_rfc3339();
-            let changed = sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            match sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
                 .bind(&now)
                 .bind(&id)
                 .bind(&execution_id)
                 .execute(&shutdown_db)
-                .await;
-            if matches!(changed, Ok(result) if result.rows_affected() == 1) {
-                let adapter = shutdown_agents.adapter(&agent_kind).await;
-                if let Err(error) = adapter.interrupt(&id, &execution_id).await {
-                    tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to stop agent during backend shutdown");
-                }
+                .await
+            {
+                Ok(result) if result.rows_affected() == 1 => {}
+                Ok(_) => tracing::debug!(session_id = %id, execution_id = %execution_id, "session ownership changed during shutdown; leaving newer execution untouched"),
+                Err(error) => tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to update session state during backend shutdown"),
             }
         }
     };
