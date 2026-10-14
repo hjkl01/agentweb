@@ -1,5 +1,5 @@
 use super::sessions::load_session;
-use crate::agents::pi_transcript::{read_messages, TranscriptMessage};
+use crate::agents::pi_transcript::{read_messages_from_workspace, TranscriptMessage};
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -23,7 +23,7 @@ pub async fn list_messages(
     let Some(native_session_id) = session.native_session_id.as_deref() else {
         return Ok(Json(Vec::new()));
     };
-    Ok(Json(read_messages(native_session_id)))
+    Ok(Json(read_messages_from_workspace(std::path::Path::new(&session.workspace), native_session_id)))
 }
 
 #[derive(Deserialize)]
