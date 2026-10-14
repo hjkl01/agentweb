@@ -38,6 +38,20 @@ export function ChatSelectionDialog({
     }
   }, [open, defaultAgentId, defaultModel]);
   useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api<string[]>("/workspaces")
+      .then((items) => {
+        if (!cancelled) setWorkspaces(items);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+  useEffect(() => {
     if (!open || !agentId) {
       setModels([]);
       return;
