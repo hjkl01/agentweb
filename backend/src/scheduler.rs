@@ -98,8 +98,13 @@ async fn materialize_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         let changed = sqlx::query("UPDATE scheduled_tasks SET next_run_at=?,last_run_at=?,enabled=CASE WHEN ?='once' THEN 0 ELSE enabled END,updated_at=? WHERE id=? AND enabled=1 AND next_run_at=?")
             .bind(&next).bind(&scheduled_at).bind(&kind).bind(&now_text).bind(&id).bind(&scheduled_at).execute(&mut *tx).await?;
         if changed.rows_affected() == 1 {
-            sqlx::query("INSERT OR IGNORE INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?)")
-                .bind(run_id).bind(id).bind(name).bind(scheduled_at).bind(&now_text).bind(&now_text).execute(&mut *tx).await?;
+            // Coalesce an occurrence if this task already has queued/running work.
+            // Otherwise a short interval could enqueue overlapping executions while
+            // an earlier run is still active. Keep the schedule cursor moving so
+            // downtime/long runs do not produce a backlog.
+            sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) SELECT ?,?,?, 'queued',?,?,? WHERE NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+                .bind(run_id).bind(&id).bind(&name).bind(&scheduled_at).bind(&now_text).bind(&now_text).bind(&id)
+                .execute(&mut *tx).await?;
         }
         tx.commit().await?;
         // Config is validated at API creation time; malformed legacy rows are skipped safely.
@@ -481,6 +486,26 @@ mod tests {
     }
 
 
+
+    #[tokio::test]
+    async fn due_occurrence_is_coalesced_while_task_has_active_run() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
+            .execute(&pool).await.unwrap();
+        let old = stamp(Utc::now() - Duration::minutes(5));
+        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-active','task','do it','codex','/tmp','interval','{\\"seconds\\":60}','UTC',?,1,?)")
+            .bind(&old).bind(&old).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES('existing','t-active','task','running',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+
+        materialize_due(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-active'").fetch_one(&pool).await.unwrap();
+        let next: String = sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t-active'").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1, "a due occurrence must not overlap an active run");
+        assert!(DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc) > Utc::now(),
+            "the schedule cursor should advance to coalesce missed occurrences");
+    }
 
     #[tokio::test]
     async fn due_schedule_comparison_handles_timezone_offsets() {
