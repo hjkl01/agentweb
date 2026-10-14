@@ -206,15 +206,19 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
         return Vec::new();
     }
 
-    let entries = content
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            serde_json::from_str::<Value>(line)
-                .ok()
-                .map(|entry| (index, entry))
-        })
-        .collect::<Vec<_>>();
+    // A byte limit alone does not bound the number of allocated JSON
+    // values: a transcript can contain many tiny records. Cap valid entries
+    // before building the tree index to keep per-refresh memory predictable.
+    const MAX_TRANSCRIPT_ENTRIES: usize = 100_000;
+    let mut entries = Vec::new();
+    for (index, line) in content.lines().enumerate() {
+        if let Ok(entry) = serde_json::from_str::<Value>(line) {
+            if entries.len() >= MAX_TRANSCRIPT_ENTRIES {
+                return Vec::new();
+            }
+            entries.push((index, entry));
+        }
+    }
 
     // A filename match is not enough: only render a transcript whose
     // session header identifies the native session requested by the database.
@@ -392,6 +396,18 @@ mod tests {
         let messages = parse_messages(&content, "session-tail");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "complete message");
+    }
+
+    #[test]
+    fn rejects_transcript_with_too_many_entries() {
+        let mut lines = vec![r#"{"type":"session","id":"session-limit","version":3}"#.to_owned()];
+        for index in 0..100_000 {
+            lines.push(format!(
+                r#"{{"type":"custom","id":"entry-{index}"}}"#
+            ));
+        }
+        let content = lines.join("\\n");
+        assert!(parse_messages(&content, "session-limit").is_empty());
     }
 
     #[test]
