@@ -56,7 +56,7 @@ pub fn read_messages_from_workspace(
 
 fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<TranscriptMessage> {
     let suffix = format!("_{native_session_id}.jsonl");
-    let Some(path) = find_by_suffix(root, &suffix) else {
+    let Some(path) = find_by_suffix(root, &suffix, native_session_id) else {
         return Vec::new();
     };
     let Ok(content) = std::fs::read_to_string(&path) else {
@@ -65,7 +65,7 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     parse_messages(&content, native_session_id)
 }
 
-fn find_by_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
+fn find_by_suffix(dir: &Path, suffix: &str, native_session_id: &str) -> Option<PathBuf> {
     // Bound traversal and never follow symlinks: a workspace-local session
     // directory can be edited by Agent tools and must not redirect this reader
     // into arbitrary host paths or create directory cycles.
@@ -107,7 +107,26 @@ fn find_by_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(suffix))
             {
-                return Some(path);
+                // A workspace can contain nested session directories, and
+                // directory iteration order is not stable. Validate each
+                // candidate's header rather than trusting the first filename
+                // match, so a stale/forged duplicate cannot mask the real file.
+                let Ok(file) = std::fs::File::open(&path) else {
+                    continue;
+                };
+                let mut reader = std::io::BufReader::new(file);
+                let mut first_line = String::new();
+                if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err() {
+                    continue;
+                }
+                let Ok(header) = serde_json::from_str::<Value>(&first_line) else {
+                    continue;
+                };
+                if header.get("type").and_then(Value::as_str) == Some("session")
+                    && header.get("id").and_then(Value::as_str) == Some(native_session_id)
+                {
+                    return Some(path);
+                }
             }
         }
     }
@@ -256,6 +275,41 @@ mod tests {
             {"type": "text", "text": "world"},
         ]);
         assert_eq!(text_content(&content).as_deref(), Some("hello\nworld"));
+    }
+
+    #[test]
+    fn finds_matching_session_when_duplicate_filename_is_invalid() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pi-transcript-duplicate-{unique}"));
+        let first = dir.join("a");
+        let second = dir.join("b");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let filename = "2026-01-01T00-00-00-000Z_same-id.jsonl";
+        std::fs::write(
+            first.join(filename),
+            r#"{"type":"session","id":"not-same-id"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            second.join(filename),
+            [
+                r#"{"type":"session","id":"same-id"}"#,
+                r#"{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":"correct session"}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let path = find_by_suffix(&dir, "_same-id.jsonl", "same-id").unwrap();
+        let messages = parse_messages(&std::fs::read_to_string(path).unwrap(), "same-id");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "correct session");
     }
 
     #[test]
