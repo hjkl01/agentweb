@@ -173,6 +173,20 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/proc",
                 "--tmpfs",
                 "/tmp",
+                // Hide application data (including SQLite databases). Re-expose
+                // only read-only Agent configuration and managed runtimes.
+                "--tmpfs",
+                "/data",
+                "--dir",
+                "/data/home",
+                "--dir",
+                "/data/runtimes",
+                "--ro-bind",
+                "/data/home",
+                "/data/home",
+                "--ro-bind",
+                "/data/runtimes",
+                "/data/runtimes",
                 "--bind",
             ]);
             sandbox.arg(&workspace).arg(&workspace);
