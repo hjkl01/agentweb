@@ -1567,3 +1567,18 @@ button:disabled {
 .session-warning-content button:hover {
   background: var(--surface-hover, rgba(127, 127, 127, 0.12));
 }
+
+
+/* Sessions whose workspace was deleted or moved outside the configured root. */
+.session.workspace-missing {
+  opacity: 0.82;
+}
+.workspace-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b45309;
+}
+.workspace-warning svg {
+  flex: 0 0 auto;
+}
