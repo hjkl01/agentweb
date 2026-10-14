@@ -56,7 +56,24 @@ async fn workspace_root(path: &str) -> Result<PathBuf, StatusCode> {
 async fn workspace_file_path(workspace: &str, relative: &str) -> Result<PathBuf, StatusCode> {
     validate_relative(relative)?;
     let root = workspace_root(workspace).await?;
-    let candidate = fs::canonicalize(root.join(relative))
+    let mut current = root.clone();
+
+    // Reject symlinks in every path component, not just the final file. A
+    // directory symlink in the middle of a path can otherwise redirect a
+    // preview to another location before the final canonical-path check.
+    for component in FsPath::new(relative).components() {
+        if let Component::Normal(name) = component {
+            current.push(name);
+            let metadata = fs::symlink_metadata(&current)
+                .await
+                .map_err(|_| StatusCode::NOT_FOUND)?;
+            if metadata.file_type().is_symlink() {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+    }
+
+    let candidate = fs::canonicalize(&current)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     if !candidate.starts_with(&root) {
@@ -435,6 +452,32 @@ mod workspace_file_safety_tests {
         symlink(outside.join("secret.txt"), root.join("secret-link.txt")).unwrap();
 
         assert!(read_untracked_file(&root, "secret-link.txt").await.is_none());
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workspace_preview_rejects_symlink_components() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("preview-root");
+        let outside = temp_root("preview-outside");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "must-not-leak").unwrap();
+        symlink(&outside, root.join("linked-dir")).unwrap();
+        symlink(outside.join("secret.txt"), root.join("linked-file.txt")).unwrap();
+
+        assert_eq!(
+            workspace_file_path(root.to_str().unwrap(), "linked-file.txt").await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            workspace_file_path(root.to_str().unwrap(), "linked-dir/secret.txt").await,
+            Err(StatusCode::FORBIDDEN)
+        );
 
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
