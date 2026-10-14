@@ -417,7 +417,8 @@ pub async fn workspace_diff(
         let mut fallback = String::from_utf8_lossy(&cached.stdout).into_owned();
         fallback.push_str(&String::from_utf8_lossy(&unstaged.stdout));
         if unstaged.truncated {
-            fallback.truncate(fallback.len().min(MAX_DIFF_TOTAL_BYTES));
+            // Force the shared truncation path below to set the response flag.
+            fallback.push('\n');
         }
         fallback
     };
