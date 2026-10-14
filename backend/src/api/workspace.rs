@@ -100,7 +100,19 @@ async fn read_untracked_file(root: &FsPath, relative: &str) -> Option<Vec<u8>> {
     if !metadata.is_file() || metadata.len() > MAX_DIFF_FILE_BYTES {
         return None;
     }
-    fs::read(canonical).await.ok()
+    // File size can change after metadata is checked. Bound the actual read
+    // too, so concurrent writes cannot make this endpoint buffer an oversized
+    // untracked file into memory.
+    let mut file = fs::File::open(canonical).await.ok()?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_DIFF_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    if bytes.len() as u64 > MAX_DIFF_FILE_BYTES {
+        return None;
+    }
+    Some(bytes)
 }
 
 struct LimitedGitOutput {
@@ -311,7 +323,22 @@ pub async fn workspace_file(
             serde_json::json!({ "path": path, "content": "", "size": metadata.len(), "truncated": true, "binary": false, "message": "File is too large to preview (limit: 512 KiB)." }),
         ));
     }
-    let bytes = fs::read(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    // Bound the actual read as well as the metadata check: the file may
+    // grow between stat and read.
+    let mut opened = fs::File::open(&file)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    opened
+        .take((MAX_PREVIEW_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if bytes.len() > MAX_PREVIEW_BYTES {
+        return Ok(Json(
+            serde_json::json!({ "path": path, "content": "", "size": bytes.len(), "truncated": true, "binary": false, "message": "File is too large to preview (limit: 512 KiB)." }),
+        ));
+    }
     if bytes.contains(&0) {
         return Ok(Json(
             serde_json::json!({ "path": path, "content": "", "size": bytes.len(), "truncated": false, "binary": true, "message": "Binary file preview is not supported." }),
@@ -535,6 +562,17 @@ mod workspace_file_safety_tests {
         let output = run_git_limited(&root, &["--version"], 1).await.unwrap();
         assert!(output.truncated);
         assert_eq!(output.stdout.len(), 1);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn untracked_diff_skips_files_that_grow_past_the_limit() {
+        let root = temp_root("diff-large-file");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("large.txt"), vec![b'x'; MAX_DIFF_FILE_BYTES as usize + 1]).unwrap();
+
+        assert!(read_untracked_file(&root, "large.txt").await.is_none());
 
         std::fs::remove_dir_all(root).unwrap();
     }
