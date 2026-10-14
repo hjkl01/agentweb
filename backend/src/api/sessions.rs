@@ -51,27 +51,29 @@ fn default_workspace_root() -> PathBuf {
 pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let mut session = session_from_row(&row);
+
+    // Persisted workspace paths are not trusted: a stale or edited database row
+    // must not cause an Agent or terminal to bind an arbitrary host directory.
     let base_path = default_workspace_root();
-    if let (Ok(base), Ok(workspace)) = (
-        fs::canonicalize(&base_path).await,
-        fs::canonicalize(&session.workspace).await,
-    ) {
-        let legacy = base.join(id);
-        if workspace == legacy {
-            session.workspace = base.to_string_lossy().into_owned();
-            let _ = sqlx::query("UPDATE sessions SET workspace=?,updated_at=? WHERE id=?")
-                .bind(&session.workspace)
-                .bind(Utc::now().to_rfc3339())
-                .bind(id)
-                .execute(db)
-                .await;
-            if let Ok(mut entries) = fs::read_dir(&legacy).await {
-                if entries.next_entry().await.ok().flatten().is_none() {
-                    let _ = fs::remove_dir(&legacy).await;
-                }
+    fs::create_dir_all(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace = fs::canonicalize(&session.workspace)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::FORBIDDEN
             }
-        }
+        })?;
+    if !workspace.is_dir() || !workspace.starts_with(&base) || workspace == base {
+        return Err(StatusCode::FORBIDDEN);
     }
+    session.workspace = workspace.to_string_lossy().into_owned();
     Ok(session)
 }
 pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
