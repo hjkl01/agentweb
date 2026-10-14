@@ -408,7 +408,7 @@ pub async fn run_session(
                 || owner.as_deref() != Some(&monitor_worker)
                 || lease
                     .as_deref()
-                    .map(|v| v <= now_text.as_str())
+                    .map(|value| chrono::DateTime::parse_from_rfc3339(value).map(|lease| lease.with_timezone(&Utc) <= now).unwrap_or(true))
                     .unwrap_or(true)
             {
                 // Do not exit: the child may not have registered yet. Repeated
