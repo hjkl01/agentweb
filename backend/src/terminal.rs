@@ -121,6 +121,9 @@ async fn run_terminal(
         let mut command = CommandBuilder::new("bwrap");
         command.arg("--die-with-parent");
         command.arg("--new-session");
+        command.arg("--unshare-pid");
+        command.arg("--unshare-ipc");
+        command.arg("--unshare-uts");
         command.arg("--ro-bind");
         command.arg("/");
         command.arg("/");
