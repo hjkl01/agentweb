@@ -62,6 +62,11 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, Stat
             if ignored(&name) {
                 continue;
             }
+            // Do not traverse symlinks, even when they point back inside the
+            // workspace: directory links can create cycles and unbounded scans.
+            if entry.file_type().await.map(|kind| kind.is_symlink()).unwrap_or(true) {
+                continue;
+            }
             let canonical = match fs::canonicalize(entry.path()).await {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -151,6 +156,9 @@ pub async fn tree(
     {
         let name = entry.file_name().to_string_lossy().into_owned();
         if ignored(&name) {
+            continue;
+        }
+        if entry.file_type().await.map(|kind| kind.is_symlink()).unwrap_or(true) {
             continue;
         }
         let metadata = match entry.metadata().await {
