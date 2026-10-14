@@ -108,13 +108,17 @@ export function Sidebar({
             </button>
             {sessionMenu === session.id && (
               <div className="menu" onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => onTogglePin(session.id)}>
-                  {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
-                  {session.is_pinned ? "取消置顶" : "置顶"}
-                </button>
-                <button onClick={() => onRenameSession(session.id)}>
-                  <Edit3 size={14} /> Rename
-                </button>
+                {session.workspace_available !== false && (
+                  <>
+                    <button onClick={() => onTogglePin(session.id)}>
+                      {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+                      {session.is_pinned ? "取消置顶" : "置顶"}
+                    </button>
+                    <button onClick={() => onRenameSession(session.id)}>
+                      <Edit3 size={14} /> Rename
+                    </button>
+                  </>
+                )}
                 <button onClick={() => onDeleteSession(session.id)}>
                   <Trash2 size={14} /> Delete
                 </button>
