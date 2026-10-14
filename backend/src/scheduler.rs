@@ -246,6 +246,23 @@ async fn execute_run(state: AppState, run_id: &str) {
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(&state.db, run_id, &state.worker_id, "failed", Some("会话无法认领，可能正在运行")).await; return;
     }
+    // The run lease may have expired after the initial link but before the
+    // session claim. Re-check ownership before starting any Agent process.
+    let still_owned: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE id=? AND status='running' AND lease_owner=?")
+        .bind(run_id).bind(&state.worker_id).fetch_one(&state.db).await {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::error!(%run_id, %error, "failed to revalidate scheduled run ownership");
+            0
+        }
+    };
+    if still_owned != 1 {
+        let release_time = stamp(Utc::now());
+        let _ = sqlx::query("UPDATE sessions SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            .bind(&release_time).bind(&session.id).bind(&session_worker_id).execute(&state.db).await;
+        tracing::warn!(%run_id, session_id = %session.id, "run lease was lost before Agent startup; released session");
+        return;
+    }
     let renew_db = state.db.clone();
     let renew_run = run_id.to_owned();
     let renew_session = session.id.clone();
