@@ -17,9 +17,6 @@ pub struct TranscriptMessage {
 }
 
 fn sessions_root() -> Option<PathBuf> {
-    // AgentWeb sets this to a workspace-local directory for Pi's writable
-    // session state. Unlike PI_CODING_AGENT_DIR, it is already the sessions
-    // root and must not have another "sessions" component appended.
     if let Some(dir) = std::env::var_os("PI_CODING_AGENT_SESSION_DIR") {
         return Some(PathBuf::from(dir));
     }
@@ -32,6 +29,40 @@ fn sessions_root() -> Option<PathBuf> {
             .join("agent")
             .join("sessions")
     })
+}
+
+/// Read the native transcript from a session-specific workspace state directory.
+/// The backend process cannot see environment variables assigned only to the
+/// spawned Pi child, so API handlers should pass the persisted workspace path.
+pub fn read_messages_from_workspace(
+    workspace: &Path,
+    native_session_id: &str,
+) -> Vec<TranscriptMessage> {
+    let Ok(workspace) = workspace.canonicalize() else {
+        return Vec::new();
+    };
+    let state_dir = workspace.join(".agentweb-state");
+    let session_dir = state_dir.join("pi-sessions");
+    for path in [&state_dir, &session_dir] {
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return Vec::new();
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Vec::new();
+        }
+    }
+    read_messages_from_root(&session_dir, native_session_id)
+}
+
+fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<TranscriptMessage> {
+    let suffix = format!("_{native_session_id}.jsonl");
+    let Some(path) = find_by_suffix(root, &suffix) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    parse_messages(&content, native_session_id)
 }
 
 fn find_by_suffix(dir: &Path, suffix: &str) -> Option<PathBuf> {
@@ -105,13 +136,10 @@ pub fn read_messages(native_session_id: &str) -> Vec<TranscriptMessage> {
     let Some(root) = sessions_root() else {
         return Vec::new();
     };
-    let suffix = format!("_{native_session_id}.jsonl");
-    let Some(path) = find_by_suffix(&root, &suffix) else {
-        return Vec::new();
-    };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
+    read_messages_from_root(&root, native_session_id)
+}
+
+fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessage> {
     let mut messages = Vec::new();
     for (index, line) in content.lines().enumerate() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
