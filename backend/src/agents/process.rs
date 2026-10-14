@@ -622,6 +622,20 @@ impl ProcessAdapter {
         if let Some(child) = child {
             tracing::info!(session_id = %session_id, execution_id = %execution_id, "interrupting agent execution");
             Self::stop_child(&child).await?;
+        } else {
+            // A stop can race ahead of process registration. Keep the marker
+            // long enough for that run to observe it, but do not retain it
+            // forever if the claimed execution never starts.
+            let processes = self.processes.clone();
+            let interrupted = self.interrupted.clone();
+            let execution_id = execution_id.to_owned();
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(60)).await;
+                let processes = processes.lock().await;
+                if !processes.contains_key(&execution_id) {
+                    interrupted.lock().await.remove(&execution_id);
+                }
+            });
         }
         Ok(())
     }
