@@ -61,6 +61,10 @@ fn ensure_workspace_state_dir(
     Ok(current)
 }
 
+fn is_shared_workspace_root(workspace: &std::path::Path) -> bool {
+    workspace == std::path::Path::new("/workspaces")
+}
+
 fn parts(command: &str) -> Result<(String, Vec<String>)> {
     let mut parts = command.split_whitespace();
     let program = parts
@@ -159,7 +163,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             }
             // Never allow the shared workspace mount itself as a project:
             // binding it writable would expose every sibling project.
-            if workspace == std::path::Path::new("/workspaces") {
+            if is_shared_workspace_root(&workspace) {
                 bail!("Agent workspace must be a project directory, not the shared /workspaces root");
             }
             let mut sandbox = Command::new("bwrap");
@@ -280,14 +284,9 @@ mod workspace_state_tests {
 
     #[test]
     fn shared_workspaces_root_is_not_a_valid_project_workspace() {
-        assert_eq!(
-            std::path::Path::new("/workspaces"),
-            std::path::Path::new("/workspaces")
-        );
-        assert_ne!(
-            std::path::Path::new("/workspaces/project"),
-            std::path::Path::new("/workspaces")
-        );
+        assert!(is_shared_workspace_root(std::path::Path::new("/workspaces")));
+        assert!(!is_shared_workspace_root(std::path::Path::new("/workspaces/project")));
+        assert!(!is_shared_workspace_root(std::path::Path::new("/workspaces-other/project")));
     }
 
     #[test]
