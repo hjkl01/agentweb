@@ -120,6 +120,7 @@ async fn main() -> Result<()> {
             get(api::get_agent_config).put(api::save_agent_config),
         )
         .route("/terminal/ws", get(terminal::ws_terminal))
+        .route("/workspaces", get(api::list_workspaces))
         .route(
             "/sessions",
             get(api::list_sessions).post(api::create_session),
