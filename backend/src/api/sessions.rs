@@ -232,8 +232,17 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         let Some((execution_id, lease_until)) = execution else {
             return StatusCode::CONFLICT;
         };
-        if lease_until.as_deref().is_some_and(|lease| lease >= now.as_str()) {
-            return StatusCode::CONFLICT;
+        match lease_until.as_deref() {
+            Some(lease) => match chrono::DateTime::parse_from_rfc3339(lease) {
+                Ok(lease) if lease.with_timezone(&Utc) >= Utc::now() => {
+                    return StatusCode::CONFLICT;
+                }
+                // Treat malformed lease timestamps conservatively: do not stop
+                // or delete a possibly live execution based on invalid data.
+                Err(_) => return StatusCode::CONFLICT,
+                _ => {}
+            },
+            None => {}
         }
         let execution_id = execution_id;
         let Some(execution_id) = execution_id else {
@@ -257,7 +266,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
     // Keep live leases, but allow deleting a running record whose lease expired
     // (the owning worker's monitor will observe the missing row and interrupt).
     let now = Utc::now().to_rfc3339();
-    match sqlx::query("DELETE FROM sessions WHERE id=? AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
+    match sqlx::query("DELETE FROM sessions WHERE id=? AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&id)
         .bind(&now)
         .execute(&s.db)
