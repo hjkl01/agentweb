@@ -196,17 +196,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "--tmpfs",
                 "/mnt",
                 "--tmpfs",
-                "/media",
-                "--tmpfs",
-                "/srv",
-                "--tmpfs",
-                "/boot",
-                "--tmpfs",
-                "/opt",
-                "--tmpfs",
                 "/sys",
-                "--tmpfs",
-                "/etc/agentweb",
                 // Preserve only the required read-only directories under
                 // temporary mount aliases before masking /data itself.
                 "--dir",
