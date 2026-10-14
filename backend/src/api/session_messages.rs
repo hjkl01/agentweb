@@ -22,7 +22,17 @@ pub async fn list_messages(
 ) -> Result<Json<Vec<TranscriptMessage>>, StatusCode> {
     // Conversation content belongs to the Agent's native session, not SQLite.
     let session = load_session(&s.db, &id).await?;
-    if session.agent_id != "pi" {
+    // sessions.agent_id is a database row ID, not the adapter kind. Resolve
+    // the kind before deciding whether this session uses Pi's JSONL transcript.
+    let agent_kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(&session.agent_id)
+        .fetch_optional(&s.db)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if agent_kind.as_deref() != Some("pi") {
         return Ok(Json(Vec::new()));
     }
     let Some(native_session_id) = session.native_session_id.as_deref() else {
