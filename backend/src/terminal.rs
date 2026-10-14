@@ -127,8 +127,9 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg("/");
         command.arg("/");
-        command.arg("--dev-bind");
-        command.arg("/dev");
+        // Expose bubblewrap's minimal device directory rather than the
+        // host's full /dev tree.
+        command.arg("--dev");
         command.arg("/dev");
         command.arg("--proc");
         command.arg("/proc");
