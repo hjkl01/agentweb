@@ -70,14 +70,16 @@ async fn resolve_tree_path(root: &PathBuf, relative: &str) -> Result<PathBuf, St
     Ok(canonical)
 }
 
-async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, StatusCode> {
+async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, bool), StatusCode> {
     let needle = needle.to_lowercase();
     let mut pending = vec![root.clone()];
     let mut result = Vec::new();
     let mut scanned_entries = 0usize;
+    let mut truncated = false;
     const MAX_SCANNED_ENTRIES: usize = 20_000;
     while let Some(dir) = pending.pop() {
         if scanned_entries >= MAX_SCANNED_ENTRIES {
+            truncated = true;
             break;
         }
         let mut entries = fs::read_dir(&dir)
@@ -90,6 +92,7 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, Stat
         {
             scanned_entries += 1;
             if result.len() >= 2000 || scanned_entries >= MAX_SCANNED_ENTRIES {
+                truncated = true;
                 break;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -133,11 +136,12 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, Stat
             }
         }
         if result.len() >= 2000 {
+            truncated = true;
             break;
         }
     }
     result.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
-    Ok(result)
+    Ok((result, truncated))
 }
 
 pub async fn tree(
@@ -158,8 +162,7 @@ pub async fn tree(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        let result = search_tree(&root, search).await?;
-        let truncated = result.len() >= 2000;
+        let (result, truncated) = search_tree(&root, search).await?;
         let mut response = Json(result).into_response();
         if truncated {
             response.headers_mut().insert(
@@ -284,10 +287,12 @@ mod symlink_tree_tests {
         symlink(&outside, root.join("outside-link")).unwrap();
         symlink(&root, root.join("nested/back-to-root")).unwrap();
 
-        let result = search_tree(&root, "outside-secret").await.unwrap();
+        let (result, truncated) = search_tree(&root, "outside-secret").await.unwrap();
         assert!(result.is_empty(), "search must not follow an external symlink");
-        let result = search_tree(&root, "nested").await.unwrap();
+        assert!(!truncated);
+        let (result, truncated) = search_tree(&root, "nested").await.unwrap();
         assert_eq!(result.len(), 1);
+        assert!(!truncated);
         assert_eq!(result[0].path, "nested");
 
         std::fs::remove_dir_all(root).unwrap();
