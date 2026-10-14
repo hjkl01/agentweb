@@ -180,6 +180,7 @@ export function WorkspacePanel({
             />
           </div>
           <FileTree
+            key={current?.id}
             files={files}
             filter={fileFilter}
             onOpenFile={(path) => onOpenFile(path)}
