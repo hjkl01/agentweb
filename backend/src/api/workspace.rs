@@ -64,6 +64,23 @@ async fn workspace_file_path(workspace: &str, relative: &str) -> Result<PathBuf,
     }
     Ok(candidate)
 }
+async fn read_untracked_file(root: &FsPath, relative: &str) -> Option<Vec<u8>> {
+    if ignored_relative(relative) {
+        return None;
+    }
+    let path = root.join(relative);
+    // Canonicalize before reading so a symlink cannot disclose a file outside
+    // the workspace. Only regular files within the root are eligible for diff.
+    let canonical = fs::canonicalize(&path).await.ok()?;
+    if !canonical.starts_with(root) {
+        return None;
+    }
+    let metadata = fs::metadata(&canonical).await.ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_DIFF_FILE_BYTES {
+        return None;
+    }
+    fs::read(canonical).await.ok()
+}
 
 async fn git_status(
     root: &PathBuf,
@@ -357,27 +374,10 @@ pub async fn workspace_diff(
                 .filter(|entry| !entry.is_empty())
             {
                 let relative = String::from_utf8_lossy(entry).into_owned();
-                if ignored_relative(&relative) {
-                    continue;
-                }
-                // Never read an untracked path through a symlink that escapes
-                // the workspace. Git lists the symlink itself, but metadata/read
-                // follow it and could otherwise disclose an arbitrary host file.
-                let path = root.join(&relative);
-                let canonical = match fs::canonicalize(&path).await {
-                    Ok(value) if value.starts_with(&root) => value,
-                    _ => continue,
-                };
-                let metadata = match fs::metadata(&canonical).await {
-                    Ok(value) if value.is_file() => value,
-                    _ => continue,
-                };
-                if metadata.len() > MAX_DIFF_FILE_BYTES {
-                    continue;
-                }
-                let bytes = match fs::read(&canonical).await {
-                    Ok(value) => value,
-                    Err(_) => continue,
+                // Reject symlink escapes before reading untracked file content.
+                let bytes = match read_untracked_file(&root, &relative).await {
+                    Some(value) => value,
+                    None => continue,
                 };
                 if bytes.contains(&0) {
                     continue;
@@ -398,4 +398,46 @@ pub async fn workspace_diff(
     Ok(Json(
         serde_json::json!({ "status": "ok", "diff": diff, "truncated": truncated }),
     ))
+}
+
+#[cfg(test)]
+mod workspace_file_safety_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn untracked_diff_does_not_read_symlink_outside_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("diff-root");
+        let outside = temp_root("diff-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "must-not-leak").unwrap();
+        symlink(outside.join("secret.txt"), root.join("secret-link.txt")).unwrap();
+
+        assert!(read_untracked_file(&root, "secret-link.txt").await.is_none());
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[tokio::test]
+    async fn untracked_diff_reads_regular_file_inside_workspace() {
+        let root = temp_root("diff-regular");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("hello.txt"), "hello").unwrap();
+
+        assert_eq!(
+            read_untracked_file(&root, "hello.txt").await.unwrap(),
+            b"hello"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
