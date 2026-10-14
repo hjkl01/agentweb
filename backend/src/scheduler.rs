@@ -77,7 +77,7 @@ fn next_occurrence(kind: &str, config: &Value, timezone: &str, now: DateTime<Utc
 async fn materialize_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let now = Utc::now();
     let now_text = stamp(now);
-    let rows = sqlx::query("SELECT id,name,prompt,agent_id,working_directory,model,schedule_type,schedule_config,timezone,next_run_at FROM scheduled_tasks WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at LIMIT 100")
+    let rows = sqlx::query("SELECT id,name,prompt,agent_id,working_directory,model,schedule_type,schedule_config,timezone,next_run_at FROM scheduled_tasks WHERE enabled=1 AND next_run_at IS NOT NULL AND julianday(next_run_at)<=julianday(?) ORDER BY julianday(next_run_at),next_run_at LIMIT 100")
         .bind(&now_text).fetch_all(pool).await?;
     for row in rows {
         let id: String = row.get("id");
@@ -481,6 +481,24 @@ mod tests {
     }
 
 
+
+    #[tokio::test]
+    async fn due_schedule_comparison_handles_timezone_offsets() {
+        let pool = test_pool().await;
+        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
+            .execute(&pool).await.unwrap();
+        // This local timestamp is earlier than UTC now, even though its hour
+        // component can sort after a UTC timestamp when compared as plain text.
+        let now = Utc::now();
+        let due = (now - Duration::minutes(5)).with_timezone(&chrono::FixedOffset::east_opt(2 * 3600).unwrap()).to_rfc3339();
+        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-offset','task','do it','codex','/tmp','interval','{\"seconds\":60}','UTC',?,1,?)")
+            .bind(&due).bind(stamp(now)).execute(&pool).await.unwrap();
+
+        materialize_due(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-offset'").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1, "due timestamps must be compared by instant, not lexical representation");
+    }
 
     #[tokio::test]
     async fn malformed_run_lease_is_recovered_instead_of_stuck_forever() {
