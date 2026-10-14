@@ -95,7 +95,7 @@ async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let name = requested.unwrap_or("").trim();
     if name.is_empty() || name == "." {
-        return Ok(base.to_string_lossy().into_owned());
+        return Err(StatusCode::BAD_REQUEST);
     }
     let path = FsPath::new(name);
     if path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
