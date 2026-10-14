@@ -89,9 +89,53 @@ async fn run_terminal(
         }
     };
 
-    let shell = std::env::var("AGENTWEB_TERMINAL_SHELL").unwrap_or_else(|_| "/bin/bash".into());
-    let mut command = CommandBuilder::new(&shell);
-    command.cwd(&workspace);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut socket = socket;
+        let _ = socket
+            .send(Message::Text(
+                "Workspace terminal sandbox is currently supported only on Linux.".into(),
+            ))
+            .await;
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let workspace = match std::fs::canonicalize(&workspace) {
+            Ok(path) if path.is_dir() => path,
+            _ => {
+                let mut socket = socket;
+                let _ = socket
+                    .send(Message::Text("Invalid terminal workspace.".into()))
+                    .await;
+                return;
+            }
+        };
+        let shell = std::env::var("AGENTWEB_TERMINAL_SHELL").unwrap_or_else(|_| "/bin/bash".into());
+        let mut command = CommandBuilder::new("bwrap");
+        command.arg("--die-with-parent");
+        command.arg("--new-session");
+        command.arg("--ro-bind");
+        command.arg("/");
+        command.arg("/");
+        command.arg("--dev-bind");
+        command.arg("/dev");
+        command.arg("/dev");
+        command.arg("--proc");
+        command.arg("/proc");
+        command.arg("--tmpfs");
+        command.arg("/tmp");
+        command.arg("--bind");
+        command.arg(&workspace);
+        command.arg(&workspace);
+        command.arg("--chdir");
+        command.arg(&workspace);
+        command.arg("--");
+        command.arg(&shell);
+        command.cwd(&workspace);
+        command
+    };
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env(
