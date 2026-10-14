@@ -6,10 +6,10 @@ import type { Session } from "../types";
 type Options = { setSessions: Dispatch<SetStateAction<Session[]>> };
 export function useSessionActions({ setSessions }: Options) {
   const createSession = useCallback(
-    async (agentId?: string, model?: string) => {
+    async (agentId: string | undefined, model: string | undefined, workspace: string) => {
       const session = await api<Session>("/sessions", {
         method: "POST",
-        body: JSON.stringify({ agent_id: agentId, title: "New Chat", model }),
+        body: JSON.stringify({ agent_id: agentId, title: "New Chat", model, workspace }),
       });
       setSessions((items) => [session, ...items]);
       return session;
