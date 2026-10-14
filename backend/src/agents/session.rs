@@ -20,6 +20,12 @@ const MAX_REFERENCE_TOTAL_BYTES: usize = 512 * 1024;
 const MAX_DIRECTORY_LISTING_FILES: usize = 200;
 const SESSION_LEASE_SECONDS: i64 = 30;
 
+fn lease_is_expired(lease: &str, now: chrono::DateTime<Utc>) -> bool {
+    chrono::DateTime::parse_from_rfc3339(lease)
+        .map(|lease| lease.with_timezone(&Utc) <= now)
+        .unwrap_or(true)
+}
+
 async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) -> bool {
     let result = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
     match result {
@@ -408,7 +414,7 @@ pub async fn run_session(
                 || owner.as_deref() != Some(&monitor_worker)
                 || lease
                     .as_deref()
-                    .map(|value| chrono::DateTime::parse_from_rfc3339(value).map(|lease| lease.with_timezone(&Utc) <= now).unwrap_or(true))
+                    .map(|value| lease_is_expired(value, now))
                     .unwrap_or(true)
             {
                 // Do not exit: the child may not have registered yet. Repeated
@@ -542,6 +548,20 @@ pub async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lease_expiry_compares_instants_across_timezone_offsets() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-14T12:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(lease_is_expired("2026-10-14T20:00:00+08:00", now));
+        assert!(!lease_is_expired("2026-10-14T20:00:01+08:00", now));
+    }
+
+    #[test]
+    fn malformed_lease_is_treated_as_expired() {
+        assert!(lease_is_expired("not-a-timestamp", Utc::now()));
+    }
     use sqlx::SqlitePool;
 
     // Session lifecycle remains in the metadata table; chat transcripts and session events
