@@ -16,6 +16,14 @@ const SESSION_LEASE_SECONDS: i64 = 30;
 // blocking transcript readers.
 static TRANSCRIPT_READ_LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
+async fn is_pi_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(kind.as_deref() == Some("pi"))
+}
+
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -24,15 +32,13 @@ pub async fn list_messages(
     let session = load_session(&s.db, &id).await?;
     // sessions.agent_id is a database row ID, not the adapter kind. Resolve
     // the kind before deciding whether this session uses Pi's JSONL transcript.
-    let agent_kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
-        .bind(&session.agent_id)
-        .fetch_optional(&s.db)
+    let is_pi = is_pi_agent(&s.db, &session.agent_id)
         .await
         .map_err(|error| {
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    if agent_kind.as_deref() != Some("pi") {
+    if !is_pi {
         return Ok(Json(Vec::new()));
     }
     let Some(native_session_id) = session.native_session_id.as_deref() else {
@@ -69,6 +75,36 @@ pub struct SendMessage {
     pub message: String,
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::is_pi_agent;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn resolves_pi_kind_from_agent_record_id() {
+        let db = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agents (id TEXT PRIMARY KEY, kind TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents (id, kind) VALUES (?, ?), (?, ?)")
+            .bind("agent-record-pi")
+            .bind("pi")
+            .bind("agent-record-codex")
+            .bind("codex")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        assert!(is_pi_agent(&db, "agent-record-pi").await.unwrap());
+        assert!(!is_pi_agent(&db, "agent-record-codex").await.unwrap());
+        assert!(!is_pi_agent(&db, "missing-agent").await.unwrap());
+    }
+}
 
 pub async fn send_message(
     Path(id): Path<String>,
