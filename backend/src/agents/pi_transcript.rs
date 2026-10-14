@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn reads_only_user_and_assistant_messages() {
         let dir = std::env::temp_dir().join(format!("pi-transcript-{}", std::process::id()));
-        let nested = dir.join("sessions").join("--workspaces--");
+        let nested = dir.join(".agentweb-state").join("pi-sessions").join("--workspaces--");
         std::fs::create_dir_all(&nested).unwrap();
         let file = nested.join("2026-01-01T00-00-00-000Z_abc123.jsonl");
         std::fs::write(
@@ -211,9 +211,8 @@ mod tests {
         )
         .unwrap();
 
-        // Use an explicit root so this test is independent of process-wide
-        // environment variables and can safely run alongside other tests.
-        let messages = read_messages_from_root(&dir.join("sessions"), "abc123");
+        // Exercise the same workspace-scoped path used by the API handler.
+        let messages = read_messages_from_workspace(&dir, "abc123");
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(messages.len(), 2);
