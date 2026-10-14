@@ -18,6 +18,7 @@ services:
       - ./data:/data
       - /home/user/workspaces/:/workspaces
     environment:
+      - TZ=Asia/Shanghai
       - HOME=/data/home/
       - XDG_CONFIG_HOME=/data/home/.config
       - XDG_DATA_HOME=/data/home/.local/share
