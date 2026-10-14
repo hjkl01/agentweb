@@ -173,8 +173,17 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/proc",
                 "--tmpfs",
                 "/tmp",
-                // Hide application data (including SQLite databases). Re-expose
-                // only read-only Agent configuration and managed runtimes.
+                // Preserve only the required read-only directories under
+                // temporary mount aliases before masking /data itself.
+                "--dir",
+                "/run/agentweb-mounts",
+                "--ro-bind",
+                "/data/home",
+                "/run/agentweb-mounts/home",
+                "--ro-bind",
+                "/data/runtimes",
+                "/run/agentweb-mounts/runtimes",
+                // Hide SQLite and other application data from the Agent.
                 "--tmpfs",
                 "/data",
                 "--dir",
@@ -182,10 +191,10 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "--dir",
                 "/data/runtimes",
                 "--ro-bind",
-                "/data/home",
+                "/run/agentweb-mounts/home",
                 "/data/home",
                 "--ro-bind",
-                "/data/runtimes",
+                "/run/agentweb-mounts/runtimes",
                 "/data/runtimes",
                 "--bind",
             ]);
