@@ -493,7 +493,7 @@ mod tests {
         sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
             .execute(&pool).await.unwrap();
         let old = stamp(Utc::now() - Duration::minutes(5));
-        sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-active','task','do it','codex','/tmp','interval','{\\"seconds\\":60}','UTC',?,1,?)")
+        sqlx::query(r#"INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-active','task','do it','codex','/tmp','interval','{"seconds":60}','UTC',?,1,?)"#)
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES('existing','t-active','task','running',?,?,?)")
             .bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
