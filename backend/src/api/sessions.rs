@@ -218,7 +218,6 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
     if session.status == "running" {
         // Never stop a live execution when deletion will be rejected anyway.
         // Only expired leases may be cleaned up by this endpoint.
-        let now = Utc::now().to_rfc3339();
         let execution: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
             "SELECT worker_id,lease_until FROM sessions WHERE id=? AND status='running'",
         )
