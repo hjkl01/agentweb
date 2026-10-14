@@ -17,6 +17,7 @@ FROM archlinux:base
 RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
   && pacman -Syu --noconfirm \
     ca-certificates \
+    tzdata \
     curl \
     xz \
     tar \
@@ -38,6 +39,8 @@ RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/
     base-devel \
     python \
     nginx \
+  && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+  && printf 'Asia/Shanghai\n' > /etc/timezone \
   && pacman -Scc --noconfirm
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
@@ -45,6 +48,7 @@ COPY docker/nginx.conf /etc/agentweb/nginx.conf.template
 COPY docker/entrypoint.sh /usr/local/bin/agentweb-entrypoint
 RUN chmod +x /usr/local/bin/agentweb-entrypoint \
   && mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents /etc/agentweb
+ENV TZ=Asia/Shanghai
 ENV HOME=/data/home
 ENV XDG_CONFIG_HOME=/data/home/.config
 ENV XDG_DATA_HOME=/data/home/.local/share
