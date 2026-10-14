@@ -210,8 +210,14 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
     // values: a transcript can contain many tiny records. Cap valid entries
     // before building the tree index to keep per-refresh memory predictable.
     const MAX_TRANSCRIPT_ENTRIES: usize = 100_000;
+    // Malformed lines still cost CPU to parse, even though they do not count
+    // toward the valid-entry limit. Count the header as a line too.
+    const MAX_TRANSCRIPT_LINES: usize = 200_000;
     let mut entries = Vec::new();
     for (index, line) in content.lines().enumerate() {
+        if index >= MAX_TRANSCRIPT_LINES {
+            return Vec::new();
+        }
         if let Ok(entry) = serde_json::from_str::<Value>(line) {
             if entries.len() >= MAX_TRANSCRIPT_ENTRIES {
                 return Vec::new();
@@ -408,6 +414,16 @@ mod tests {
         }
         let content = lines.join("\n");
         assert!(parse_messages(&content, "session-limit").is_empty());
+    }
+
+    #[test]
+    fn rejects_transcript_with_too_many_malformed_lines() {
+        let mut lines = vec![
+            r#"{"type":"session","id":"session-line-limit","version":3}"#.to_owned(),
+        ];
+        lines.resize(200_001, "not-json".to_owned());
+        let content = lines.join("\n");
+        assert!(parse_messages(&content, "session-line-limit").is_empty());
     }
 
     #[test]
