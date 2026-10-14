@@ -157,6 +157,11 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             if !workspace.is_dir() {
                 bail!("Agent workspace is not a directory");
             }
+            // Never allow the shared workspace mount itself as a project:
+            // binding it writable would expose every sibling project.
+            if workspace == std::path::Path::new("/workspaces") {
+                bail!("Agent workspace must be a project directory, not the shared /workspaces root");
+            }
             let mut sandbox = Command::new("bwrap");
             sandbox.args([
                 "--die-with-parent",
@@ -271,6 +276,18 @@ mod workspace_state_tests {
 
     fn temp_path(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn shared_workspaces_root_is_not_a_valid_project_workspace() {
+        assert_eq!(
+            std::path::Path::new("/workspaces"),
+            std::path::Path::new("/workspaces")
+        );
+        assert_ne!(
+            std::path::Path::new("/workspaces/project"),
+            std::path::Path::new("/workspaces")
+        );
     }
 
     #[test]
