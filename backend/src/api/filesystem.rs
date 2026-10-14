@@ -192,3 +192,36 @@ pub async fn tree(
     });
     Ok(Json(result))
 }
+
+#[cfg(test)]
+mod symlink_tree_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn search_tree_skips_symlinks_and_directory_cycles() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("tree-root");
+        let outside = temp_root("tree-outside");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("outside-secret.txt"), "not visible").unwrap();
+        symlink(&outside, root.join("outside-link")).unwrap();
+        symlink(&root, root.join("nested/back-to-root")).unwrap();
+
+        let result = search_tree(&root, "outside-secret").await.unwrap();
+        assert!(result.is_empty(), "search must not follow an external symlink");
+        let result = search_tree(&root, "nested").await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "nested");
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+}
