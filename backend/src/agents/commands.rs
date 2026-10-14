@@ -113,6 +113,9 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             sandbox.args([
                 "--die-with-parent",
                 "--new-session",
+                "--unshare-pid",
+                "--unshare-ipc",
+                "--unshare-uts",
                 "--ro-bind", "/", "/",
                 "--dev-bind", "/dev", "/dev",
                 "--proc", "/proc",
