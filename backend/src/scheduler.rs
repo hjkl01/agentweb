@@ -216,7 +216,7 @@ async fn execute_run(state: AppState, run_id: &str) {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("目标会话正在执行或租约状态未知")).await;
                 return;
             }
-            Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0 }
+            Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0, workspace_available:true }
         }
         Ok(None) if strategy == "new" => {
             if crate::api::build_agent_config(&state.db, &agent_id).await.is_err() {
@@ -226,7 +226,7 @@ async fn execute_run(state: AppState, run_id: &str) {
                 .bind(&session_id).bind(&agent_id).bind(format!("定时任务：{}", task_id)).bind(&workspace).bind(&model).bind(&now_text).bind(&now_text).execute(&state.db).await.is_err() {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("创建执行会话失败")).await; return;
             }
-            Session { id:session_id.clone(), agent_id, title:format!("定时任务：{}",task_id), workspace, status:"idle".into(), native_session_id:None, model, is_pinned:false }
+            Session { id:session_id.clone(), agent_id, title:format!("定时任务：{}",task_id), workspace, status:"idle".into(), native_session_id:None, model, is_pinned:false, workspace_available:true }
         }
         Ok(None) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("复用的会话不存在")).await; return; }
         Ok(Some(_)) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("新会话 ID 冲突")).await; return; }
