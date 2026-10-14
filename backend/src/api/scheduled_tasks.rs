@@ -202,9 +202,12 @@ pub async fn update(Path(id): Path<String>, State(s): State<AppState>, Json(v): 
     }
     let next = initial_next(&v)?;
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query("UPDATE scheduled_tasks SET name=?,prompt=?,agent_id=?,working_directory=?,model=?,schedule_type=?,schedule_config=?,timezone=?,session_strategy=?,reuse_session_id=?,enabled=?,next_run_at=?,updated_at=? WHERE id=?")
-        .bind(v.name.trim()).bind(v.prompt.trim()).bind(v.agent_id.trim()).bind(v.working_directory.trim()).bind(v.model.as_deref()).bind(&v.schedule_type).bind(v.schedule_config.to_string()).bind(v.timezone.trim()).bind(&v.session_strategy).bind(v.reuse_session_id.as_deref()).bind(v.enabled as i64).bind(if v.enabled {next} else {None}).bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if result.rows_affected()==0 { return Err(StatusCode::NOT_FOUND); }
+    let result = sqlx::query("UPDATE scheduled_tasks SET name=?,prompt=?,agent_id=?,working_directory=?,model=?,schedule_type=?,schedule_config=?,timezone=?,session_strategy=?,reuse_session_id=?,enabled=?,next_run_at=?,updated_at=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(v.name.trim()).bind(v.prompt.trim()).bind(v.agent_id.trim()).bind(v.working_directory.trim()).bind(v.model.as_deref()).bind(&v.schedule_type).bind(v.schedule_config.to_string()).bind(v.timezone.trim()).bind(&v.session_strategy).bind(v.reuse_session_id.as_deref()).bind(v.enabled as i64).bind(if v.enabled {next} else {None}).bind(&now).bind(&id).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected()==0 {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?").bind(&id).fetch_one(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(if exists == 0 { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT });
+    }
     get(Path(id), State(s)).await
 }
 pub async fn delete(Path(id):Path<String>,State(s):State<AppState>)->Result<StatusCode,StatusCode>{
