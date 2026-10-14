@@ -74,6 +74,41 @@ pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Sess
     }
     Ok(session)
 }
+pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
+    let base_path = default_workspace_root();
+    fs::create_dir_all(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut entries = fs::read_dir(&base)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut workspaces = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        let path = entry.path();
+        let metadata = match fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_dir() => metadata,
+            _ => continue,
+        };
+        let _ = metadata;
+        let canonical = match fs::canonicalize(&path).await {
+            Ok(path) if path.starts_with(&base) => path,
+            _ => continue,
+        };
+        if let Ok(relative) = canonical.strip_prefix(&base) {
+            workspaces.push(relative.to_string_lossy().replace('\\\\', "/"));
+        }
+    }
+    workspaces.sort();
+    Ok(Json(workspaces))
+}
+
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
     Json(rows.iter().map(session_from_row).collect())
