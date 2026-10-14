@@ -1,5 +1,5 @@
 use super::adapter::AgentConfig;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use tokio::process::Command;
 
 #[derive(Clone, Copy)]
@@ -24,7 +24,6 @@ fn parts(command: &str) -> Result<(String, Vec<String>)> {
 
 pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<Command> {
     let (program, base) = parts(&config.command)?;
-    let mut command = Command::new(program);
     let mut args = base;
     match kind {
         ProcessKind::Codex => {
@@ -90,7 +89,40 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
         }
         ProcessKind::Generic => args.push(message.into()),
     }
-    command.args(args);
+    let mut command = if let Some(dir) = &config.working_directory {
+        #[cfg(target_os = "linux")]
+        {
+            // Fail closed: an Agent with a workspace must not run unrestricted if
+            // the Linux namespace sandbox is unavailable. The root filesystem is
+            // read-only; only the session workspace is writable.
+            let workspace = std::path::Path::new(dir)
+                .canonicalize()
+                .map_err(|error| anyhow!("cannot resolve Agent workspace: {error}"))?;
+            if !workspace.is_dir() {
+                bail!("Agent workspace is not a directory");
+            }
+            let mut sandbox = Command::new("bwrap");
+            sandbox.args([
+                "--die-with-parent",
+                "--new-session",
+                "--ro-bind", "/", "/",
+                "--dev-bind", "/dev", "/dev",
+                "--proc", "/proc",
+                "--tmpfs", "/tmp",
+                "--bind",
+            ]);
+            sandbox.arg(&workspace).arg(&workspace);
+            sandbox.args(["--chdir"]).arg(&workspace).arg("--").arg(&program).args(args);
+            sandbox
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (dir, &program, &args);
+            bail!("workspace sandbox is currently supported only on Linux; refusing to start an unrestricted Agent");
+        }
+    } else {
+        bail!("Agent execution requires an explicitly selected workspace");
+    };
     if let Some(dir) = &config.working_directory {
         command.current_dir(dir);
     }
