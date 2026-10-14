@@ -593,6 +593,7 @@ mod tests {
             native_session_id: None,
             model: None,
             is_pinned: false,
+            workspace_available: true,
         };
         let events = EventBus::new(db.clone()).for_worker("w1".into());
         run_session(
