@@ -59,9 +59,14 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     let Some(path) = find_by_suffix(root, &suffix, native_session_id) else {
         return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(&path) else {
+    // The agent may append to the JSONL file while the UI refreshes it.
+    // A partial final UTF-8 sequence or JSON object should not hide all prior
+    // messages; lossy decoding lets the line parser skip only the incomplete
+    // tail while retaining complete earlier entries.
+    let Ok(bytes) = std::fs::read(&path) else {
         return Vec::new();
     };
+    let content = String::from_utf8_lossy(&bytes);
     parse_messages(&content, native_session_id)
 }
 
@@ -310,6 +315,20 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "correct session");
+    }
+
+    #[test]
+    fn preserves_complete_messages_when_last_jsonl_entry_is_incomplete() {
+        let content = [
+            r#"{"type":"session","id":"session-tail","version":3}"#,
+            r#"{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":"complete message"}}"#,
+            r#"{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":"partial"#,
+        ]
+        .join("\n");
+
+        let messages = parse_messages(&content, "session-tail");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "complete message");
     }
 
     #[test]
