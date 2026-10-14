@@ -186,6 +186,7 @@ pub async fn tree(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let mut result = Vec::new();
+    let mut truncated = false;
     while let Some(entry) = entries
         .next_entry()
         .await
@@ -202,6 +203,12 @@ pub async fn tree(
             Ok(m) => m,
             Err(_) => continue,
         };
+        // Only report truncation if there is another eligible entry beyond
+        // the response limit, rather than when the directory has exactly 2000.
+        if result.len() >= 2000 {
+            truncated = true;
+            break;
+        }
         let relative = entry
             .path()
             .strip_prefix(&root)
@@ -218,16 +225,12 @@ pub async fn tree(
             },
             size: metadata.len(),
         });
-        if result.len() >= 2000 {
-            break;
-        }
     }
     result.sort_by(|a, b| {
         a.kind
             .cmp(b.kind)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    let truncated = result.len() >= 2000;
     let mut response = Json(result).into_response();
     if truncated {
         response.headers_mut().insert(
