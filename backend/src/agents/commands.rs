@@ -182,6 +182,31 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/proc",
                 "--tmpfs",
                 "/tmp",
+                // Hide unrelated host/container state that is not needed to run
+                // an Agent. In particular, do not expose other users' home
+                // directories, runtime sockets, package databases, or mount points.
+                "--tmpfs",
+                "/home",
+                "--tmpfs",
+                "/root",
+                "--tmpfs",
+                "/run",
+                "--tmpfs",
+                "/var",
+                "--tmpfs",
+                "/mnt",
+                "--tmpfs",
+                "/media",
+                "--tmpfs",
+                "/srv",
+                "--tmpfs",
+                "/boot",
+                "--tmpfs",
+                "/opt",
+                "--tmpfs",
+                "/sys",
+                "--tmpfs",
+                "/etc/agentweb",
                 // Preserve only the required read-only directories under
                 // temporary mount aliases before masking /data itself.
                 "--dir",
