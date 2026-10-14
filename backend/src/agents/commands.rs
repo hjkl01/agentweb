@@ -13,6 +13,51 @@ pub enum ProcessKind {
     Generic,
 }
 
+fn ensure_workspace_state_dir(workspace: &std::path::Path, relative: &std::path::Path) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|error| anyhow!("cannot resolve Agent workspace: {error}"))?;
+    if !workspace.is_dir() {
+        bail!("Agent workspace is not a directory");
+    }
+
+    let mut current = workspace.clone();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            bail!("invalid relative Agent state directory");
+        };
+        current.push(name);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let canonical = current
+                    .canonicalize()
+                    .map_err(|error| anyhow!("cannot resolve Agent state directory: {error}"))?;
+                if !canonical.starts_with(&workspace) || !canonical.is_dir() {
+                    bail!("Agent state directory must remain inside the workspace");
+                }
+                current = canonical;
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => bail!("Agent state path is not a directory"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)
+                    .map_err(|error| anyhow!("cannot create Agent state directory: {error}"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let canonical = current
+            .canonicalize()
+            .map_err(|error| anyhow!("cannot resolve Agent state directory: {error}"))?;
+        if !canonical.starts_with(&workspace) {
+            bail!("Agent state directory must remain inside the workspace");
+        }
+        current = canonical;
+    }
+    Ok(current)
+}
+
 fn parts(command: &str) -> Result<(String, Vec<String>)> {
     let mut parts = command.split_whitespace();
     let program = parts
@@ -136,6 +181,18 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     };
     if let Some(dir) = &config.working_directory {
         command.current_dir(dir);
+    }
+    // Pi supports a dedicated session directory. Keep its writable native
+    // conversation state inside the selected workspace instead of its read-only
+    // host HOME, while leaving existing Pi credentials/configuration untouched.
+    if matches!(kind, ProcessKind::Pi) {
+        if let Some(dir) = &config.working_directory {
+            let state_dir = ensure_workspace_state_dir(
+                std::path::Path::new(dir),
+                std::path::Path::new(".agentweb-state/pi-sessions"),
+            )?;
+            command.env("PI_CODING_AGENT_SESSION_DIR", state_dir);
+        }
     }
     if let Some(runtime) = &config.runtime_path {
         let path = std::env::var("PATH").unwrap_or_default();
