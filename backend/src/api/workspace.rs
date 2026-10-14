@@ -138,14 +138,26 @@ async fn run_git_limited(
             StatusCode::BAD_GATEWAY
         })?;
 
-    let mut stdout = child.stdout.take().ok_or(StatusCode::BAD_GATEWAY)?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(StatusCode::BAD_GATEWAY);
+    };
     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
     let read_limit = max_bytes.saturating_add(1) as u64;
-    stdout
+    if stdout
         .take(read_limit)
         .read_to_end(&mut bytes)
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .is_err()
+    {
+        // Always reap the child when reading its pipe fails. Otherwise an
+        // unexpected I/O error can leave a Git process running in the
+        // background after the request has already failed.
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(StatusCode::BAD_GATEWAY);
+    }
 
     let truncated = bytes.len() > max_bytes;
     if truncated {
