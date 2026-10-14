@@ -255,6 +255,36 @@ mod symlink_tree_tests {
         std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
     }
 
+    #[tokio::test]
+    async fn search_tree_does_not_mark_exact_result_limit_as_truncated() {
+        let root = temp_root("tree-exact-limit");
+        std::fs::create_dir_all(&root).unwrap();
+        for index in 0..2000 {
+            std::fs::write(root.join(format!("match-{index:04}.txt")), "").unwrap();
+        }
+
+        let (result, truncated) = search_tree(&root, "match-").await.unwrap();
+        assert_eq!(result.len(), 2000);
+        assert!(!truncated);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_tree_marks_extra_matching_results_as_truncated() {
+        let root = temp_root("tree-over-limit");
+        std::fs::create_dir_all(&root).unwrap();
+        for index in 0..2001 {
+            std::fs::write(root.join(format!("match-{index:04}.txt")), "").unwrap();
+        }
+
+        let (result, truncated) = search_tree(&root, "match-").await.unwrap();
+        assert_eq!(result.len(), 2000);
+        assert!(truncated);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn tree_rejects_symlink_path_components() {
