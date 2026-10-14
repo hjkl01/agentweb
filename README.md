@@ -83,6 +83,15 @@ agentweb/
 - Rust stable / Cargo
 - Node.js 22+
 - npm
+- Linux 工作区隔离依赖：`bubblewrap`（命令 `bwrap`）
+
+Agent 和终端命令会通过 Linux namespace 沙箱启动：系统文件系统只读，当前会话工作区可写，`/tmp` 使用隔离的临时文件系统。若系统没有可用的 `bwrap` 或 namespace 权限，启动会失败，不会自动退回到不受限制的执行方式。当前工作区沙箱仅支持 Linux；macOS/Windows 上的 Agent 与终端执行会被拒绝，直到提供对应平台的沙箱实现。
+
+Arch Linux 可安装依赖：
+
+```bash
+sudo pacman -S bubblewrap
+```
 
 本地开发默认将持久化数据统一放在项目根目录的 `data/` 下，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
 
