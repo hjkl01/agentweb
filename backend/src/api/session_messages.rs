@@ -44,7 +44,7 @@ pub async fn send_message(
     let now_text = now.to_rfc3339();
     let lease_until = (now + Duration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
     let worker_id = format!("{}:{}", s.worker_id, uuid::Uuid::new_v4());
-    let claimed=sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR lease_until<?)")
+    let claimed=sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&worker_id).bind(&lease_until).bind(&now_text).bind(&id).bind(&now_text).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if claimed.rows_affected() == 0 {
         load_session(&s.db, &id).await?;
