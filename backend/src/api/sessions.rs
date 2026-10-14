@@ -132,20 +132,39 @@ async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode
         return Err(StatusCode::BAD_REQUEST);
     }
     let path = FsPath::new(name);
-    if path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
+    if path.is_absolute()
+        || path.components().any(|component| {
+            !matches!(component, Component::Normal(_))
+        })
+    {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let workspace = base.join(path);
-    fs::create_dir_all(&workspace)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let canonical = fs::canonicalize(&workspace)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !canonical.starts_with(&base) {
-        return Err(StatusCode::FORBIDDEN);
+
+    // Resolve/create one component at a time. create_dir_all on an unchecked
+    // nested path could follow an existing symlink and create directories
+    // outside the configured workspace root before the final check.
+    let mut current = base.clone();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::metadata(&current).await {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(StatusCode::BAD_REQUEST),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }
+            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        }
+        let canonical = fs::canonicalize(&current)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !canonical.starts_with(&base) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        current = canonical;
     }
-    Ok(canonical.to_string_lossy().into_owned())
+    Ok(current.to_string_lossy().into_owned())
 }
 pub async fn create_session(
     State(s): State<AppState>,
