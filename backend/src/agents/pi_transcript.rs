@@ -406,7 +406,7 @@ mod tests {
                 r#"{{"type":"custom","id":"entry-{index}"}}"#
             ));
         }
-        let content = lines.join("\\n");
+        let content = lines.join("\n");
         assert!(parse_messages(&content, "session-limit").is_empty());
     }
 
