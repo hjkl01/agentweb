@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use std::path::{Component, Path as FsPath, PathBuf};
-use tokio::{fs, process::Command};
+use tokio::{fs, io::AsyncReadExt, process::{Command, Stdio}};
 
 const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_DIFF_TOTAL_BYTES: usize = 4 * 1024 * 1024;
@@ -101,6 +101,51 @@ async fn read_untracked_file(root: &FsPath, relative: &str) -> Option<Vec<u8>> {
         return None;
     }
     fs::read(canonical).await.ok()
+}
+
+struct LimitedGitOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    truncated: bool,
+}
+
+async fn run_git_limited(
+    root: &FsPath,
+    args: &[&str],
+    max_bytes: usize,
+) -> Result<LimitedGitOutput, StatusCode> {
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            tracing::error!(workspace = %root.display(), %error, "failed to start git command");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    let mut stdout = child.stdout.take().ok_or(StatusCode::BAD_GATEWAY)?;
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    let read_limit = max_bytes.saturating_add(1) as u64;
+    stdout
+        .take(read_limit)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    let truncated = bytes.len() > max_bytes;
+    if truncated {
+        // Stop the process once the output limit is exceeded instead of
+        // buffering an arbitrarily large diff in memory.
+        let _ = child.kill().await;
+    }
+    let status = child.wait().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if truncated {
+        bytes.truncate(max_bytes);
+    }
+    Ok(LimitedGitOutput { status, stdout: bytes, truncated })
 }
 
 async fn git_status(
@@ -223,18 +268,12 @@ async fn git_file(root: &PathBuf, path: &str) -> Result<(String, usize), StatusC
         return Err(StatusCode::FORBIDDEN);
     }
     let spec = format!("HEAD:{path}");
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["show", &spec])
-        .output()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let output = run_git_limited(root, &["show", &spec], MAX_PREVIEW_BYTES).await?;
+    if output.truncated {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
     if !output.status.success() {
         return Err(StatusCode::NOT_FOUND);
-    }
-    if output.stdout.len() > MAX_PREVIEW_BYTES {
-        return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
     if output.stdout.contains(&0) {
         return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
@@ -309,16 +348,19 @@ pub async fn workspace_diff(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let session = get_session(Path(id), State(s)).await?.0;
     let root = workspace_root(&session.workspace).await?;
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["diff", "HEAD", "--no-ext-diff", "--binary"])
-        .output()
-        .await
-        .map_err(|error| {
-            tracing::error!(workspace = %root.display(), %error, "failed to start git diff");
-            StatusCode::BAD_GATEWAY
-        })?;
+    let output = run_git_limited(
+        &root,
+        &["diff", "HEAD", "--no-ext-diff", "--binary"],
+        MAX_DIFF_TOTAL_BYTES,
+    ).await?;
+    if output.truncated {
+        let diff = String::from_utf8_lossy(&output.stdout).into_owned();
+        return Ok(Json(serde_json::json!({
+            "status": "ok",
+            "diff": diff,
+            "truncated": true
+        })));
+    }
     let mut diff = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).into_owned()
     } else {
@@ -346,38 +388,37 @@ pub async fn workspace_diff(
 
         // A Git repository without a first commit has no resolvable HEAD.
         // Show staged and unstaged changes separately as a best-effort diff.
-        let cached = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["diff", "--cached", "--no-ext-diff", "--binary"])
-            .output()
-            .await
-            .map_err(|error| {
-                tracing::error!(workspace = %root.display(), %error, "failed to read cached Git diff");
-                StatusCode::BAD_GATEWAY
-            })?;
-        let unstaged = Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["diff", "--no-ext-diff", "--binary"])
-            .output()
-            .await
-            .map_err(|error| {
-                tracing::error!(workspace = %root.display(), %error, "failed to read unstaged Git diff");
-                StatusCode::BAD_GATEWAY
-            })?;
+        let cached = run_git_limited(
+            &root,
+            &["diff", "--cached", "--no-ext-diff", "--binary"],
+            MAX_DIFF_TOTAL_BYTES,
+        ).await?;
+        if cached.truncated {
+            return Ok(Json(serde_json::json!({
+                "status": "ok",
+                "diff": String::from_utf8_lossy(&cached.stdout).into_owned(),
+                "truncated": true
+            })));
+        }
+        let unstaged = run_git_limited(
+            &root,
+            &["diff", "--no-ext-diff", "--binary"],
+            MAX_DIFF_TOTAL_BYTES.saturating_sub(cached.stdout.len()),
+        ).await?;
         if !cached.status.success() || !unstaged.status.success() {
             tracing::warn!(
                 workspace = %root.display(),
                 cached_status = %cached.status,
                 unstaged_status = %unstaged.status,
-                stderr = %String::from_utf8_lossy(&output.stderr),
                 "git diff HEAD failed and fallback diff commands also failed"
             );
             return Err(StatusCode::BAD_GATEWAY);
         }
         let mut fallback = String::from_utf8_lossy(&cached.stdout).into_owned();
         fallback.push_str(&String::from_utf8_lossy(&unstaged.stdout));
+        if unstaged.truncated {
+            fallback.truncate(fallback.len().min(MAX_DIFF_TOTAL_BYTES));
+        }
         fallback
     };
     let mut truncated = false;
