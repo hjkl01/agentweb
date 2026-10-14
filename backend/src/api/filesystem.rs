@@ -42,6 +42,33 @@ fn ignored(name: &str) -> bool {
     matches!(name, ".git" | "node_modules" | "target")
 }
 
+async fn resolve_tree_path(root: &PathBuf, relative: &str) -> Result<PathBuf, StatusCode> {
+    let relative = validate_relative(relative)?;
+    let mut candidate = root.clone();
+
+    // Reject symlinks in every component, including links that point back
+    // inside the workspace.
+    for component in relative.components() {
+        if let Component::Normal(name) = component {
+            candidate.push(name);
+            let metadata = fs::symlink_metadata(&candidate)
+                .await
+                .map_err(|_| StatusCode::NOT_FOUND)?;
+            if metadata.file_type().is_symlink() {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+    }
+
+    let canonical = fs::canonicalize(&candidate)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if !canonical.starts_with(root) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(canonical)
+}
+
 async fn search_tree(root: &PathBuf, needle: &str) -> Result<Vec<TreeItem>, StatusCode> {
     let needle = needle.to_lowercase();
     let mut pending = vec![root.clone()];
@@ -128,33 +155,7 @@ pub async fn tree(
     }
     let current = match query.path.as_deref() {
         None | Some("") => root.clone(),
-        Some(relative) => {
-            let relative = validate_relative(relative)?;
-            let mut candidate = root.clone();
-
-            // Reject symlinks in every component, including links that point
-            // back inside the workspace. This keeps the tree endpoint's
-            // behavior consistent with workspace file previews.
-            for component in relative.components() {
-                if let Component::Normal(name) = component {
-                    candidate.push(name);
-                    let metadata = fs::symlink_metadata(&candidate)
-                        .await
-                        .map_err(|_| StatusCode::NOT_FOUND)?;
-                    if metadata.file_type().is_symlink() {
-                        return Err(StatusCode::FORBIDDEN);
-                    }
-                }
-            }
-
-            let canonical = fs::canonicalize(&candidate)
-                .await
-                .map_err(|_| StatusCode::NOT_FOUND)?;
-            if !canonical.starts_with(&root) {
-                return Err(StatusCode::FORBIDDEN);
-            }
-            canonical
-        }
+        Some(relative) => resolve_tree_path(&root, relative).await?
     };
     let metadata = fs::metadata(&current)
         .await
@@ -234,39 +235,16 @@ mod symlink_tree_tests {
 
         let root = fs::canonicalize(root).await.unwrap();
         assert_eq!(
-            tree_path_for_test(&root, "linked-dir").await,
+            resolve_tree_path(&root, "linked-dir").await,
             Err(StatusCode::FORBIDDEN)
         );
         assert_eq!(
-            tree_path_for_test(&root, "linked-internal-dir").await,
+            resolve_tree_path(&root, "linked-internal-dir").await,
             Err(StatusCode::FORBIDDEN)
         );
 
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
-    }
-
-    async fn tree_path_for_test(root: &PathBuf, relative: &str) -> Result<PathBuf, StatusCode> {
-        let relative = validate_relative(relative)?;
-        let mut candidate = root.clone();
-        for component in relative.components() {
-            if let Component::Normal(name) = component {
-                candidate.push(name);
-                let metadata = fs::symlink_metadata(&candidate)
-                    .await
-                    .map_err(|_| StatusCode::NOT_FOUND)?;
-                if metadata.file_type().is_symlink() {
-                    return Err(StatusCode::FORBIDDEN);
-                }
-            }
-        }
-        let canonical = fs::canonicalize(&candidate)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        if !canonical.starts_with(root) {
-            return Err(StatusCode::FORBIDDEN);
-        }
-        Ok(canonical)
     }
 
     #[cfg(unix)]
