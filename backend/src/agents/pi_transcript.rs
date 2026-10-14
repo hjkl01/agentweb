@@ -64,21 +64,28 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     // Typical conversations are far smaller; oversized/corrupt files fail
     // closed instead of blocking the API worker with a huge JSONL parse.
     const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
-    let Ok(metadata) = std::fs::metadata(&path) else {
+    // Open once, then inspect and read from that same handle. This avoids a
+    // path-based metadata/read race where the candidate could be replaced
+    // between the size check and the read.
+    let Ok(file) = std::fs::File::open(&path) else {
+        return Vec::new();
+    };
+    let Ok(metadata) = file.metadata() else {
         return Vec::new();
     };
     if !metadata.is_file() || metadata.len() > MAX_TRANSCRIPT_BYTES {
         return Vec::new();
     }
-    // The agent may append to the JSONL file while the UI refreshes it.
-    // A partial final UTF-8 sequence or JSON object should not hide all prior
-    // messages; lossy decoding lets the line parser skip only the incomplete
-    // tail while retaining complete earlier entries.
-    let Ok(bytes) = std::fs::read(&path) else {
-        return Vec::new();
-    };
-    // Recheck after reading to handle growth between metadata() and read().
-    if bytes.len() as u64 > MAX_TRANSCRIPT_BYTES {
+    // Bound the actual read too: the file may grow after metadata() returns.
+    // A partial final UTF-8 sequence or JSON object should not hide prior
+    // messages; lossy decoding lets the parser skip only the incomplete tail.
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_TRANSCRIPT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 > MAX_TRANSCRIPT_BYTES
+    {
         return Vec::new();
     }
     let content = String::from_utf8_lossy(&bytes);
