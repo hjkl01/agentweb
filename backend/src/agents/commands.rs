@@ -13,7 +13,10 @@ pub enum ProcessKind {
     Generic,
 }
 
-fn ensure_workspace_state_dir(workspace: &std::path::Path, relative: &std::path::Path) -> Result<std::path::PathBuf> {
+fn ensure_workspace_state_dir(
+    workspace: &std::path::Path,
+    relative: &std::path::Path,
+) -> Result<std::path::PathBuf> {
     use std::path::Component;
 
     let workspace = workspace
@@ -161,14 +164,25 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "--unshare-pid",
                 "--unshare-ipc",
                 "--unshare-uts",
-                "--ro-bind", "/", "/",
-                "--dev-bind", "/dev", "/dev",
-                "--proc", "/proc",
-                "--tmpfs", "/tmp",
+                "--ro-bind",
+                "/",
+                "/",
+                "--dev-bind",
+                "/dev",
+                "/dev",
+                "--proc",
+                "/proc",
+                "--tmpfs",
+                "/tmp",
                 "--bind",
             ]);
             sandbox.arg(&workspace).arg(&workspace);
-            sandbox.args(["--chdir"]).arg(&workspace).arg("--").arg(&program).args(args);
+            sandbox
+                .args(["--chdir"])
+                .arg(&workspace)
+                .arg("--")
+                .arg(&program)
+                .args(args);
             sandbox
         }
         #[cfg(not(target_os = "linux"))]
@@ -226,6 +240,18 @@ mod workspace_state_tests {
 
         assert!(state.starts_with(workspace.canonicalize().unwrap()));
         assert!(state.is_dir());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_relative_state_paths() {
+        let workspace = temp_path("pi-state-workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        assert!(ensure_workspace_state_dir(&workspace, std::path::Path::new("../outside")).is_err());
+        assert!(ensure_workspace_state_dir(&workspace, std::path::Path::new("/tmp/outside")).is_err());
+        assert!(!workspace.parent().unwrap().join("outside").exists());
+
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
