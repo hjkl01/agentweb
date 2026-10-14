@@ -130,7 +130,24 @@ pub async fn tree(
         None | Some("") => root.clone(),
         Some(relative) => {
             let relative = validate_relative(relative)?;
-            let canonical = fs::canonicalize(root.join(relative))
+            let mut candidate = root.clone();
+
+            // Reject symlinks in every component, including links that point
+            // back inside the workspace. This keeps the tree endpoint's
+            // behavior consistent with workspace file previews.
+            for component in relative.components() {
+                if let Component::Normal(name) = component {
+                    candidate.push(name);
+                    let metadata = fs::symlink_metadata(&candidate)
+                        .await
+                        .map_err(|_| StatusCode::NOT_FOUND)?;
+                    if metadata.file_type().is_symlink() {
+                        return Err(StatusCode::FORBIDDEN);
+                    }
+                }
+            }
+
+            let canonical = fs::canonicalize(&candidate)
                 .await
                 .map_err(|_| StatusCode::NOT_FOUND)?;
             if !canonical.starts_with(&root) {
@@ -200,6 +217,56 @@ mod symlink_tree_tests {
 
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tree_rejects_symlink_path_components() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("tree-path-root");
+        let outside = temp_root("tree-path-outside");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "not visible").unwrap();
+        symlink(&outside, root.join("linked-dir")).unwrap();
+        symlink(root.join("nested"), root.join("linked-internal-dir")).unwrap();
+
+        let root = fs::canonicalize(root).await.unwrap();
+        assert_eq!(
+            tree_path_for_test(&root, "linked-dir").await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            tree_path_for_test(&root, "linked-internal-dir").await,
+            Err(StatusCode::FORBIDDEN)
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    async fn tree_path_for_test(root: &PathBuf, relative: &str) -> Result<PathBuf, StatusCode> {
+        let relative = validate_relative(relative)?;
+        let mut candidate = root.clone();
+        for component in relative.components() {
+            if let Component::Normal(name) = component {
+                candidate.push(name);
+                let metadata = fs::symlink_metadata(&candidate)
+                    .await
+                    .map_err(|_| StatusCode::NOT_FOUND)?;
+                if metadata.file_type().is_symlink() {
+                    return Err(StatusCode::FORBIDDEN);
+                }
+            }
+        }
+        let canonical = fs::canonicalize(&candidate)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        if !canonical.starts_with(root) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        Ok(canonical)
     }
 
     #[cfg(unix)]
