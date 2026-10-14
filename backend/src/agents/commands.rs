@@ -266,6 +266,21 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     if let Some(dir) = &config.working_directory {
         command.current_dir(dir);
     }
+    // Do not leak AgentWeb's internal service configuration into third-party
+    // Agent processes. Provider credentials and proxy settings remain inherited.
+    for name in [
+        "DATABASE_URL",
+        "AGENTWEB_BIND_ADDR",
+        "AGENTWEB_EVENT_LISTEN_ADDR",
+        "AGENTWEB_EVENT_PEERS",
+        "AGENTWEB_WORKERS",
+        "AGENTWEB_FRONTEND_DIR",
+        "AGENTWEB_WORKSPACE_DIR",
+        "AGENTWEB_RUNTIME_DIR",
+        "AGENTWEB_TRUSTED_PROXIES",
+    ] {
+        command.env_remove(name);
+    }
     // Pi supports a dedicated session directory. Keep its writable native
     // conversation state inside the selected workspace instead of its read-only
     // host HOME, while leaving existing Pi credentials/configuration untouched.
