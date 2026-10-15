@@ -131,7 +131,7 @@ pub async fn list_sessions(
         let id = Uuid::new_v4().to_string();
         // Keep discovery idempotent across multiple backend workers: only
         // insert metadata when this native session has not been imported yet.
-        let _ = sqlx::query(
+        sqlx::query(
             "INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) SELECT ?, 'pi', ?, ?, 'idle', ?, NULL, 0, ?, ? WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE agent_id='pi' AND native_session_id=?)",
         )
         .bind(id)
@@ -142,7 +142,8 @@ pub async fn list_sessions(
         .bind(&native.updated_at)
         .bind(&native.id)
         .execute(&s.db)
-        .await;
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC")
