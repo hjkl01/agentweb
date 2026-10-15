@@ -1,6 +1,6 @@
 use super::sessions::load_session;
 use crate::agents::pi_transcript::{
-    native_session_file_exists_from_workspace, read_messages_from_workspace, TranscriptMessage,
+    native_session_file_exists, read_messages, TranscriptMessage,
 };
 use crate::state::AppState;
 use axum::{
@@ -59,16 +59,14 @@ pub async fn list_messages(
         tracing::error!(%error, "Pi transcript read limiter is unavailable");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
-    let workspace = session.workspace.clone();
     let native_session_id = native_session_id.to_owned();
     let (transcript_exists, messages) = tokio::task::spawn_blocking(move || {
         // Keep the permit for the entire blocking read, including if the HTTP
         // request is cancelled after the worker has started.
         let _permit = permit;
-        let workspace = std::path::Path::new(&workspace);
-        let exists = native_session_file_exists_from_workspace(workspace, &native_session_id);
+        let exists = native_session_file_exists(&native_session_id);
         let messages = if exists {
-            read_messages_from_workspace(workspace, &native_session_id)
+            read_messages(&native_session_id)
         } else {
             Vec::new()
         };
