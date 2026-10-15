@@ -10,8 +10,7 @@ use uuid::Uuid;
 pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
     // Conversation transcripts are owned by Agent-native session files.
-    // The migration drops the obsolete messages table; keep only application and
-    // runtime coordination data in SQLite.
+    // Legacy messages rows are no longer loaded or written by the application.
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
         .await?;
