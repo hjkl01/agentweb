@@ -123,28 +123,19 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     let discovered = tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
         .await.unwrap_or_default();
     for native in discovered {
-        let exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sessions WHERE agent_id='pi' AND native_session_id=?",
-        )
-        .bind(&native.id)
-        .fetch_one(&s.db)
-        .await
-        .unwrap_or(1);
-        if exists > 0 { continue; }
         let id = Uuid::new_v4().to_string();
+        // Keep discovery idempotent across multiple backend workers: only
+        // insert metadata when this native session has not been imported yet.
         let _ = sqlx::query(
-            "INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) SELECT ?, 'pi', ?, ?, 'idle', ?, NULL, 0, ?, ? WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE agent_id='pi' AND native_session_id=?)",
         )
         .bind(id)
-        .bind("pi")
         .bind(&native.title)
         .bind(&native.cwd)
-        .bind("idle")
         .bind(&native.id)
-        .bind::<Option<String>>(None)
-        .bind(0i64)
         .bind(&native.created_at)
         .bind(&native.updated_at)
+        .bind(&native.id)
         .execute(&s.db)
         .await;
     }
