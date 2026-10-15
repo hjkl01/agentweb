@@ -68,6 +68,36 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // Keep legacy API readers compatible while lifecycle writes are migrated
+    // incrementally to session_runtime. The WHEN guard prevents needless
+    // trigger ping-pong when the mirrored values already match.
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS runtime_sessions_update
+         AFTER UPDATE OF status,worker_id,lease_until,updated_at ON session_runtime
+         WHEN EXISTS (
+           SELECT 1 FROM sessions s
+           WHERE s.id=NEW.session_id AND
+             (s.status != NEW.status OR
+              COALESCE(s.worker_id,'') != COALESCE(NEW.worker_id,'') OR
+              COALESCE(s.lease_until,'') != COALESCE(NEW.lease_until,'') OR
+              s.updated_at != NEW.updated_at)
+         )
+         BEGIN
+           UPDATE sessions SET status=NEW.status,worker_id=NEW.worker_id,
+             lease_until=NEW.lease_until,updated_at=NEW.updated_at
+           WHERE id=NEW.session_id;
+         END",
+    )
+    .execute(pool)
+    .await?;
+    // Remove stale coordination rows left by sessions deleted before the
+    // compatibility trigger existed. Runtime records never define history.
+    sqlx::query(
+        "DELETE FROM session_runtime WHERE NOT EXISTS
+         (SELECT 1 FROM sessions WHERE sessions.id=session_runtime.session_id)",
+    )
+    .execute(pool)
+    .await?;
     seed_builtin_agents(pool).await?;
     Ok(())
 }
