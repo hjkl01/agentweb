@@ -117,7 +117,7 @@ export function App({ sessionId, navigate }: Props) {
         onRefresh={c.workspace.refresh}
         onOpenFile={c.openWorkspaceFile}
         onCloseFile={() => {
-          c.workspace.setSelectedFile(undefined);
+          c.workspace.closeFile();
           c.setFocusLine(undefined);
         }}
       />
