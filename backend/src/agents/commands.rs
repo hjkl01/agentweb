@@ -135,7 +135,6 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
         "AGENTWEB_EVENT_LISTEN_ADDR",
         "AGENTWEB_EVENT_PEERS",
         "AGENTWEB_WORKERS",
-        "AGENTWEB_FRONTEND_DIR",
         "AGENTWEB_WORKSPACE_DIR",
         "AGENTWEB_AGENT_HOME",
         "AGENTWEB_RUNTIME_DIR",
