@@ -12,27 +12,75 @@ mod state;
 mod terminal;
 
 use anyhow::Result;
-use axum::{middleware, routing::get, Router};
+use axum::{
+    body::Body,
+    http::{header, Uri},
+    middleware, response::Response, routing::get, Router,
+};
 use chrono::Utc;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
 };
-use std::{net::SocketAddr, path::Path, str::FromStr};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
-};
+use std::{net::SocketAddr, path::{Path, PathBuf}, str::FromStr};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
+
+async fn serve_embedded_frontend(uri: Uri) -> Response<Body> {
+    let requested = uri.path().trim_start_matches('/');
+    let requested = if requested.is_empty() { "index.html" } else { requested };
+    let asset = EMBEDDED_ASSETS
+        .iter()
+        .find(|(name, _)| *name == requested)
+        .or_else(|| EMBEDDED_ASSETS.iter().find(|(name, _)| *name == "index.html"));
+
+    match asset {
+        Some((name, bytes)) => Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header(header::CONTENT_TYPE, embedded_content_type(name))
+            .body(Body::from(bytes.to_vec()))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+        None => Response::builder()
+            .status(axum::http::StatusCode::NOT_FOUND)
+            .body(Body::from("Frontend assets are missing; rebuild Agent Web."))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
+}
+
+fn embedded_content_type(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
-    let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://./data/agentweb.db".into());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        format!("sqlite://{}", home.join(".config/agentweb/agentweb.db").display())
+    });
     if let Some(path) = db_url.strip_prefix("sqlite://") {
         let path = path.split('?').next().unwrap_or(path);
         if let Some(parent) = Path::new(path).parent() {
@@ -77,15 +125,6 @@ async fn main() -> Result<()> {
     });
     let state = state::AppState::new(pool);
     state.start_scheduler();
-    let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| {
-        // `make build` copies index.html straight into ./frontend, vite's dev output lives in ./frontend/dist
-        if Path::new("./frontend/index.html").is_file() {
-            "./frontend".into()
-        } else {
-            "./frontend/dist".into()
-        }
-    });
-    let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
         .route(
             "/scheduled-tasks",
@@ -201,9 +240,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .nest("/api", api_routes)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
-        .fallback_service(
-            ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)),
-        )
+        .fallback(serve_embedded_frontend)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
