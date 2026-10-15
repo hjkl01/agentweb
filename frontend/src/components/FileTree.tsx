@@ -129,9 +129,13 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const searchRequest = useRef(0);
 
   const previousSessionId = useRef(sessionId);
+  const sessionIdRef = useRef(sessionId);
   const loadedDirsRef = useRef(loadedDirs);
+  const loadingDirsRef = useRef(loadingDirs);
   const refreshRequest = useRef(0);
   loadedDirsRef.current = loadedDirs;
+  sessionIdRef.current = sessionId;
+  loadingDirsRef.current = loadingDirs;
 
   useEffect(() => {
     const request = ++refreshRequest.current;
@@ -144,6 +148,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       setLoadedDirs(new Set([""]));
       loadedDirsRef.current = new Set([""]);
       setLoadingDirs(new Set());
+      loadingDirsRef.current = new Set();
       setSearchFiles(undefined);
       return;
     }
@@ -221,29 +226,46 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     setExpanded((current) => new Set(current).add(path));
     if (loadedDirs.has(path) || !sessionId || searchFiles) return;
 
-    setLoadingDirs((current) => new Set(current).add(path));
+    // A previous request for this path may still be in flight. Avoid duplicate
+    // requests, and never let a response from an old session mutate the new tree.
+    if (loadingDirsRef.current.has(path)) return;
+    const requestSessionId = sessionId;
+    const nextLoading = new Set(loadingDirsRef.current);
+    nextLoading.add(path);
+    loadingDirsRef.current = nextLoading;
+    setLoadingDirs(nextLoading);
+
     try {
       const children = await api<FileItem[]>(
-        `/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`,
+        `/sessions/${requestSessionId}/files?path=${encodeURIComponent(path)}`,
       );
+      if (sessionIdRef.current !== requestSessionId) return;
+
       setAllFiles((current) => {
         const byPath = new Map(current.map((item) => [item.path, item]));
+        // Replace the directory's direct children rather than retaining files
+        // that disappeared while the request was in flight.
+        for (const existingPath of byPath.keys()) {
+          if (existingPath.startsWith(`${path}/`)) byPath.delete(existingPath);
+        }
         children.forEach((item) => byPath.set(item.path, item));
         return [...byPath.values()];
       });
       setLoadedDirs((current) => new Set(current).add(path));
     } catch {
+      if (sessionIdRef.current !== requestSessionId) return;
       setExpanded((current) => {
         const next = new Set(current);
         next.delete(path);
         return next;
       });
     } finally {
-      setLoadingDirs((current) => {
-        const next = new Set(current);
+      if (sessionIdRef.current === requestSessionId) {
+        const next = new Set(loadingDirsRef.current);
         next.delete(path);
-        return next;
-      });
+        loadingDirsRef.current = next;
+        setLoadingDirs(next);
+      }
     }
   };
 
