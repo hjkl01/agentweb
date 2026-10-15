@@ -125,7 +125,8 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadedDirs, setLoadedDirs] = useState<Set<string>>(new Set([""]));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
-  const [searchFiles, setSearchFiles] = useState<FileItem[]>();
+  const [searchResult, setSearchResult] = useState<{ query: string; items?: FileItem[]; error?: string }>();
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const searchRequest = useRef(0);
 
   const previousSessionId = useRef(sessionId);
@@ -151,7 +152,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       setLoadingDirs(new Set());
       loadingDirsRef.current = new Set();
       directoryRequest.current.clear();
-      setSearchFiles(undefined);
+      setSearchResult(undefined);
       return;
     }
 
@@ -215,23 +216,29 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     const request = ++searchRequest.current;
     const query = filter.trim();
     if (!query || !sessionId) {
-      setSearchFiles(undefined);
+      setSearchResult(undefined);
       return;
     }
     api<FileItem[]>(`/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query)}`)
       .then((items) => {
-        if (request === searchRequest.current) setSearchFiles(items);
+        if (request === searchRequest.current) setSearchResult({ query, items });
       })
-      .catch(() => {
-        if (request === searchRequest.current) setSearchFiles([]);
+      .catch((error: unknown) => {
+        if (request !== searchRequest.current) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setSearchResult({ query, error: message || "Search request failed" });
       });
     return () => { searchRequest.current += 1; };
-  }, [filter, sessionId]);
+  }, [filter, sessionId, searchAttempt]);
 
+  const query = filter.trim();
+  const currentSearch = query && sessionId && searchResult?.query === query ? searchResult : undefined;
+  const searchFiles = currentSearch?.items;
+  const searching = Boolean(query && sessionId && !currentSearch);
   const sourceFiles = searchFiles ?? allFiles;
   const fullTree = useMemo(() => buildTree(sourceFiles), [sourceFiles]);
-  const tree = useMemo(() => filterTree(fullTree, searchFiles ? "" : filter), [fullTree, filter, searchFiles]);
-  const visibleExpanded = searchFiles ? collectDirectories(tree) : expanded;
+  const tree = useMemo(() => filterTree(fullTree, currentSearch ? "" : filter), [fullTree, filter, currentSearch]);
+  const visibleExpanded = currentSearch?.items ? collectDirectories(tree) : expanded;
 
   const toggle = async (path: string) => {
     if (expanded.has(path)) {
@@ -243,7 +250,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       return;
     }
     setExpanded((current) => new Set(current).add(path));
-    if (loadedDirs.has(path) || !sessionId || searchFiles) return;
+    if (loadedDirs.has(path) || !sessionId || currentSearch) return;
 
     // A previous request for this path may still be in flight. Avoid duplicate
     // requests, and never let a response from an old session mutate the new tree.
@@ -299,7 +306,16 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     }
   };
 
-  if (!tree.length) return <div className="workspace-empty">{filter && searchFiles === undefined ? "Searching…" : "No files"}</div>;
+  if (currentSearch?.error) {
+    return (
+      <div className="workspace-empty" role="alert">
+        <div>Search failed: {currentSearch.error}</div>
+        <button className="file" onClick={() => setSearchAttempt((attempt) => attempt + 1)}>Retry search</button>
+      </div>
+    );
+  }
+  if (searching) return <div className="workspace-empty" role="status">Searching…</div>;
+  if (!tree.length) return <div className="workspace-empty">{query ? "No matching files" : "No files"}</div>;
   return (
     <div className="filetree">
       {tree.map((node) => (
