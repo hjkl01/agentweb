@@ -55,6 +55,30 @@ pub fn read_messages_from_workspace(
     read_messages_from_root(&session_dir, native_session_id)
 }
 
+/// Return whether a valid Pi transcript file exists in the workspace-scoped
+/// session directory. This lets API callers distinguish a deleted native
+/// session from a valid transcript that simply contains no visible messages.
+pub fn native_session_file_exists_from_workspace(
+    workspace: &Path,
+    native_session_id: &str,
+) -> bool {
+    let Ok(workspace) = workspace.canonicalize() else {
+        return false;
+    };
+    let state_dir = workspace.join(".agentweb-state");
+    let session_dir = state_dir.join("pi-sessions");
+    for path in [&state_dir, &session_dir] {
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return false;
+        }
+    }
+    let suffix = format!("_{native_session_id}.jsonl");
+    find_by_suffix(&session_dir, &suffix, native_session_id).is_some()
+}
+
 fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<TranscriptMessage> {
     let suffix = format!("_{native_session_id}.jsonl");
     let Some(path) = find_by_suffix(root, &suffix, native_session_id) else {
