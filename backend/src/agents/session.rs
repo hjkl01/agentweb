@@ -657,6 +657,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
         sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)")
