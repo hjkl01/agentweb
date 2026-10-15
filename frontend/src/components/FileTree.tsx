@@ -170,15 +170,19 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
           );
           return { path, children };
         } catch {
-          return { path, children: [] as FileItem[] };
+          // A failed refresh is not an empty directory. Preserve the cached
+          // branch instead of deleting its contents on transient API errors.
+          return undefined;
         }
       }),
     ).then((results) => {
       if (cancelled || request !== refreshRequest.current) return;
       const merged = new Map(files.map((item) => [item.path, item]));
-      results.forEach(({ path, children }) => {
-        // A directory listing contains only direct children. Replacing that
-        // slice removes stale entries while preserving other loaded branches.
+      results.forEach((result) => {
+        if (!result) return;
+        const { path, children } = result;
+        // Replace only successfully refreshed branches; failed branches keep
+        // their cached contents until a later refresh succeeds.
         for (const existingPath of merged.keys()) {
           if (existingPath.startsWith(`${path}/`)) merged.delete(existingPath);
         }
