@@ -128,6 +128,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
         "AGENTWEB_WORKERS",
         "AGENTWEB_FRONTEND_DIR",
         "AGENTWEB_WORKSPACE_DIR",
+        "AGENTWEB_AGENT_HOME",
         "AGENTWEB_RUNTIME_DIR",
         "AGENTWEB_TRUSTED_PROXIES",
     ] {
