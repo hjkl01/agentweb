@@ -569,9 +569,6 @@ mod tests {
         sqlx::query("CREATE TABLE scheduled_task_runs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL, status TEXT NOT NULL, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, agent_session_id TEXT, summary TEXT, error_message TEXT, lease_owner TEXT, lease_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE session_runtime(session_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
-        sqlx::query("CREATE TRIGGER sessions_runtime_insert AFTER INSERT ON sessions BEGIN INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(NEW.id,NEW.status,NEW.worker_id,NEW.lease_until,NEW.updated_at) ON CONFLICT(session_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,lease_until=excluded.lease_until,updated_at=excluded.updated_at; END").execute(&pool).await.unwrap();
-        sqlx::query("CREATE TRIGGER sessions_runtime_update AFTER UPDATE OF status,worker_id,lease_until,updated_at ON sessions BEGIN INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(NEW.id,NEW.status,NEW.worker_id,NEW.lease_until,NEW.updated_at) ON CONFLICT(session_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,lease_until=excluded.lease_until,updated_at=excluded.updated_at; END").execute(&pool).await.unwrap();
-        sqlx::query("CREATE TRIGGER runtime_sessions_update AFTER UPDATE OF status,worker_id,lease_until,updated_at ON session_runtime WHEN EXISTS (SELECT 1 FROM sessions s WHERE s.id=NEW.session_id AND (s.status!=NEW.status OR COALESCE(s.worker_id,'')!=COALESCE(NEW.worker_id,'') OR COALESCE(s.lease_until,'')!=COALESCE(NEW.lease_until,'') OR s.updated_at!=NEW.updated_at)) BEGIN UPDATE sessions SET status=NEW.status,worker_id=NEW.worker_id,lease_until=NEW.lease_until,updated_at=NEW.updated_at WHERE id=NEW.session_id; END").execute(&pool).await.unwrap();
         pool
     }
 
@@ -613,6 +610,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,lease_until,updated_at) VALUES('s1','running',?,?)")
+            .bind(&live).bind(&expired).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'s1','worker-a',?,?,?)")
             .bind(&expired).bind(&expired).bind(&expired).bind(&expired).execute(&pool).await.unwrap();
 
@@ -627,11 +626,8 @@ mod tests {
             "must not requeue while the associated session lease is live"
         );
 
-        sqlx::query("UPDATE sessions SET lease_until=? WHERE id='s1'")
-            .bind(&expired)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query("UPDATE session_runtime SET lease_until=?,updated_at=? WHERE session_id='s1'")
+            .bind(&expired).bind(&expired).execute(&pool).await.unwrap();
         recover_expired(&pool).await.unwrap();
         let status: String =
             sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
@@ -654,6 +650,8 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,lease_until,updated_at) VALUES('s-no-lease','running',NULL,?)")
+            .bind(&old).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-no-lease','t1','task','running',?,'s-no-lease','dead-worker',?,?,?)")
             .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
 
@@ -676,6 +674,8 @@ mod tests {
         let old = stamp(Utc::now() - Duration::minutes(1));
         sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s-bad-lease','running','bad-timestamp')")
             .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,lease_until,updated_at) VALUES('s-bad-lease','running','bad-timestamp',?)")
+            .bind(&old).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-bad-lease','t1','task','running',?,'s-bad-lease','dead-worker',?,?,?)")
             .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
 
@@ -708,11 +708,13 @@ mod tests {
         let old = stamp(Utc::now() - Duration::seconds(1));
         sqlx::query("INSERT INTO sessions(id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-a',?,?)")
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-a',?,?)")
+            .bind(&old).bind(&old).execute(&pool).await.unwrap();
 
         assert!(renew_session_lease_once(&pool, "s1", "worker-a").await);
         assert!(!renew_session_lease_once(&pool, "s1", "worker-b").await);
 
-        let lease: String = sqlx::query_scalar("SELECT lease_until FROM sessions WHERE id='s1'")
+        let lease: String = sqlx::query_scalar("SELECT lease_until FROM session_runtime WHERE session_id='s1'")
             .fetch_one(&pool)
             .await
             .unwrap();
