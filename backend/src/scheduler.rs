@@ -251,7 +251,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     } else {
         Uuid::new_v4().to_string()
     };
-    let session_row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,lease_until,fork_from_native_session_id FROM sessions WHERE id=?")
+    let session_row = sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,r.lease_until,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?")
         .bind(&session_id).fetch_optional(&state.db).await;
     let session = match session_row {
         Ok(Some(r)) if strategy == "reuse" => {
