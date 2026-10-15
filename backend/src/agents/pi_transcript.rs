@@ -32,6 +32,96 @@ fn sessions_root() -> Option<PathBuf> {
     })
 }
 
+#[derive(Clone, Debug)]
+pub struct NativeSessionSummary {
+    pub id: String,
+    pub cwd: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Discover native Pi sessions without persisting transcript contents in SQLite.
+pub fn list_native_sessions() -> Vec<NativeSessionSummary> {
+    let Some(root) = sessions_root() else { return Vec::new() };
+    let Ok(root_meta) = std::fs::symlink_metadata(&root) else { return Vec::new() };
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() { return Vec::new() }
+
+    const MAX_ENTRIES: usize = 20_000;
+    const MAX_DEPTH: usize = 32;
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    const MAX_TITLE_SCAN_BYTES: usize = 256 * 1024;
+    let mut pending = vec![(root, 0usize)];
+    let mut scanned = 0usize;
+    let mut sessions = Vec::new();
+    while let Some((dir, depth)) = pending.pop() {
+        if depth > MAX_DEPTH || scanned >= MAX_ENTRIES { break; }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            scanned += 1;
+            if scanned > MAX_ENTRIES { break; }
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else { continue };
+            if metadata.file_type().is_symlink() { continue; }
+            if metadata.is_dir() {
+                if depth < MAX_DEPTH { pending.push((path, depth + 1)); }
+                continue;
+            }
+            if !metadata.is_file()
+                || path.extension().and_then(|v| v.to_str()) != Some("jsonl")
+            { continue; }
+            let Ok(file) = std::fs::File::open(&path) else { continue };
+            let mut reader = std::io::BufReader::new(file);
+            let mut first_line = String::new();
+            if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
+                || first_line.len() > MAX_HEADER_BYTES
+            { continue; }
+            let Ok(header) = serde_json::from_str::<Value>(&first_line) else { continue };
+            if header.get("type").and_then(Value::as_str) != Some("session") { continue; }
+            let Some(id) = header.get("id").and_then(Value::as_str) else { continue };
+            let Some(cwd) = header.get("cwd").and_then(Value::as_str) else { continue };
+            if id.is_empty() || cwd.is_empty() { continue; }
+
+            let mut title = String::new();
+            let mut scanned_bytes = first_line.len();
+            while scanned_bytes < MAX_TITLE_SCAN_BYTES {
+                let mut line = String::new();
+                let Ok(read) = std::io::BufRead::read_line(&mut reader, &mut line) else { break };
+                if read == 0 { break; }
+                scanned_bytes += read;
+                let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
+                if entry.get("type").and_then(Value::as_str) != Some("message") { continue; }
+                let Some(message) = entry.get("message") else { continue };
+                if message.get("role").and_then(Value::as_str) != Some("user") { continue; }
+                if let Some(text) = message.get("content").and_then(text_content) {
+                    title = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !title.is_empty() { break; }
+                }
+            }
+            if title.is_empty() { title = format!("Pi session {}", &id.chars().take(8).collect::<String>()); }
+            title = title.chars().take(80).collect();
+            let timestamp = header.get("timestamp").and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| metadata.modified().ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|duration| chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
+                        .map(|value| value.to_rfc3339()).unwrap_or_default())
+                    .unwrap_or_default());
+            let updated_at = metadata.modified().ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|duration| chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0))
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| timestamp.clone());
+            sessions.push(NativeSessionSummary {
+                id: id.to_owned(), cwd: cwd.to_owned(), title,
+                created_at: timestamp, updated_at,
+            });
+        }
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions
+}
+
 /// Return whether a Pi session exists in the Agent's native session store.
 pub fn native_session_file_exists(native_session_id: &str) -> bool {
     let Some(root) = sessions_root() else {
