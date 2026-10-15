@@ -296,8 +296,15 @@ async fn execute_run(state: AppState, run_id: &str) {
                 .await;
                 return;
             }
-            if sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,'idle',NULL,?,0,?,?)")
-                .bind(&session_id).bind(&agent_id).bind(format!("定时任务：{}", task_id)).bind(&workspace).bind(&model).bind(&now_text).bind(&now_text).execute(&state.db).await.is_err() {
+            let created = async {
+                let mut tx = state.db.begin().await?;
+                sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,'idle',NULL,?,0,?,?)")
+                    .bind(&session_id).bind(&agent_id).bind(format!("定时任务：{}", task_id)).bind(&workspace).bind(&model).bind(&now_text).bind(&now_text).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(?,'idle',NULL,NULL,?)")
+                    .bind(&session_id).bind(&now_text).execute(&mut *tx).await?;
+                tx.commit().await
+            }.await;
+            if created.is_err() {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("创建执行会话失败")).await; return;
             }
             Session {
