@@ -14,7 +14,7 @@ export function useAppController(
   const runtime = useAgentRuntime();
   const [input, setInput] = useState("");
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
-  const queueSendingRef = useRef(false);
+  const queueSendingRef = useRef<string | undefined>(undefined);
   const queueSessionRef = useRef(sessionId);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -60,7 +60,7 @@ export function useAppController(
     }
   };
   useEffect(() => {
-    queueSessionRef.current = sessionId;
+    queueSessionRef.current = undefined;
     setQueuedMessages([]);
   }, [sessionId]);
   const send = useCallback(async () => {
@@ -83,14 +83,14 @@ export function useAppController(
       queueSessionRef.current !== sessionId ||
       current?.status === "running" ||
       queuedMessages.length === 0 ||
-      queueSendingRef.current
+      queueSendingRef.current === sessionId
     ) return;
     const [nextMessage, ...remaining] = queuedMessages;
-    queueSendingRef.current = true;
+    queueSendingRef.current = sessionId;
     setQueuedMessages(remaining);
     session.sendChat(sessionId, nextMessage)
       .catch(() => {})
-      .finally(() => { queueSendingRef.current = false; });
+      .finally(() => { if (queueSendingRef.current === sessionId) queueSendingRef.current = undefined; });
   }, [sessionId, current?.status, queuedMessages, session.sendChat]);
   const renameSession = async (id: string) => {
     const target = session.sessions.find((item) => item.id === id);
