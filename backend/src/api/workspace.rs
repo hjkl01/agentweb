@@ -5,8 +5,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use std::path::{Component, Path as FsPath, PathBuf};
-use tokio::{fs, io::AsyncReadExt, process::{Command, Stdio}};
+use std::{path::{Component, Path as FsPath, PathBuf}, process::Stdio};
+use tokio::{fs, io::AsyncReadExt, process::Command};
 
 const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_DIFF_TOTAL_BYTES: usize = 4 * 1024 * 1024;
@@ -103,7 +103,7 @@ async fn read_untracked_file(root: &FsPath, relative: &str) -> Option<Vec<u8>> {
     // File size can change after metadata is checked. Bound the actual read
     // too, so concurrent writes cannot make this endpoint buffer an oversized
     // untracked file into memory.
-    let mut file = fs::File::open(canonical).await.ok()?;
+    let file = fs::File::open(canonical).await.ok()?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_DIFF_FILE_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -340,7 +340,7 @@ pub async fn workspace_file(
     }
     // Bound the actual read as well as the metadata check: the file may
     // grow between stat and read.
-    let mut opened = fs::File::open(&file)
+    let opened = fs::File::open(&file)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
