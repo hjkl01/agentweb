@@ -238,7 +238,10 @@ export function WorkspacePanel({
               file={selectedFile}
               line={selectedLine}
               onClose={() => closeTab(selectedFile.path)}
-              onRetry={() => openFile(selectedFile.path)}
+              onRetry={() => {
+                onCloseFile();
+                openFile(selectedFile.path);
+              }}
               maximized={maximized}
               onToggleMaximize={() => setMaximized((value) => !value)}
             />
