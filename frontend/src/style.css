@@ -1467,6 +1467,18 @@ button:disabled {
   border-bottom: 1px solid #e8e8ec;
   background: #f8f8fa;
 }
+.preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 120px;
+  padding: 24px;
+  color: #777783;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .preview-tab {
   display: flex;
   align-items: center;
