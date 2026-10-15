@@ -355,20 +355,27 @@ pub async fn create_pi_fork(
         .as_deref()
         .ok_or(StatusCode::CONFLICT)?;
     let native_id_owned = native_id.to_owned();
-    let exists = tokio::task::spawn_blocking(move || {
+    let lookup = tokio::task::spawn_blocking(move || {
         crate::agents::pi_transcript::native_session_file_exists(&native_id_owned)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !exists {
-        sqlx::query("UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
-            .bind(Utc::now().to_rfc3339())
-            .bind(&id)
-            .bind(native_id)
-            .execute(&s.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        return Err(StatusCode::CONFLICT);
+    match lookup {
+        crate::agents::pi_transcript::NativeSessionFileLookup::Found => {}
+        crate::agents::pi_transcript::NativeSessionFileLookup::Unknown => {
+            tracing::warn!(session_id = %id, native_session_id = %native_id, "Pi transcript lookup was inconclusive during fork; preserving session metadata");
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        crate::agents::pi_transcript::NativeSessionFileLookup::Missing => {
+            sqlx::query("UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
+                .bind(Utc::now().to_rfc3339())
+                .bind(&id)
+                .bind(native_id)
+                .execute(&s.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            return Err(StatusCode::CONFLICT);
+        }
     }
     let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
         .bind(&id).bind(native_id).fetch_one(&s.db).await
