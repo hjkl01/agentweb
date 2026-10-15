@@ -66,6 +66,7 @@ export type FileItem = {
 export type WorkspaceFile = {
   path: string;
   content: string;
+  error?: string;
   size?: number;
   binary?: boolean;
   truncated?: boolean;
