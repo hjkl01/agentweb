@@ -361,7 +361,7 @@ pub async fn run_session(
     // being prepared, before the Agent process has registered itself. Recheck
     // ownership immediately before starting the adapter so that such a request
     // does not launch a fresh child process after the session was interrupted.
-    let ownership = sqlx::query("SELECT status,worker_id FROM sessions WHERE id=?")
+    let ownership = sqlx::query("SELECT status,worker_id FROM session_runtime WHERE session_id=?")
         .bind(&session.id)
         .fetch_optional(&db)
         .await;
@@ -394,7 +394,7 @@ pub async fn run_session(
             let now = Utc::now();
             let now_text = now.to_rfc3339();
             let row =
-                match sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
+                match sqlx::query("SELECT status,worker_id,lease_until FROM session_runtime WHERE session_id=?")
                     .bind(&monitor_id)
                     .fetch_optional(&monitor_db)
                     .await
