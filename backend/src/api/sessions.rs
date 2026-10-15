@@ -317,7 +317,7 @@ pub async fn restart_missing_session(
 ) -> Result<Json<Session>, StatusCode> {
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query(
-        "UPDATE sessions SET native_session_id=NULL,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='missing' AND worker_id IS NULL",
+        "UPDATE sessions SET native_session_id=NULL,fork_from_native_session_id=NULL,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='missing' AND worker_id IS NULL",
     )
     .bind(&now)
     .bind(&id)
@@ -484,7 +484,7 @@ pub async fn set_session_agent(
     crate::api::runtime::build_agent_config(&s.db, agent_id)
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let result=sqlx::query("UPDATE sessions SET agent_id=?,model=NULL,native_session_id=NULL,updated_at=? WHERE id=? AND status!='running'").bind(agent_id).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result=sqlx::query("UPDATE sessions SET agent_id=?,model=NULL,native_session_id=NULL,fork_from_native_session_id=NULL,updated_at=? WHERE id=? AND status!='running'").bind(agent_id).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() != 1 {
         return Err(StatusCode::CONFLICT);
     }
