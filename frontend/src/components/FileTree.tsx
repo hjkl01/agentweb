@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../lib/api";
 import type { FileItem } from "../types";
 
 type TreeNode = {
@@ -11,6 +12,7 @@ type TreeNode = {
   children: TreeNode[];
 };
 type Props = {
+  sessionId?: string;
   files: FileItem[];
   filter: string;
   onOpenFile: (path: string) => void;
@@ -51,9 +53,7 @@ function buildTree(files: FileItem[]) {
 function sortNodes(nodes: TreeNode[]) {
   nodes.sort((a, b) =>
     a.kind !== b.kind
-      ? a.kind === "directory"
-        ? -1
-        : 1
+      ? a.kind === "directory" ? -1 : 1
       : a.name.localeCompare(b.name),
   );
   nodes.forEach((node) => sortNodes(node.children));
@@ -82,26 +82,12 @@ function collectDirectories(nodes: TreeNode[], result = new Set<string>()) {
 
 function statusLabel(status?: TreeNode["status"]) {
   if (!status) return null;
-  const labels = {
-    added: "A",
-    modified: "M",
-    deleted: "D",
-    renamed: "R",
-    untracked: "U",
-  };
-  return (
-    <span className={`tree-status tree-status-${status}`}>
-      {labels[status]}
-    </span>
-  );
+  const labels = { added: "A", modified: "M", deleted: "D", renamed: "R", untracked: "U" };
+  return <span className={`tree-status tree-status-${status}`}>{labels[status]}</span>;
 }
 
 function TreeNodeView({
-  node,
-  depth,
-  expanded,
-  toggle,
-  onOpenFile,
+  node, depth, expanded, toggle, onOpenFile,
 }: {
   node: TreeNode;
   depth: number;
@@ -110,87 +96,111 @@ function TreeNodeView({
   onOpenFile: (path: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
-  if (node.kind === "file")
+  if (node.kind === "file") {
     return (
-      <button
-        className="file tree-file"
-        style={{ paddingLeft: 7 + depth * 14 }}
-        onClick={() => onOpenFile(node.path)}
-      >
+      <button className="file tree-file" style={{ paddingLeft: 7 + depth * 14 }} onClick={() => onOpenFile(node.path)}>
         <File size={14} />
         <span>{node.name}</span>
         {statusLabel(node.status)}
       </button>
     );
+  }
   return (
     <div className="tree-node">
-      <button
-        className="file tree-folder"
-        style={{ paddingLeft: 5 + depth * 14 }}
-        onClick={() => toggle(node.path)}
-      >
+      <button className="file tree-folder" style={{ paddingLeft: 5 + depth * 14 }} onClick={() => toggle(node.path)}>
         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <Folder size={14} />
         <span>{node.name}</span>
         {statusLabel(node.status)}
       </button>
-      {isOpen &&
-        node.children.map((child) => (
-          <TreeNodeView
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            expanded={expanded}
-            toggle={toggle}
-            onOpenFile={onOpenFile}
-          />
-        ))}
+      {isOpen && node.children.map((child) => (
+        <TreeNodeView key={child.path} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} onOpenFile={onOpenFile} />
+      ))}
     </div>
   );
 }
 
-export function FileTree({ files, filter, onOpenFile }: Props) {
-  const fullTree = useMemo(() => buildTree(files), [files]);
-  const tree = useMemo(() => filterTree(fullTree, filter), [fullTree, filter]);
+export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
+  const [allFiles, setAllFiles] = useState<FileItem[]>(files);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const autoExpandedRoots = useRef<Set<string>>(new Set());
+  const [loadedDirs, setLoadedDirs] = useState<Set<string>>(new Set([""]));
+  const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
+  const [searchFiles, setSearchFiles] = useState<FileItem[]>();
+  const searchRequest = useRef(0);
 
   useEffect(() => {
-    const rootDirectories = fullTree
-      .filter((node) => node.kind === "directory")
-      .map((node) => node.path);
-    const newlyAddedRoots = rootDirectories.filter(
-      (path) => !autoExpandedRoots.current.has(path),
-    );
-    if (newlyAddedRoots.length === 0) return;
+    setAllFiles(files);
+    setExpanded(new Set());
+    setLoadedDirs(new Set([""]));
+  }, [files, sessionId]);
 
-    newlyAddedRoots.forEach((path) => autoExpandedRoots.current.add(path));
-    setExpanded((current) => {
-      const next = new Set(current);
-      newlyAddedRoots.forEach((path) => next.add(path));
-      return next;
-    });
-  }, [fullTree]);
-  const visibleExpanded = filter ? collectDirectories(tree) : expanded;
-  const toggle = (path: string) =>
-    setExpanded((current) => {
-      const next = new Set(current);
-      next.has(path) ? next.delete(path) : next.add(path);
-      return next;
-    });
-  if (!tree.length) return <div className="workspace-empty">No files</div>;
+  useEffect(() => {
+    const request = ++searchRequest.current;
+    const query = filter.trim();
+    if (!query || !sessionId) {
+      setSearchFiles(undefined);
+      return;
+    }
+    api<FileItem[]>(`/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query)}`)
+      .then((items) => {
+        if (request === searchRequest.current) setSearchFiles(items);
+      })
+      .catch(() => {
+        if (request === searchRequest.current) setSearchFiles([]);
+      });
+    return () => { searchRequest.current += 1; };
+  }, [filter, sessionId]);
+
+  const sourceFiles = searchFiles ?? allFiles;
+  const fullTree = useMemo(() => buildTree(sourceFiles), [sourceFiles]);
+  const tree = useMemo(() => filterTree(fullTree, searchFiles ? "" : filter), [fullTree, filter, searchFiles]);
+  const visibleExpanded = searchFiles ? collectDirectories(tree) : expanded;
+
+  const toggle = async (path: string) => {
+    if (expanded.has(path)) {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      return;
+    }
+    setExpanded((current) => new Set(current).add(path));
+    if (loadedDirs.has(path) || !sessionId || searchFiles) return;
+
+    setLoadingDirs((current) => new Set(current).add(path));
+    try {
+      const children = await api<FileItem[]>(
+        `/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`,
+      );
+      setAllFiles((current) => {
+        const byPath = new Map(current.map((item) => [item.path, item]));
+        children.forEach((item) => byPath.set(item.path, item));
+        return [...byPath.values()];
+      });
+      setLoadedDirs((current) => new Set(current).add(path));
+    } catch {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+    } finally {
+      setLoadingDirs((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+    }
+  };
+
+  if (!tree.length) return <div className="workspace-empty">{filter && searchFiles === undefined ? "Searching…" : "No files"}</div>;
   return (
     <div className="filetree">
       {tree.map((node) => (
-        <TreeNodeView
-          key={node.path}
-          node={node}
-          depth={0}
-          expanded={visibleExpanded}
-          toggle={toggle}
-          onOpenFile={onOpenFile}
-        />
+        <TreeNodeView key={node.path} node={node} depth={0} expanded={visibleExpanded} toggle={toggle} onOpenFile={onOpenFile} />
       ))}
+      {loadingDirs.size > 0 && <div className="workspace-empty">Loading folder…</div>}
     </div>
   );
 }
