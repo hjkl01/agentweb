@@ -43,7 +43,8 @@ pub async fn list_messages(
     if !is_pi {
         return Ok(Json(Vec::new()));
     }
-    let Some(native_session_id) = session.native_session_id.as_deref() else {
+    let is_fork_preview = session.native_session_id.is_none() && session.fork_from_native_session_id.is_some();
+    let Some(native_session_id) = session.native_session_id.as_deref().or(session.fork_from_native_session_id.as_deref()) else {
         return Ok(Json(Vec::new()));
     };
     // Reading Pi JSONL is synchronous filesystem traversal plus JSON parsing.
@@ -80,7 +81,7 @@ pub async fn list_messages(
     // Pi owns the transcript file. If a user removes it outside Agent Web,
     // mark only an idle, unclaimed session as missing; never overwrite a live
     // worker's status while it may still be writing the transcript.
-    if !transcript_exists {
+    if !transcript_exists && !is_fork_preview {
         let result = sqlx::query(
             "UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL",
         )
