@@ -1,4 +1,5 @@
 use super::{adapter::AgentRunError, AgentManager};
+use sqlx::Acquire;
 use crate::{
     api::{build_agent_config, Session},
     events::{AgentEvent, EventBus},
