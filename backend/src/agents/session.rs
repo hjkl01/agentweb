@@ -347,6 +347,7 @@ pub async fn run_session(
     };
     config.working_directory = Some(session.workspace.clone());
     config.native_session_id = session.native_session_id.clone();
+    config.fork_from_native_session_id = session.fork_from_native_session_id.clone();
     config.model = session.model.clone();
     let kind = config.id.clone();
     let message = expand_mentions(&message, &session.workspace).await;
@@ -459,7 +460,7 @@ pub async fn run_session(
         Ok(result) => {
             monitor.abort();
             let now = Utc::now().to_rfc3339();
-            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
+            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
             match updated {
                 Ok(update_result) if update_result.rows_affected() == 1 => {
                     // Publish completion only after the database confirms the session
@@ -591,6 +592,7 @@ mod tests {
             workspace: workspace.to_string_lossy().into_owned(),
             status: "running".into(),
             native_session_id: None,
+            fork_from_native_session_id: None,
             model: None,
             is_pinned: false,
             workspace_available: true,
