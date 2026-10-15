@@ -23,8 +23,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     model TEXT
 );
 
--- Conversation messages are read directly from Agent-native session files.
--- No application-managed messages table is created.
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS runtime_settings (
     key TEXT PRIMARY KEY,
