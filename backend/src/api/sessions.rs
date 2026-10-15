@@ -119,9 +119,14 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
     Ok(Json(workspaces))
 }
 
-pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
+pub async fn list_sessions(
+    State(s): State<AppState>,
+) -> Result<Json<Vec<Session>>, StatusCode> {
+    // A failed discovery task is an internal error, not an empty session list:
+    // silently treating a worker panic as "no native sessions" hides history.
     let discovered = tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
-        .await.unwrap_or_default();
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     for native in discovered {
         let id = Uuid::new_v4().to_string();
         // Keep discovery idempotent across multiple backend workers: only
@@ -140,14 +145,17 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
         .await;
     }
 
-    let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
+    let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC")
+        .fetch_all(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let base_path = default_workspace_root();
     if fs::create_dir_all(&base_path).await.is_err() {
-        return Json(rows.iter().map(session_from_row).collect());
+        return Ok(Json(rows.iter().map(session_from_row).collect()));
     }
     let base = match fs::canonicalize(&base_path).await {
         Ok(path) => path,
-        Err(_) => return Json(rows.iter().map(session_from_row).collect()),
+        Err(_) => return Ok(Json(rows.iter().map(session_from_row).collect())),
     };
     let mut sessions = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -161,7 +169,7 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
         }
         sessions.push(session);
     }
-    Json(sessions)
+    Ok(Json(sessions))
 }
 #[derive(Deserialize)]
 pub struct CreateSession {
