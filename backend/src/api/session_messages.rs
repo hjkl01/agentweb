@@ -1,4 +1,4 @@
-use super::sessions::load_session;
+use super::sessions::{load_session, load_session_record};
 use crate::agents::pi_transcript::{
     native_session_file_exists, read_messages, TranscriptMessage,
 };
@@ -31,7 +31,7 @@ pub async fn list_messages(
     State(s): State<AppState>,
 ) -> Result<Json<Vec<TranscriptMessage>>, StatusCode> {
     // Conversation content belongs to the Agent's native session, not SQLite.
-    let session = load_session(&s.db, &id).await?;
+    let session = load_session_record(&s.db, &id).await?;
     // sessions.agent_id is a database row ID, not the adapter kind. Resolve
     // the kind before deciding whether this session uses Pi's JSONL transcript.
     let is_pi = is_pi_agent(&s.db, &session.agent_id)
