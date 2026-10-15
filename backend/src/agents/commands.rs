@@ -177,7 +177,8 @@ mod workspace_state_tests {
         assert!(!args.iter().any(|arg| arg == "bwrap"));
         assert!(!command.as_std().get_envs()
             .any(|(key, _)| key == std::ffi::OsStr::new("PI_CODING_AGENT_SESSION_DIR")));
-        assert_eq!(command.as_std().get_current_dir(), Some(workspace.canonicalize().unwrap().as_path()));
+        let canonical_workspace = workspace.canonicalize().unwrap();
+        assert_eq!(command.as_std().get_current_dir(), Some(canonical_workspace.as_path()));
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
