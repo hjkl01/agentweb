@@ -16,6 +16,7 @@ export function useWorkspace(active?: string, revision = 0) {
   const diffRequest = useRef(0);
   const selectedFileRequest = useRef(0);
   const selectedFilePathRef = useRef<string>();
+  const selectedFileSessionRef = useRef<string>();
   activeRef.current = active;
   selectedFilePathRef.current = selectedFile?.path;
 
@@ -69,6 +70,7 @@ export function useWorkspace(active?: string, revision = 0) {
     filesRequest.current += 1;
     diffRequest.current += 1;
     selectedFileRequest.current += 1;
+    selectedFileSessionRef.current = undefined;
     setFiles([]);
     setSelectedFile(undefined);
     setDiff(undefined);
@@ -86,11 +88,13 @@ export function useWorkspace(active?: string, revision = 0) {
       try {
         const result = await api<WorkspaceFile>(fileUrl(requestActive, path));
         if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
+        selectedFileSessionRef.current = requestActive;
         setSelectedFile(result);
         setError(undefined);
       } catch (error) {
         if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
         const message = error instanceof Error ? error.message : String(error);
+        selectedFileSessionRef.current = requestActive;
         setSelectedFile({ path, content: "", error: message });
         setError(message);
       }
@@ -102,7 +106,7 @@ export function useWorkspace(active?: string, revision = 0) {
     if (revision <= 0 || !active) return;
     refresh().catch(console.error);
     const path = selectedFilePathRef.current;
-    if (!path) return;
+    if (!path || selectedFileSessionRef.current !== active) return;
     openFile(path).catch(console.error);
   }, [active, revision, refresh, openFile]);
 
