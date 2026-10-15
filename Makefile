@@ -63,6 +63,7 @@ start: ## Start the packaged app from ./build
 	@test -x $(BUILD_DIR)/agentweb || { echo "未找到 $(BUILD_DIR)/agentweb，请先运行 make build 或 make release" >&2; exit 1; }
 	@test -f $(BUILD_DIR)/frontend/index.html || { echo "未找到前端文件，请先运行 make build 或 make release" >&2; exit 1; }
 	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
+	AGENTWEB_AGENT_HOME="${AGENTWEB_AGENT_HOME:-$HOME}" \
 	HOME="$(CURDIR)/$(DATA_DIR)/home" \
 	XDG_CONFIG_HOME="$(CURDIR)/$(DATA_DIR)/home/.config" \
 	XDG_DATA_HOME="$(CURDIR)/$(DATA_DIR)/home/.local/share" \
