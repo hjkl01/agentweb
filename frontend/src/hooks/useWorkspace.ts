@@ -110,6 +110,12 @@ export function useWorkspace(active?: string, revision = 0) {
     openFile(path).catch(console.error);
   }, [active, revision, refresh, openFile]);
 
+  const closeFile = useCallback(() => {
+    selectedFileRequest.current += 1;
+    selectedFileSessionRef.current = undefined;
+    setSelectedFile(undefined);
+  }, []);
+
   const selectTab = useCallback(
     (nextTab: WorkspaceTab) => {
       setTab(nextTab);
@@ -127,6 +133,7 @@ export function useWorkspace(active?: string, revision = 0) {
     error,
     setFilter,
     setSelectedFile,
+    closeFile,
     selectTab,
     openFile,
     refresh,
