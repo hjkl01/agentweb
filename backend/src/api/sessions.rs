@@ -403,18 +403,34 @@ pub async fn restart_missing_session(
     State(s): State<AppState>,
 ) -> Result<Json<Session>, StatusCode> {
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query(
-        "UPDATE sessions SET native_session_id=NULL,fork_from_native_session_id=NULL,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='missing' AND worker_id IS NULL",
+    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let runtime = sqlx::query(
+        "UPDATE session_runtime SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='missing' AND worker_id IS NULL",
     )
     .bind(&now)
     .bind(&id)
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if result.rows_affected() != 1 {
+    if runtime.rows_affected() != 1 {
+        tx.rollback().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         load_session(&s.db, &id).await?;
         return Err(StatusCode::CONFLICT);
     }
+
+    let metadata = sqlx::query(
+        "UPDATE sessions SET native_session_id=NULL,fork_from_native_session_id=NULL,updated_at=? WHERE id=?",
+    )
+    .bind(&now)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if metadata.rows_affected() != 1 {
+        tx.rollback().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(StatusCode::NOT_FOUND);
+    }
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(load_session(&s.db, &id).await?))
 }
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
