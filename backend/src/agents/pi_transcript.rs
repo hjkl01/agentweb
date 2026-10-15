@@ -41,11 +41,25 @@ pub struct NativeSessionSummary {
     pub updated_at: String,
 }
 
+/// A discovery result is only authoritative when every relevant directory was
+/// scanned. Callers must not infer that sessions are deleted from an incomplete
+/// scan (for example, because a directory is unreadable or a safety limit hit).
+#[derive(Clone, Debug)]
+pub struct NativeSessionDiscovery {
+    pub sessions: Vec<NativeSessionSummary>,
+    pub complete: bool,
+}
+
 /// Discover native Pi sessions without persisting transcript contents in SQLite.
-pub fn list_native_sessions() -> Vec<NativeSessionSummary> {
-    let Some(root) = sessions_root() else { return Vec::new() };
-    let Ok(root_meta) = std::fs::symlink_metadata(&root) else { return Vec::new() };
-    if root_meta.file_type().is_symlink() || !root_meta.is_dir() { return Vec::new() }
+pub fn list_native_sessions() -> NativeSessionDiscovery {
+    let Some(root) = sessions_root() else {
+        return NativeSessionDiscovery { sessions: Vec::new(), complete: false };
+    };
+    let root_meta = match std::fs::symlink_metadata(&root) {
+        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => metadata,
+        _ => return NativeSessionDiscovery { sessions: Vec::new(), complete: false },
+    };
+    let _ = root_meta;
 
     const MAX_ENTRIES: usize = 20_000;
     const MAX_DEPTH: usize = 32;
@@ -53,29 +67,50 @@ pub fn list_native_sessions() -> Vec<NativeSessionSummary> {
     const MAX_TITLE_SCAN_BYTES: usize = 256 * 1024;
     let mut pending = vec![(root, 0usize)];
     let mut scanned = 0usize;
+    let mut complete = true;
     let mut sessions = Vec::new();
     while let Some((dir, depth)) = pending.pop() {
-        if depth > MAX_DEPTH || scanned >= MAX_ENTRIES { break; }
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
+        if depth > MAX_DEPTH || scanned >= MAX_ENTRIES {
+            complete = false;
+            break;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => { complete = false; continue; }
+        };
+        for entry in entries {
             scanned += 1;
-            if scanned > MAX_ENTRIES { break; }
+            if scanned > MAX_ENTRIES {
+                complete = false;
+                break;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => { complete = false; continue; }
+            };
             let path = entry.path();
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else { continue };
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => { complete = false; continue; }
+            };
             if metadata.file_type().is_symlink() { continue; }
             if metadata.is_dir() {
                 if depth < MAX_DEPTH { pending.push((path, depth + 1)); }
+                else { complete = false; }
                 continue;
             }
             if !metadata.is_file()
                 || path.extension().and_then(|v| v.to_str()) != Some("jsonl")
             { continue; }
-            let Ok(file) = std::fs::File::open(&path) else { continue };
+            let file = match std::fs::File::open(&path) {
+                Ok(file) => file,
+                Err(_) => { complete = false; continue; }
+            };
             let mut reader = std::io::BufReader::new(file);
             let mut first_line = String::new();
             if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
                 || first_line.len() > MAX_HEADER_BYTES
-            { continue; }
+            { complete = false; continue; }
             let Ok(header) = serde_json::from_str::<Value>(&first_line) else { continue };
             if header.get("type").and_then(Value::as_str) != Some("session") { continue; }
             let Some(id) = header.get("id").and_then(Value::as_str) else { continue };
@@ -86,17 +121,23 @@ pub fn list_native_sessions() -> Vec<NativeSessionSummary> {
             let mut scanned_bytes = first_line.len();
             while scanned_bytes < MAX_TITLE_SCAN_BYTES {
                 let mut line = String::new();
-                let Ok(read) = std::io::BufRead::read_line(&mut reader, &mut line) else { break };
+                let read = match std::io::BufRead::read_line(&mut reader, &mut line) {
+                    Ok(read) => read,
+                    Err(_) => { complete = false; break; }
+                };
                 if read == 0 { break; }
                 scanned_bytes += read;
                 let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
                 if entry.get("type").and_then(Value::as_str) != Some("message") { continue; }
                 let Some(message) = entry.get("message") else { continue };
-                if message.get("role").and_then(Value::as_str) != Some("user") { continue; }
+                if message.get("role").and_then(Value::as_str) != Some("user") { continue };
                 if let Some(text) = message.get("content").and_then(text_content) {
                     title = text.split_whitespace().collect::<Vec<_>>().join(" ");
                     if !title.is_empty() { break; }
                 }
+            }
+            if scanned_bytes >= MAX_TITLE_SCAN_BYTES {
+                complete = false;
             }
             if title.is_empty() { title = format!("Pi session {}", &id.chars().take(8).collect::<String>()); }
             title = title.chars().take(80).collect();
@@ -117,9 +158,10 @@ pub fn list_native_sessions() -> Vec<NativeSessionSummary> {
                 created_at: timestamp, updated_at,
             });
         }
+        if scanned > MAX_ENTRIES { break; }
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    sessions
+    NativeSessionDiscovery { sessions, complete }
 }
 
 /// Return whether a Pi session exists in the Agent's native session store.
