@@ -235,10 +235,10 @@ async fn run_terminal(
     };
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env(
-        "HOME",
-        std::env::var("HOME").unwrap_or_else(|_| "/data/home".into()),
-    );
+    command.env("HOME", "/data/home");
+    command.env("XDG_CONFIG_HOME", "/data/home/.config");
+    command.env("XDG_DATA_HOME", "/data/home/.local/share");
+    command.env("XDG_CACHE_HOME", "/data/home/.cache");
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("SHELL", &shell);
 
