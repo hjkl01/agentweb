@@ -148,7 +148,7 @@ pub async fn send_message(
     let now_text = now.to_rfc3339();
     let lease_until = (now + Duration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
     let worker_id = format!("{}:{}", s.worker_id, uuid::Uuid::new_v4());
-    let claimed=sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
+    let claimed=sqlx::query("UPDATE session_runtime SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE session_id=? AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.status!='missing') AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&worker_id).bind(&lease_until).bind(&now_text).bind(&id).bind(&now_text).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if claimed.rows_affected() == 0 {
         load_session(&s.db, &id).await?;
@@ -160,7 +160,7 @@ pub async fn send_message(
             // The claim above already marked this session as running. If loading
             // it fails, release that claim so the session is not stuck until the
             // lease expires. The ownership predicate protects a newer worker.
-            if let Err(error) = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            if let Err(error) = sqlx::query("UPDATE session_runtime SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
                 .bind(&worker_id)
@@ -188,7 +188,7 @@ pub async fn send_message(
             .await
             .is_err()
         {
-            let _ = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let _ = sqlx::query("UPDATE session_runtime SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
                 .bind(&worker_id)
@@ -228,7 +228,7 @@ pub async fn interrupt(
     // Capture the current execution token first. The conditional update below
     // prevents a concurrent lease takeover from being interrupted by this request.
     let execution_id: Option<String> =
-        sqlx::query_scalar("SELECT worker_id FROM sessions WHERE id=? AND status='running'")
+        sqlx::query_scalar("SELECT worker_id FROM session_runtime WHERE session_id=? AND status='running'")
             .bind(&id)
             .fetch_optional(&s.db)
             .await
@@ -252,7 +252,7 @@ pub async fn interrupt(
 
     let now = Utc::now().to_rfc3339();
     let changed = sqlx::query(
-        "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?",
+        "UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?",
     )
     .bind(&now)
     .bind(&id)
