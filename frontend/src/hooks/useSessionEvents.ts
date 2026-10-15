@@ -110,7 +110,13 @@ export function useSessionEvents(options: Options) {
         // Subscribe first, then fetch the HTTP snapshot. Buffer live events while
         // the snapshot loads so fast agents cannot finish in the subscription gap.
         loadState(true)
-          .then((session) => {
+          .then(async (session) => {
+            if (disposed || ws !== connection) return;
+            // The messages endpoint may have just detected a deleted Pi
+            // transcript and marked the session as missing. Refresh detail only
+            // after that request has completed, avoiding a stale parallel snapshot
+            // that would hide the recovery prompt until a later navigation.
+            await options.refreshActiveSession(active);
             if (disposed || ws !== connection) return;
             snapshotReady = true;
             for (const raw of pendingEvents.splice(0)) {
