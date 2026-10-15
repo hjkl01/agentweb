@@ -124,7 +124,9 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             if let Some(model) = &config.model {
                 args.extend(["--model".into(), model.clone()]);
             }
-            if let Some(id) = &config.native_session_id {
+            if let Some(id) = &config.fork_from_native_session_id {
+                args.extend(["--fork".into(), id.clone()]);
+            } else if let Some(id) = &config.native_session_id {
                 args.extend(["--session".into(), id.clone()]);
             }
             args.extend(["-p".into(), message.into()]);
@@ -328,6 +330,7 @@ mod workspace_state_tests {
             command: "pi".into(),
             working_directory: Some(workspace.to_string_lossy().into_owned()),
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -376,6 +379,7 @@ mod workspace_state_tests {
             command: "pi".into(),
             working_directory: Some(workspace.to_string_lossy().into_owned()),
             native_session_id: Some("existing-native-session".into()),
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
