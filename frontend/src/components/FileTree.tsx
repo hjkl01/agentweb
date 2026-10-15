@@ -150,7 +150,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
 
     // Re-fetch every directory previously loaded. This keeps expansion state
     // while ensuring deleted/renamed children do not survive a refresh.
-    const directories = [...loadedDirsRef.current].filter(Boolean);
+    const directories = [...loadedDirsRef.current].filter(Boolean).sort((a, b) => a.split("/").length - b.split("/").length);
     if (!sessionId || directories.length === 0) {
       setAllFiles(files);
       return;
