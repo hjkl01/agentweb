@@ -19,6 +19,7 @@ pub struct Session {
     pub workspace: String,
     pub status: String,
     pub native_session_id: Option<String>,
+    pub fork_from_native_session_id: Option<String>,
     pub model: Option<String>,
     pub is_pinned: bool,
     pub workspace_available: bool,
@@ -33,6 +34,7 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
         native_session_id: row.get(5),
         model: row.get(6),
         is_pinned: row.get::<i64, _>(7) != 0,
+        fork_from_native_session_id: row.get(8),
         workspace_available: false,
     }
 }
@@ -51,7 +53,7 @@ fn default_workspace_root() -> PathBuf {
         .join("workspaces")
 }
 pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
-    let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let mut session = session_from_row(&row);
 
     // Persisted workspace paths are not trusted: a stale or edited database row
@@ -231,6 +233,7 @@ pub async fn create_session(
         workspace,
         status: "idle".into(),
         native_session_id: None,
+        fork_from_native_session_id: None,
         model,
         is_pinned: false,
         workspace_available: true,
