@@ -257,7 +257,7 @@ pub async fn workspace_files(
         .strip_prefix(&root)
         .map_err(|_| StatusCode::FORBIDDEN)?
         .to_string_lossy()
-        .replace('\\\\', "/");
+        .replace('\\', "/");
     let mut out = Vec::new();
     let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
     while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
@@ -278,7 +278,7 @@ pub async fn workspace_files(
             .strip_prefix(&root)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .to_string_lossy()
-            .replace('\\\\', "/");
+            .replace('\\', "/");
         out.push(serde_json::json!({
             "name": name,
             "path": relative,
