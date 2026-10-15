@@ -156,7 +156,7 @@ pub async fn list_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC")
+    let rows=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id ORDER BY s.is_pinned DESC, s.updated_at DESC")
         .fetch_all(&s.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
