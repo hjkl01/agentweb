@@ -125,7 +125,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadedDirs, setLoadedDirs] = useState<Set<string>>(new Set([""]));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
-  const [searchResult, setSearchResult] = useState<{ query: string; items?: FileItem[]; error?: string }>();
+  const [searchResult, setSearchResult] = useState<{ query: string; sessionId: string; items?: FileItem[]; error?: string }>();
   const [searchAttempt, setSearchAttempt] = useState(0);
   const searchRequest = useRef(0);
 
@@ -221,18 +221,18 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     }
     api<FileItem[]>(`/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query)}`)
       .then((items) => {
-        if (request === searchRequest.current) setSearchResult({ query, items });
+        if (request === searchRequest.current) setSearchResult({ query, sessionId, items });
       })
       .catch((error: unknown) => {
         if (request !== searchRequest.current) return;
         const message = error instanceof Error ? error.message : String(error);
-        setSearchResult({ query, error: message || "Search request failed" });
+        setSearchResult({ query, sessionId, error: message || "Search request failed" });
       });
     return () => { searchRequest.current += 1; };
   }, [filter, sessionId, searchAttempt]);
 
   const query = filter.trim();
-  const currentSearch = query && sessionId && searchResult?.query === query ? searchResult : undefined;
+  const currentSearch = query && sessionId && searchResult?.query === query && searchResult.sessionId === sessionId ? searchResult : undefined;
   const searchFiles = currentSearch?.items;
   const searching = Boolean(query && sessionId && !currentSearch);
   const sourceFiles = searchFiles ?? allFiles;
