@@ -206,7 +206,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     } else {
         Uuid::new_v4().to_string()
     };
-    let session_row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,lease_until FROM sessions WHERE id=?")
+    let session_row = sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,lease_until,fork_from_native_session_id FROM sessions WHERE id=?")
         .bind(&session_id).fetch_optional(&state.db).await;
     let session = match session_row {
         Ok(Some(r)) if strategy == "reuse" => {
@@ -216,7 +216,7 @@ async fn execute_run(state: AppState, run_id: &str) {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("目标会话正在执行或租约状态未知")).await;
                 return;
             }
-            Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0, workspace_available:true }
+            Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0, fork_from_native_session_id:r.get(9), workspace_available:true }
         }
         Ok(None) if strategy == "new" => {
             if crate::api::build_agent_config(&state.db, &agent_id).await.is_err() {
@@ -226,7 +226,7 @@ async fn execute_run(state: AppState, run_id: &str) {
                 .bind(&session_id).bind(&agent_id).bind(format!("定时任务：{}", task_id)).bind(&workspace).bind(&model).bind(&now_text).bind(&now_text).execute(&state.db).await.is_err() {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("创建执行会话失败")).await; return;
             }
-            Session { id:session_id.clone(), agent_id, title:format!("定时任务：{}",task_id), workspace, status:"idle".into(), native_session_id:None, model, is_pinned:false, workspace_available:true }
+            Session { id:session_id.clone(), agent_id, title:format!("定时任务：{}",task_id), workspace, status:"idle".into(), native_session_id:None, model, is_pinned:false, fork_from_native_session_id:None, workspace_available:true }
         }
         Ok(None) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("复用的会话不存在")).await; return; }
         Ok(Some(_)) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("新会话 ID 冲突")).await; return; }
