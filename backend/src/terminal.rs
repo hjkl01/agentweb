@@ -153,8 +153,21 @@ async fn run_terminal(
         command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("--dir");
         command.arg("/tmp/agentweb-mounts/workspace");
+        // Use the same configurable host-side Agent home as process sandboxing.
+        // /data/home is only the sandbox's internal mount point.
+        let agent_home = std::env::var_os("AGENTWEB_AGENT_HOME")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(std::path::PathBuf::from)
+            .and_then(|path| path.canonicalize().ok());
+        let Some(agent_home) = agent_home.filter(|path| path.is_dir()) else {
+            let mut socket = socket;
+            let _ = socket
+                .send(Message::Text("Agent home directory is unavailable; set AGENTWEB_AGENT_HOME or HOME.".into()))
+                .await;
+            return;
+        };
         command.arg("--ro-bind");
-        command.arg("/data/home");
+        command.arg(&agent_home);
         command.arg("/tmp/agentweb-mounts/home");
         command.arg("--ro-bind");
         command.arg("/data/runtimes");
