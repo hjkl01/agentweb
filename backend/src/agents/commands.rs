@@ -153,24 +153,8 @@ mod workspace_state_tests {
         std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
     }
 
-    #[test]
-    fn shared_workspaces_root_is_not_a_valid_project_workspace() {
-        assert!(is_shared_workspace_root(std::path::Path::new(
-            "/workspaces"
-        )));
-        assert!(!is_shared_workspace_root(std::path::Path::new(
-            "/workspaces/project"
-        )));
-        assert!(!is_shared_workspace_root(std::path::Path::new(
-            "/workspaces-other/project"
-        )));
-    }
-
-    #[test]
-    fn pi_command_receives_workspace_session_directory() {
-        let workspace = temp_path("pi-command-state");
-        std::fs::create_dir_all(&workspace).unwrap();
-        let config = AgentConfig {
+    fn config(workspace: &std::path::Path) -> AgentConfig {
+        AgentConfig {
             id: "pi".into(),
             command: "pi".into(),
             working_directory: Some(workspace.to_string_lossy().into_owned()),
@@ -178,19 +162,21 @@ mod workspace_state_tests {
             fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
-        };
+        }
+    }
 
-        let mut command = build(ProcessKind::Pi, &config, "hello").unwrap();
-        let session_dir = command
-            .as_std_mut()
-            .get_envs()
-            .find(|(key, _)| key == std::ffi::OsStr::new("PI_CODING_AGENT_SESSION_DIR"))
-            .and_then(|(_, value)| value)
-            .expect("Pi session directory environment variable must be set");
-        let session_dir = std::path::PathBuf::from(session_dir);
-        assert!(session_dir.starts_with(workspace.canonicalize().unwrap()));
-        assert!(session_dir.is_dir());
-
+    #[test]
+    fn pi_command_uses_native_home_without_sandbox_or_session_override() {
+        let workspace = temp_path("pi-native-home");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let command = build(ProcessKind::Pi, &config(&workspace), "hello").unwrap();
+        let args = command.as_std().get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!args.iter().any(|arg| arg == "bwrap"));
+        assert!(!command.as_std().get_envs()
+            .any(|(key, _)| key == std::ffi::OsStr::new("PI_CODING_AGENT_SESSION_DIR")));
+        assert_eq!(command.as_std().get_current_dir(), Some(workspace.canonicalize().unwrap().as_path()));
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -198,19 +184,8 @@ mod workspace_state_tests {
     fn pi_fresh_session_does_not_receive_a_previous_native_session_id() {
         let workspace = temp_path("pi-fresh-session");
         std::fs::create_dir_all(&workspace).unwrap();
-        let config = AgentConfig {
-            id: "pi".into(),
-            command: "pi".into(),
-            working_directory: Some(workspace.to_string_lossy().into_owned()),
-            native_session_id: None,
-            fork_from_native_session_id: None,
-            runtime_path: None,
-            model: None,
-        };
-        let command = build(ProcessKind::Pi, &config, "first message").unwrap();
-        let args = command
-            .as_std()
-            .get_args()
+        let command = build(ProcessKind::Pi, &config(&workspace), "first message").unwrap();
+        let args = command.as_std().get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(!args.iter().any(|arg| arg == "--session"));
@@ -222,29 +197,15 @@ mod workspace_state_tests {
     fn pi_existing_session_passes_its_native_session_id() {
         let workspace = temp_path("pi-resumed-session");
         std::fs::create_dir_all(&workspace).unwrap();
-        let config = AgentConfig {
-            id: "pi".into(),
-            command: "pi".into(),
-            working_directory: Some(workspace.to_string_lossy().into_owned()),
-            native_session_id: Some("existing-native-session".into()),
-            fork_from_native_session_id: None,
-            runtime_path: None,
-            model: None,
-        };
+        let mut config = config(&workspace);
+        config.native_session_id = Some("existing-native-session".into());
         let command = build(ProcessKind::Pi, &config, "follow-up").unwrap();
-        let args = command
-            .as_std()
-            .get_args()
+        let args = command.as_std().get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let session_arg = args
-            .iter()
-            .position(|arg| arg == "--session")
+        let session_arg = args.iter().position(|arg| arg == "--session")
             .expect("existing Pi session should be resumed");
-        assert_eq!(
-            args.get(session_arg + 1).map(String::as_str),
-            Some("existing-native-session")
-        );
+        assert_eq!(args.get(session_arg + 1).map(String::as_str), Some("existing-native-session"));
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -252,86 +213,16 @@ mod workspace_state_tests {
     fn pi_fork_uses_fork_flag_without_resuming_source_in_place() {
         let workspace = temp_path("pi-fork-session");
         std::fs::create_dir_all(&workspace).unwrap();
-        let config = AgentConfig {
-            id: "pi".into(),
-            command: "pi".into(),
-            working_directory: Some(workspace.to_string_lossy().into_owned()),
-            native_session_id: None,
-            fork_from_native_session_id: Some("source-native-session".into()),
-            runtime_path: None,
-            model: None,
-        };
+        let mut config = config(&workspace);
+        config.fork_from_native_session_id = Some("source-native-session".into());
         let command = build(ProcessKind::Pi, &config, "continue from this point").unwrap();
-        let args = command
-            .as_std()
-            .get_args()
+        let args = command.as_std().get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let fork_arg = args
-            .iter()
-            .position(|arg| arg == "--fork")
+        let fork_arg = args.iter().position(|arg| arg == "--fork")
             .expect("Pi fork should use the native --fork flag");
-        assert_eq!(
-            args.get(fork_arg + 1).map(String::as_str),
-            Some("source-native-session")
-        );
+        assert_eq!(args.get(fork_arg + 1).map(String::as_str), Some("source-native-session"));
         assert!(!args.iter().any(|arg| arg == "--session"));
         std::fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    fn pi_session_state_is_created_inside_workspace() {
-        let workspace = temp_path("pi-state-workspace");
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        let state = ensure_workspace_state_dir(
-            &workspace,
-            std::path::Path::new(".agentweb-state/pi-sessions"),
-        )
-        .unwrap();
-
-        assert!(state.starts_with(workspace.canonicalize().unwrap()));
-        assert!(state.is_dir());
-        std::fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    fn rejects_invalid_relative_state_paths() {
-        let root = temp_path("pi-state-paths");
-        let workspace = root.join("workspace");
-        let outside = root.join("outside");
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        assert!(
-            ensure_workspace_state_dir(&workspace, std::path::Path::new("../outside")).is_err()
-        );
-        assert!(
-            ensure_workspace_state_dir(&workspace, std::path::Path::new("/tmp/outside")).is_err()
-        );
-        assert!(!outside.exists());
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rejects_pi_session_state_symlink_escape() {
-        use std::os::unix::fs::symlink;
-
-        let workspace = temp_path("pi-state-workspace");
-        let outside = temp_path("pi-state-outside");
-        std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, workspace.join(".agentweb-state")).unwrap();
-
-        let result = ensure_workspace_state_dir(
-            &workspace,
-            std::path::Path::new(".agentweb-state/pi-sessions"),
-        );
-
-        assert!(result.is_err());
-        assert!(!outside.join("pi-sessions").exists());
-        std::fs::remove_dir_all(workspace).unwrap();
-        std::fs::remove_dir_all(outside).unwrap();
     }
 }
