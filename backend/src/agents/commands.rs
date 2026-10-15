@@ -395,6 +395,30 @@ mod workspace_state_tests {
     }
 
     #[test]
+    fn pi_fork_uses_fork_flag_without_resuming_source_in_place() {
+        let workspace = temp_path("pi-fork-session");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config = AgentConfig {
+            id: "pi".into(),
+            command: "pi".into(),
+            working_directory: Some(workspace.to_string_lossy().into_owned()),
+            native_session_id: None,
+            fork_from_native_session_id: Some("source-native-session".into()),
+            runtime_path: None,
+            model: None,
+        };
+        let command = build(ProcessKind::Pi, &config, "continue from this point").unwrap();
+        let args = command.as_std().get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let fork_arg = args.iter().position(|arg| arg == "--fork")
+            .expect("Pi fork should use the native --fork flag");
+        assert_eq!(args.get(fork_arg + 1).map(String::as_str), Some("source-native-session"));
+        assert!(!args.iter().any(|arg| arg == "--session"));
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn pi_session_state_is_created_inside_workspace() {
         let workspace = temp_path("pi-state-workspace");
         std::fs::create_dir_all(&workspace).unwrap();
