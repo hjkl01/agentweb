@@ -61,6 +61,38 @@ fn ensure_workspace_state_dir(
     Ok(current)
 }
 
+fn ensure_pi_native_session_dir(home: &std::path::Path) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+    let home = home.canonicalize()
+        .map_err(|error| anyhow!("cannot resolve Agent home directory: {error}"))?;
+    let mut current = home.clone();
+    for component in std::path::Path::new(".pi/agent/sessions").components() {
+        let Component::Normal(name) = component else {
+            bail!("invalid Pi native session directory");
+        };
+        current.push(name);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("Pi native session directory must not contain symlinks");
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => bail!("Pi native session path is not a directory"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)
+                    .map_err(|error| anyhow!("cannot create Pi native session directory: {error}"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let canonical = current.canonicalize()
+            .map_err(|error| anyhow!("cannot resolve Pi native session directory: {error}"))?;
+        if !canonical.starts_with(&home) {
+            bail!("Pi native session directory must remain inside Agent home");
+        }
+        current = canonical;
+    }
+    Ok(current)
+}
+
 fn is_shared_workspace_root(workspace: &std::path::Path) -> bool {
     workspace == std::path::Path::new("/workspaces")
 }
@@ -192,51 +224,35 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 bail!("Agent home is not a directory: {}", agent_home.display());
             }
             let mut sandbox = Command::new("bwrap");
+            // Mount the real host home directly at a stable sandbox path. The
+            // mount must happen before masking /home or /data: either may be
+            // the host home in native or Docker deployments.
             sandbox.args([
-                "--die-with-parent",
-                "--new-session",
-                "--unshare-pid",
-                "--unshare-ipc",
-                "--unshare-uts",
+                "--die-with-parent", "--new-session", "--unshare-pid",
+                "--unshare-ipc", "--unshare-uts", "--ro-bind", "/", "/",
+                "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
+                "--dir", "/agentweb", "--dir", "/agentweb/home",
                 "--ro-bind",
-                "/",
-                "/",
-                "--dev",
-                "/dev",
-                "--proc",
-                "/proc",
-                "--tmpfs",
-                "/tmp",
-                // Hide unrelated host/container state that is not needed to run
-                // an Agent. In particular, do not expose other users' home
-                // directories, runtime sockets, package databases, or mount points.
-                "--tmpfs",
-                "/home",
-                "--tmpfs",
-                "/root",
-                "--tmpfs",
-                "/run",
-                "--tmpfs",
-                "/var",
-                "--tmpfs",
-                "/mnt",
-                "--tmpfs",
-                "/sys",
-                // Preserve only the required read-only directories under
-                // temporary mount aliases before masking /data itself.
-                "--dir",
-                "/tmp/agentweb-mounts",
-                "--dir",
-                "/tmp/agentweb-mounts/home",
-                "--dir",
-                "/tmp/agentweb-mounts/runtimes",
-                "--dir",
-                "/tmp/agentweb-mounts/workspace",
-                // If workspaces are mounted under /workspaces, retain only the
-                // selected project and hide sibling projects from the Agent.
-                // The alias must be mounted before masking the original parent.
-                "--ro-bind",
-            ]).arg(&agent_home).args(["/tmp/agentweb-mounts/home"]);
+            ]).arg(&agent_home).args(["/agentweb/home"]);
+            let pi_session_dir = if matches!(kind, ProcessKind::Pi) {
+                Some(ensure_pi_native_session_dir(&agent_home)?)
+            } else {
+                None
+            };
+            if let Some(session_dir) = &pi_session_dir {
+                // Pi's native JSONL history must remain writable while the rest
+                // of the user's home stays read-only inside the sandbox.
+                sandbox.args(["--bind"]).arg(session_dir).args([
+                    "/agentweb/home/.pi/agent/sessions",
+                ]);
+            }
+            // Runtime aliases remain necessary because the source may live under
+            // /home or /data, both of which are masked after this bind.
+            sandbox.args([
+                "--dir", "/tmp/agentweb-mounts",
+                "--dir", "/tmp/agentweb-mounts/runtimes",
+                "--dir", "/tmp/agentweb-mounts/workspace",
+            ]);
             let runtime_root = std::env::var_os("AGENTWEB_RUNTIME_DIR")
                 .map(std::path::PathBuf::from)
                 .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
@@ -247,26 +263,20 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                     "/tmp/agentweb-mounts/runtimes",
                 ]);
             }
-            // Hide SQLite and other application data from the Agent.
+            // Hide host application data and unrelated host state only after
+            // binding the required sources.
             sandbox.args([
-                "--tmpfs",
-                "/data",
-                "--dir",
-                "/data/home",
-                "--dir",
-                "/data/runtimes",
-                "--ro-bind",
-                "/tmp/agentweb-mounts/home",
-                "/data/home",
+                "--tmpfs", "/data", "--dir", "/data/runtimes",
             ]);
             if runtime_root.is_some() {
                 sandbox.args([
-                    "--ro-bind",
-                    "/tmp/agentweb-mounts/runtimes",
-                    "/data/runtimes",
+                    "--ro-bind", "/tmp/agentweb-mounts/runtimes", "/data/runtimes",
                 ]);
             }
-            sandbox.args(["--bind"]);
+            sandbox.args([
+                "--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/run",
+                "--tmpfs", "/var", "--tmpfs", "/mnt", "--tmpfs", "/sys",
+            ]);
             if workspace.starts_with("/workspaces")
                 && workspace != std::path::Path::new("/workspaces")
             {
@@ -309,10 +319,10 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     }
     // Inside the sandbox the selected host home is mounted at this stable path.
     // Never pass through the host's HOME value, which may be hidden by bwrap.
-    command.env("HOME", "/data/home");
-    command.env("XDG_CONFIG_HOME", "/data/home/.config");
-    command.env("XDG_DATA_HOME", "/data/home/.local/share");
-    command.env("XDG_CACHE_HOME", "/data/home/.cache");
+    command.env("HOME", "/agentweb/home");
+    command.env("XDG_CONFIG_HOME", "/agentweb/home/.config");
+    command.env("XDG_DATA_HOME", "/agentweb/home/.local/share");
+    command.env("XDG_CACHE_HOME", "/agentweb/home/.cache");
     // Do not leak AgentWeb's internal service configuration into third-party
     // Agent processes. Provider credentials and proxy settings remain inherited.
     for name in [
@@ -328,17 +338,10 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     ] {
         command.env_remove(name);
     }
-    // Pi supports a dedicated session directory. Keep its writable native
-    // conversation state inside the selected workspace instead of its read-only
-    // host HOME, while leaving existing Pi credentials/configuration untouched.
+    // Keep Pi on its native ~/.pi/agent/sessions store. The sandbox mounts
+    // that exact directory writable at the same relative location under HOME.
     if matches!(kind, ProcessKind::Pi) {
-        if let Some(dir) = &config.working_directory {
-            let state_dir = ensure_workspace_state_dir(
-                std::path::Path::new(dir),
-                std::path::Path::new(".agentweb-state/pi-sessions"),
-            )?;
-            command.env("PI_CODING_AGENT_SESSION_DIR", state_dir);
-        }
+        command.env("PI_CODING_AGENT_SESSION_DIR", "/agentweb/home/.pi/agent/sessions");
     }
     if let Some(runtime) = &config.runtime_path {
         let path = std::env::var("PATH").unwrap_or_default();
