@@ -619,8 +619,8 @@ mod tests {
     }
     use sqlx::SqlitePool;
 
-    // Session lifecycle remains in the metadata table; chat transcripts and session events
-    // must not be written to SQLite.
+    // Session metadata remains in sessions; execution lifecycle belongs in
+    // session_runtime. Chat transcripts and session events stay out of SQLite.
     #[tokio::test]
     async fn session_completion_updates_runtime_without_persisting_chat_content() {
         let workspace =
@@ -720,11 +720,6 @@ mod tests {
             .bind(&lease).bind(now.to_rfc3339()).execute(&db).await.unwrap();
 
         let finalized = finish_session(&db, "s1", "worker-old", "idle").await;
-        let (status, owner): (String, Option<String>) =
-            sqlx::query_as("SELECT status,worker_id FROM sessions WHERE id='s1'")
-                .fetch_one(&db)
-                .await
-                .unwrap();
         let (runtime_status, runtime_owner): (String, Option<String>) =
             sqlx::query_as("SELECT status,worker_id FROM session_runtime WHERE session_id='s1'")
                 .fetch_one(&db)
@@ -737,8 +732,6 @@ mod tests {
             !finalized,
             "a stale worker must not finalize a newer worker's session"
         );
-        assert_eq!(status, "running");
-        assert_eq!(owner.as_deref(), Some("worker-new"));
         assert_eq!(runtime_status, "running");
         assert_eq!(runtime_owner.as_deref(), Some("worker-new"));
     }
