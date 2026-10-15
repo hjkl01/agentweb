@@ -102,7 +102,7 @@ mod tests {
         init(&pool).await.unwrap();
 
         let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('sessions_runtime_insert','sessions_runtime_update','sessions_runtime_delete','runtime_sessions_update')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('sessions_runtime_insert','sessions_runtime_update','sessions_runtime_delete','runtime_sessions_update','trg_sessions_delete_messages')",
         )
         .fetch_one(&pool)
         .await
