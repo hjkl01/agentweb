@@ -14,6 +14,7 @@ export class ApiError extends Error {
 export type Agent = {
   id: string;
   name: string;
+  kind?: string;
   description?: string;
   installed: boolean;
   requirements: string[];
