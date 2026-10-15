@@ -53,7 +53,9 @@ async fn main() -> Result<()> {
         .await?;
     db::init(&pool).await?;
     let now = Utc::now().to_rfc3339();
-    let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)").bind(&now).bind(&now).execute(&pool).await;
+    // Recover expired execution leases from the dedicated runtime table.
+    // The compatibility trigger mirrors the state into legacy session readers.
+    let _=sqlx::query("UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)").bind(&now).bind(&now).execute(&pool).await;
     if let Some(password) = db::ensure_default_admin(&pool).await? {
         eprintln!("\n============================================================");
         eprintln!(" Agent Web首次启动，已创建默认管理员账号");
