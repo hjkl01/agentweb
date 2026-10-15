@@ -169,9 +169,16 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg(&agent_home);
         command.arg("/tmp/agentweb-mounts/home");
-        command.arg("--ro-bind");
-        command.arg("/data/runtimes");
-        command.arg("/tmp/agentweb-mounts/runtimes");
+        let runtime_root = std::env::var_os("AGENTWEB_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+            .filter(|path| path.is_dir())
+            .and_then(|path| path.canonicalize().ok());
+        if let Some(runtime_root) = &runtime_root {
+            command.arg("--ro-bind");
+            command.arg(runtime_root);
+            command.arg("/tmp/agentweb-mounts/runtimes");
+        }
         command.arg("--tmpfs");
         command.arg("/data");
         command.arg("--dir");
@@ -181,9 +188,11 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg("/tmp/agentweb-mounts/home");
         command.arg("/data/home");
-        command.arg("--ro-bind");
-        command.arg("/tmp/agentweb-mounts/runtimes");
-        command.arg("/data/runtimes");
+        if runtime_root.is_some() {
+            command.arg("--ro-bind");
+            command.arg("/tmp/agentweb-mounts/runtimes");
+            command.arg("/data/runtimes");
+        }
         if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces")
         {
             // Keep the selected project reachable via a temporary alias before
