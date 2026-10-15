@@ -94,7 +94,7 @@ Arch Linux 可安装依赖：
 sudo pacman -S bubblewrap
 ```
 
-本地开发默认将持久化数据统一放在项目根目录的 `data/` 下，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
+本地开发的 SQLite 默认位于 `$HOME/.config/agentweb/agentweb.db`；`make start` 使用项目根目录 `data/` 下的工作区和 Node.js Runtime 目录，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
 
 ### 1. 启动后端
 
