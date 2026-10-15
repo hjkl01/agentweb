@@ -15,7 +15,9 @@ export function useWorkspace(active?: string, revision = 0) {
   const filesRequest = useRef(0);
   const diffRequest = useRef(0);
   const selectedFileRequest = useRef(0);
+  const selectedFilePathRef = useRef<string>();
   activeRef.current = active;
+  selectedFilePathRef.current = selectedFile?.path;
 
   const refreshFiles = useCallback(async () => {
     const request = ++filesRequest.current;
@@ -99,10 +101,10 @@ export function useWorkspace(active?: string, revision = 0) {
   useEffect(() => {
     if (revision <= 0 || !active) return;
     refresh().catch(console.error);
-    const path = selectedFile?.path;
+    const path = selectedFilePathRef.current;
     if (!path) return;
     openFile(path).catch(console.error);
-  }, [active, revision, refresh, selectedFile?.path, openFile]);
+  }, [active, revision, refresh, openFile]);
 
   const selectTab = useCallback(
     (nextTab: WorkspaceTab) => {
