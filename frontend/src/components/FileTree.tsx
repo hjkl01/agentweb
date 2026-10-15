@@ -158,6 +158,15 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     // Re-fetch every directory previously loaded. This keeps expansion state
     // while ensuring deleted/renamed children do not survive a refresh.
     const directories = [...loadedDirsRef.current].filter(Boolean).sort((a, b) => a.split("/").length - b.split("/").length);
+    if (directories.length > 0) {
+      // Refresh requests supersede any in-flight lazy loads for the same
+      // directories, so release their loading indicators immediately.
+      const refreshedPaths = new Set(directories);
+      const nextLoading = new Set(loadingDirsRef.current);
+      refreshedPaths.forEach((path) => nextLoading.delete(path));
+      loadingDirsRef.current = nextLoading;
+      setLoadingDirs(nextLoading);
+    }
     if (!sessionId || directories.length === 0) {
       setAllFiles(files);
       return;
