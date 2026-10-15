@@ -1,5 +1,7 @@
 use super::sessions::load_session;
-use crate::agents::pi_transcript::{read_messages_from_workspace, TranscriptMessage};
+use crate::agents::pi_transcript::{
+    native_session_file_exists_from_workspace, read_messages_from_workspace, TranscriptMessage,
+};
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -56,17 +58,45 @@ pub async fn list_messages(
         })?;
     let workspace = session.workspace.clone();
     let native_session_id = native_session_id.to_owned();
-    let messages = tokio::task::spawn_blocking(move || {
+    let (transcript_exists, messages) = tokio::task::spawn_blocking(move || {
         // Keep the permit for the entire blocking read, including if the HTTP
         // request is cancelled after the worker has started.
         let _permit = permit;
-        read_messages_from_workspace(std::path::Path::new(&workspace), &native_session_id)
+        let workspace = std::path::Path::new(&workspace);
+        let exists = native_session_file_exists_from_workspace(workspace, &native_session_id);
+        let messages = if exists {
+            read_messages_from_workspace(workspace, &native_session_id)
+        } else {
+            Vec::new()
+        };
+        (exists, messages)
     })
     .await
     .map_err(|error| {
         tracing::error!(%error, "Pi transcript reader task failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    // Pi owns the transcript file. If a user removes it outside Agent Web,
+    // mark only an idle, unclaimed session as missing; never overwrite a live
+    // worker's status while it may still be writing the transcript.
+    if !transcript_exists {
+        let result = sqlx::query(
+            "UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(&id)
+        .bind(session.native_session_id.as_deref().unwrap_or_default())
+        .execute(&s.db)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to mark deleted Pi transcript as missing");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        if result.rows_affected() > 0 {
+            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing; session marked for recovery");
+        }
+    }
     Ok(Json(messages))
 }
 
