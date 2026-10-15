@@ -90,11 +90,11 @@ pub async fn list_messages(
         .execute(&s.db)
         .await
         .map_err(|error| {
-            tracing::error!(session_id = %id, %error, "failed to mark deleted Pi transcript as missing");
+            tracing::error!(session_id = %id, %error, "failed to mark unavailable Pi transcript as missing");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         if result.rows_affected() > 0 {
-            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing; session marked for recovery");
+            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing or invalid; session marked for recovery");
         }
     }
     Ok(Json(messages))
