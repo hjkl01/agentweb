@@ -32,6 +32,7 @@ export type Session = {
   workspace: string;
   status: string;
   native_session_id?: string;
+  fork_from_native_session_id?: string;
   model?: string;
   is_pinned: boolean;
   workspace_available?: boolean;
