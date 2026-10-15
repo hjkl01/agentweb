@@ -74,14 +74,6 @@ export function useWorkspace(active?: string, revision = 0) {
     refreshFiles().catch(console.error);
   }, [active, refreshFiles]);
 
-  useEffect(() => {
-    if (revision <= 0 || !active) return;
-    refresh().catch(console.error);
-    const path = selectedFile?.path;
-    if (!path) return;
-    openFile(path).catch(console.error);
-  }, [active, revision, refresh, selectedFile?.path, openFile]);
-
   const openFile = useCallback(
     async (path: string) => {
       const request = ++selectedFileRequest.current;
@@ -101,6 +93,14 @@ export function useWorkspace(active?: string, revision = 0) {
     },
     [active],
   );
+
+  useEffect(() => {
+    if (revision <= 0 || !active) return;
+    refresh().catch(console.error);
+    const path = selectedFile?.path;
+    if (!path) return;
+    openFile(path).catch(console.error);
+  }, [active, revision, refresh, selectedFile?.path, openFile]);
 
   const selectTab = useCallback(
     (nextTab: WorkspaceTab) => {
