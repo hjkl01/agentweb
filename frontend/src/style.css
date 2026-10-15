@@ -130,6 +130,34 @@ button:disabled {
   flex: 1;
   min-height: 0;
 }
+.session-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 2px 7px;
+  padding: 6px 8px;
+  color: #999;
+  border: 1px solid #e4e4e4;
+  border-radius: 8px;
+  background: #fff;
+}
+.session-search:focus-within {
+  border-color: #b8b8b8;
+  box-shadow: 0 0 0 2px #00000008;
+}
+.session-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: #333;
+  background: transparent;
+  font-size: 12px;
+}
+.session-search input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
 .session {
   position: relative;
   display: flex;
