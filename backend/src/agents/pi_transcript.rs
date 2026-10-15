@@ -32,6 +32,15 @@ fn sessions_root() -> Option<PathBuf> {
     })
 }
 
+/// Return whether a Pi session exists in the Agent's native session store.
+pub fn native_session_file_exists(native_session_id: &str) -> bool {
+    let Some(root) = sessions_root() else {
+        return false;
+    };
+    let suffix = format!("_{native_session_id}.jsonl");
+    find_by_suffix(&root, &suffix, native_session_id).is_some()
+}
+
 /// Read the native transcript from a session-specific workspace state directory.
 /// The backend process cannot see environment variables assigned only to the
 /// spawned Pi child, so API handlers should pass the persisted workspace path.
