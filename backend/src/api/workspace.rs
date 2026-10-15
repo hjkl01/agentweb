@@ -240,7 +240,12 @@ pub async fn workspace_files(
     let root = workspace_root(&session.workspace).await?;
     let current = match query.path.as_deref().map(str::trim) {
         None | Some("") | Some(".") => root.clone(),
-        Some(relative) => workspace_file_path(&session.workspace, relative).await?,
+        Some(relative) => {
+            if ignored_relative(relative) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+            workspace_file_path(&session.workspace, relative).await?
+        }
     };
     let current_metadata = fs::metadata(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
     if !current_metadata.is_dir() {
