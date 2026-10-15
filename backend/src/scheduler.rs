@@ -153,7 +153,7 @@ async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // This closes the small recovery race where the run lease expires first and a
     // second worker would otherwise claim the run while the old Agent still owns
     // the session.
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id=scheduled_task_runs.agent_session_id AND s.status='running' AND (s.lease_until IS NULL OR julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM session_runtime s WHERE s.session_id=scheduled_task_runs.agent_session_id AND s.status='running' AND (s.lease_until IS NULL OR julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
         .bind(&now).bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
@@ -182,7 +182,7 @@ async fn renew_session_lease_once(pool: &SqlitePool, session_id: &str, worker: &
     let now = Utc::now();
     let now_text = stamp(now);
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
-    matches!(sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+    matches!(sqlx::query("UPDATE session_runtime SET lease_until=?,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
         .bind(lease).bind(now_text).bind(session_id).bind(worker).execute(pool).await, Ok(r) if r.rows_affected() == 1)
 }
 
@@ -358,7 +358,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     }
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
     let session_worker_id = format!("{}:{}", state.worker_id, Uuid::new_v4());
-    let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
+    let claimed = sqlx::query("UPDATE session_runtime SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE session_id=? AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.status!='missing') AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(
@@ -383,7 +383,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     };
     if still_owned != 1 {
         let release_time = stamp(Utc::now());
-        let _ = sqlx::query("UPDATE sessions SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+        let _ = sqlx::query("UPDATE session_runtime SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
             .bind(&release_time).bind(&session.id).bind(&session_worker_id).execute(&state.db).await;
         tracing::warn!(%run_id, session_id = %session.id, "run lease was lost before Agent startup; released session");
         return;
@@ -447,7 +447,7 @@ async fn execute_run(state: AppState, run_id: &str) {
         }
     }
     heartbeat.abort();
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM sessions WHERE id=?")
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id=?")
         .bind(&session_id)
         .fetch_optional(&state.db)
         .await
