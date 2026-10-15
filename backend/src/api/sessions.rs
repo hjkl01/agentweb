@@ -154,9 +154,8 @@ pub async fn list_sessions(
         .execute(&s.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        // Explicitly provision runtime state for imported sessions. This is
-        // idempotent across concurrent discovery workers and no longer relies
-        // on the sessions_runtime_insert compatibility trigger.
+        // Explicitly provision runtime state for imported sessions. The insert
+        // is idempotent if another discovery worker already created this row.
         sqlx::query(
             "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) SELECT id,'idle',NULL,NULL,updated_at FROM sessions WHERE agent_id='pi' AND native_session_id=?",
         )
