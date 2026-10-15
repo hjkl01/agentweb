@@ -97,9 +97,16 @@ async fn main() -> Result<()> {
             .max_connections(1)
             .connect_with(legacy_options)
             .await?;
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        let checkpoint = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .fetch_one(&legacy_pool)
             .await?;
+        let checkpoint_busy: i64 = sqlx::Row::try_get(&checkpoint, 0)?;
+        if checkpoint_busy != 0 {
+            anyhow::bail!(
+                "cannot migrate {} because its SQLite WAL is busy; stop other Agent Web processes and retry",
+                legacy_db_path.display()
+            );
+        }
         legacy_pool.close().await;
         tokio::fs::copy(&legacy_db_path, &default_db_path).await?;
         tracing::info!(
