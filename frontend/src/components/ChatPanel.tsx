@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, AtSign, Bot, Check, Copy, Send, Square } from "lucide-react";
+import { Activity, AlertTriangle, AtSign, Bot, Check, Copy, GitBranch, Send, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { RefObject } from "react";
 import type {
@@ -56,6 +56,7 @@ type Props = {
   onToggleActivity: () => void;
   onStop: () => void;
   onRestartMissingSession: () => void;
+  onForkSession: () => void;
   onNewChat: () => void;
   onAutoResize: () => void;
 };
@@ -81,6 +82,7 @@ export function ChatPanel({
   onToggleActivity,
   onStop,
   onRestartMissingSession,
+  onForkSession,
   onNewChat,
   onAutoResize,
 }: Props) {
@@ -135,6 +137,11 @@ export function ChatPanel({
               messages={messages}
               activity={activity}
             />
+            {currentAgent?.id === "pi" && current?.native_session_id && !running && current.status !== "missing" && (
+              <button type="button" className="message-action" onClick={onForkSession} title="从当前 Pi 会话创建独立分支">
+                <GitBranch size={14} /> <span>创建分支</span>
+              </button>
+            )}
           </div>
         )}
       </header>
