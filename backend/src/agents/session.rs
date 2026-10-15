@@ -505,7 +505,8 @@ pub async fn run_session(
             } else {
                 "error"
             };
-            let finalized = match sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let finalized = match sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END,status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(native_session_id)
                 .bind(native_session_id)
                 .bind(status)
                 .bind(&now)
