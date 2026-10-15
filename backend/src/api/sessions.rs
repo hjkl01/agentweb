@@ -53,7 +53,7 @@ fn default_workspace_root() -> PathBuf {
         .join("workspaces")
 }
 pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
-    let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let row=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(session_from_row(&row))
 }
 
