@@ -100,6 +100,7 @@ export function App({ sessionId, navigate }: Props) {
           onToggleActivity={() => c.session.setActivityOpen((v) => !v)}
           onStop={c.stop}
           onRestartMissingSession={c.restartMissingSession}
+          onForkSession={c.forkSession}
           onNewChat={openNewChat}
           onAutoResize={c.autoResize}
         />
