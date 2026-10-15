@@ -20,6 +20,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - HOME=/data/home/
+      - AGENTWEB_AGENT_HOME=${AGENTWEB_AGENT_HOME:-/data/home}
       - XDG_CONFIG_HOME=/data/home/.config
       - XDG_DATA_HOME=/data/home/.local/share
       - XDG_CACHE_HOME=/data/home/.cache
