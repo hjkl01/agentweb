@@ -1,6 +1,6 @@
 use super::sessions::{load_session, load_session_record};
 use crate::agents::pi_transcript::{
-    native_session_file_exists, read_messages, TranscriptMessage,
+    native_session_file_exists, read_messages, NativeSessionFileLookup, TranscriptMessage,
 };
 use crate::state::AppState;
 use axum::{
@@ -60,17 +60,17 @@ pub async fn list_messages(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
     let native_session_id = native_session_id.to_owned();
-    let (transcript_exists, messages) = tokio::task::spawn_blocking(move || {
+    let (lookup, messages) = tokio::task::spawn_blocking(move || {
         // Keep the permit for the entire blocking read, including if the HTTP
         // request is cancelled after the worker has started.
         let _permit = permit;
-        let exists = native_session_file_exists(&native_session_id);
-        let messages = if exists {
+        let lookup = native_session_file_exists(&native_session_id);
+        let messages = if lookup == NativeSessionFileLookup::Found {
             read_messages(&native_session_id)
         } else {
             Vec::new()
         };
-        (exists, messages)
+        (lookup, messages)
     })
     .await
     .map_err(|error| {
@@ -78,10 +78,17 @@ pub async fn list_messages(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // A failed/incomplete scan is not evidence of deletion. Return a retryable
+    // response and never mutate session metadata in that case.
+    if lookup == NativeSessionFileLookup::Unknown {
+        tracing::warn!(session_id = %id, "Pi transcript lookup was inconclusive; preserving session metadata");
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
     // Pi owns the transcript file. If a user removes it outside Agent Web,
     // mark only an idle, unclaimed session as missing; never overwrite a live
     // worker's status while it may still be writing the transcript.
-    if !transcript_exists && !is_fork_preview {
+    if lookup == NativeSessionFileLookup::Missing && !is_fork_preview {
         let result = sqlx::query(
             "UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL",
         )
@@ -95,7 +102,7 @@ pub async fn list_messages(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         if result.rows_affected() > 0 {
-            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing or invalid; session marked for recovery");
+            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing; session marked for recovery");
         }
     }
     Ok(Json(messages))
