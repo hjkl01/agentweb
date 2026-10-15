@@ -122,6 +122,16 @@ export function useAppController(
       alert(e instanceof Error ? e.message : String(e));
     }
   };
+  const forkSession = async () => {
+    if (!sessionId) return;
+    try {
+      const fork = await session.createPiFork(sessionId);
+      navigate(sessionPath(fork.id));
+      setSessionMenu(undefined);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
   const restartMissingSession = async () => {
     if (!sessionId) return;
     try {
@@ -194,6 +204,7 @@ export function useAppController(
     deleteSession,
     stop,
     restartMissingSession,
+    forkSession,
     changeAgent,
     changeModel,
     autoResize,
