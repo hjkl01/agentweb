@@ -19,16 +19,19 @@ fn collect_assets(root: &Path, dir: &Path, assets: &mut Vec<PathBuf>) {
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let root = manifest.join("../frontend/dist");
-    if !root.join("index.html").is_file() {
-        panic!(
-            "Frontend build not found at {}. Run 'npm run build' in the frontend directory before compiling Agent Web.",
+    println!("cargo:rerun-if-changed={}", root.display());
+    let mut assets = Vec::new();
+    if root.join("index.html").is_file() {
+        collect_assets(&root, &root, &mut assets);
+    } else {
+        // cargo run / make dev can run without a production bundle because
+        // Vite serves the frontend separately. make build and Docker always
+        // build the frontend first, so their standalone binaries contain assets.
+        println!(
+            "cargo:warning=Frontend build not found at {}; embedded assets will be empty (run npm run build for a standalone binary)",
             root.display()
         );
     }
-
-    println!("cargo:rerun-if-changed={}", root.display());
-    let mut assets = Vec::new();
-    collect_assets(&root, &root, &mut assets);
     assets.sort();
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
