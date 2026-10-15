@@ -178,6 +178,19 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                     "Agent workspace must be a project directory, not the shared /workspaces root"
                 );
             }
+            // The host's Agent home is configurable. Docker sets
+            // AGENTWEB_AGENT_HOME=/data/home; native host execution defaults to
+            // the process HOME. /data/home below is only the isolated sandbox
+            // mount point, not a required host path.
+            let agent_home = std::env::var_os("AGENTWEB_AGENT_HOME")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| anyhow!("AGENTWEB_AGENT_HOME or HOME must point to the Agent home directory"))?
+                .canonicalize()
+                .map_err(|error| anyhow!("cannot resolve Agent home directory: {error}"))?;
+            if !agent_home.is_dir() {
+                bail!("Agent home is not a directory: {}", agent_home.display());
+            }
             let mut sandbox = Command::new("bwrap");
             sandbox.args([
                 "--die-with-parent",
@@ -223,7 +236,7 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 // selected project and hide sibling projects from the Agent.
                 // The alias must be mounted before masking the original parent.
                 "--ro-bind",
-                "/data/home",
+            ]).arg(&agent_home).args([
                 "/tmp/agentweb-mounts/home",
                 "--ro-bind",
                 "/data/runtimes",
