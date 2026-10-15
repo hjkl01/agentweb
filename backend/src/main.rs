@@ -138,6 +138,7 @@ async fn main() -> Result<()> {
             "/sessions/{id}/restart",
             axum::routing::post(api::restart_missing_session),
         )
+        .route("/sessions/{id}/fork", axum::routing::post(api::create_pi_fork))
         .route(
             "/sessions/{id}/model",
             axum::routing::put(api::set_session_model),
