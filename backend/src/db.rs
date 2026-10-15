@@ -16,6 +16,58 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
         .await?;
+
+    // Separate ephemeral execution coordination from durable conversation
+    // metadata. This compatibility layer is intentionally metadata-free: it
+    // stores only ownership/lease state, never transcript text or titles.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS session_runtime (
+            session_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'idle',
+            worker_id TEXT,
+            lease_until TEXT,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
+         SELECT id,status,worker_id,lease_until,updated_at FROM sessions",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS sessions_runtime_insert AFTER INSERT ON sessions
+         BEGIN
+           INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
+           VALUES(NEW.id,NEW.status,NEW.worker_id,NEW.lease_until,NEW.updated_at)
+           ON CONFLICT(session_id) DO UPDATE SET status=excluded.status,
+             worker_id=excluded.worker_id, lease_until=excluded.lease_until,
+             updated_at=excluded.updated_at;
+         END",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS sessions_runtime_update
+         AFTER UPDATE OF status,worker_id,lease_until,updated_at ON sessions
+         BEGIN
+           INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
+           VALUES(NEW.id,NEW.status,NEW.worker_id,NEW.lease_until,NEW.updated_at)
+           ON CONFLICT(session_id) DO UPDATE SET status=excluded.status,
+             worker_id=excluded.worker_id, lease_until=excluded.lease_until,
+             updated_at=excluded.updated_at;
+         END",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS sessions_runtime_delete AFTER DELETE ON sessions
+         BEGIN DELETE FROM session_runtime WHERE session_id=OLD.id; END",
+    )
+    .execute(pool)
+    .await?;
     seed_builtin_agents(pool).await?;
     Ok(())
 }
