@@ -129,6 +129,14 @@ pub async fn list_sessions(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     // Incomplete discovery may still contribute found sessions, but must never be
     // interpreted as proof that any previously imported native session was deleted.
+    // Emit a diagnostic so operators can distinguish an empty store from a failed
+    // or safety-limited scan without hiding the sessions we did successfully find.
+    if !discovered.complete {
+        tracing::warn!(
+            discovered_sessions = discovered.sessions.len(),
+            "Pi native session discovery was incomplete; preserving existing session metadata"
+        );
+    }
     for native in discovered.sessions {
         let id = Uuid::new_v4().to_string();
         // Keep discovery idempotent across multiple backend workers: only
