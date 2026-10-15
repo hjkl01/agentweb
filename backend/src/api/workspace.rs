@@ -253,12 +253,6 @@ pub async fn workspace_files(
         .map_err(|_| StatusCode::FORBIDDEN)?
         .to_string_lossy()
         .replace('\\\\', "/");
-    let prefix = if current_relative.is_empty() {
-        String::new()
-    } else {
-        format!("{current_relative}/")
-    };
-
     let mut out = Vec::new();
     let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
     while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
