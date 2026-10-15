@@ -335,10 +335,8 @@ pub async fn create_pi_fork(
         .native_session_id
         .as_deref()
         .ok_or(StatusCode::CONFLICT)?;
-    let workspace = source.workspace.clone();
     let native_id_owned = native_id.to_owned();
     let exists = tokio::task::spawn_blocking(move || {
-        let _workspace = workspace;
         crate::agents::pi_transcript::native_session_file_exists(&native_id_owned)
     })
     .await
