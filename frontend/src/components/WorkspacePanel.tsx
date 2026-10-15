@@ -9,7 +9,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CodePreview } from "./CodePreview";
 import { DiffViewer } from "./DiffViewer";
 import { FileTree } from "./FileTree";
@@ -111,31 +111,39 @@ export function WorkspacePanel({
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [maximized, setMaximized] = useState(false);
+  const closedPathsRef = useRef(new Set<string>());
 
   useEffect(() => {
+    closedPathsRef.current.clear();
     setOpenTabs([]);
     setActivePath(undefined);
     setMaximized(false);
   }, [current?.id]);
 
   useEffect(() => {
-    if (!selectedFile?.path) return;
+    if (!selectedFile?.path || closedPathsRef.current.has(selectedFile.path)) return;
     setOpenTabs((tabs) => tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path]);
     setActivePath(selectedFile.path);
   }, [selectedFile?.path]);
 
+  const openFile = (path: string, line?: number) => {
+    closedPathsRef.current.delete(path);
+    onOpenFile(path, line);
+  };
+
   const activateTab = (path: string) => {
     setActivePath(path);
-    if (path !== selectedFile?.path) onOpenFile(path);
+    if (path !== selectedFile?.path) openFile(path);
   };
 
   const closeTab = (path: string) => {
+    closedPathsRef.current.add(path);
     const remaining = openTabs.filter((item) => item !== path);
     setOpenTabs(remaining);
     if (activePath === path) {
       const next = remaining[remaining.length - 1];
       setActivePath(next);
-      if (next) onOpenFile(next);
+      if (next) openFile(next);
       else {
         setMaximized(false);
         onCloseFile();
@@ -184,7 +192,7 @@ export function WorkspacePanel({
             sessionId={current?.id}
             files={files}
             filter={fileFilter}
-            onOpenFile={(path) => onOpenFile(path)}
+            onOpenFile={(path) => openFile(path)}
           />
         </>
       )}
