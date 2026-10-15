@@ -9,10 +9,12 @@ import {
   PinOff,
   Plus,
   Settings,
+  Search,
   Terminal,
   Trash2,
   UserRound,
 } from "lucide-react";
+import { useState } from "react";
 import type { Agent, Session } from "../types";
 
 type Props = {
@@ -49,6 +51,14 @@ export function Sidebar({
   onHome,
   onOpenTerminal,
 }: Props) {
+  const [sessionQuery, setSessionQuery] = useState("");
+  const normalizedQuery = sessionQuery.trim().toLocaleLowerCase();
+  const filteredSessions = sessions.filter((session) => {
+    if (!normalizedQuery) return true;
+    const agentName = agents.find((agent) => agent.id === session.agent_id)?.name || session.agent_id;
+    return [session.title, session.workspace, session.agent_id, agentName, session.status]
+      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+  });
   return (
     <aside className="sidebar">
       <button className="brand" onClick={onHome} aria-label="返回首页">
@@ -70,10 +80,20 @@ export function Sidebar({
         <Terminal size={16} /> Terminal
       </button>
       <div className="section-label">
-        Chats <span>{sessions.length}</span>
+        Chats <span>{normalizedQuery ? filteredSessions.length + "/" + sessions.length : sessions.length}</span>
+      </div>
+      <div className="session-search" role="search">
+        <Search size={14} aria-hidden="true" />
+        <input
+          type="search"
+          value={sessionQuery}
+          onChange={(event) => setSessionQuery(event.target.value)}
+          placeholder="搜索会话、工作区…"
+          aria-label="搜索会话"
+        />
       </div>
       <div className="session-list">
-        {sessions.map((session) => (
+        {filteredSessions.map((session) => (
           <div
             key={session.id}
             className={`session ${active === session.id ? "active" : ""} ${session.is_pinned ? "pinned" : ""} ${session.workspace_available === false ? "workspace-missing" : ""}`}
@@ -127,6 +147,9 @@ export function Sidebar({
           </div>
         ))}
         {!sessions.length && <div className="empty-sidebar">No chats yet</div>}
+        {sessions.length > 0 && !filteredSessions.length && (
+          <div className="empty-sidebar">没有匹配的会话</div>
+        )}
       </div>
       <div className="sidebar-bottom">
         <button className="settings-button" onClick={onOpenCatalog}>
