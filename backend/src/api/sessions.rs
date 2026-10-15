@@ -367,7 +367,7 @@ pub async fn create_pi_fork(
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         crate::agents::pi_transcript::NativeSessionFileLookup::Missing => {
-            sqlx::query("UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
+            sqlx::query("UPDATE session_runtime SET status='missing',updated_at=? WHERE session_id=? AND status!='running' AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.native_session_id=? AND s.status!='running' AND s.worker_id IS NULL)")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
                 .bind(native_id)
