@@ -135,40 +135,38 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg("/");
         command.arg("/");
-        // Expose bubblewrap's minimal device directory rather than the
-        // host's full /dev tree.
         command.arg("--dev");
         command.arg("/dev");
         command.arg("--proc");
         command.arg("/proc");
         command.arg("--tmpfs");
         command.arg("/tmp");
-        // Preserve only required read-only directories under temporary aliases
-        // before masking /data and hiding the SQLite database from the shell.
+        // Bind the actual host home directly; no /tmp/agentweb-mounts/home
+        // source is needed. Do this before masking the host's /home or /data.
         command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts");
+        command.arg("/agentweb");
         command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/home");
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/runtimes");
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/workspace");
-        // Use the same configurable host-side Agent home as process sandboxing.
-        // /data/home is only the sandbox's internal mount point.
+        command.arg("/agentweb/home");
         let agent_home = std::env::var_os("AGENTWEB_AGENT_HOME")
             .or_else(|| std::env::var_os("HOME"))
             .map(std::path::PathBuf::from)
             .and_then(|path| path.canonicalize().ok());
         let Some(agent_home) = agent_home.filter(|path| path.is_dir()) else {
             let mut socket = socket;
-            let _ = socket
-                .send(Message::Text("Agent home directory is unavailable; set AGENTWEB_AGENT_HOME or HOME.".into()))
-                .await;
+            let _ = socket.send(Message::Text(
+                "Agent home directory is unavailable; set AGENTWEB_AGENT_HOME or HOME.".into(),
+            )).await;
             return;
         };
         command.arg("--ro-bind");
         command.arg(&agent_home);
-        command.arg("/tmp/agentweb-mounts/home");
+        command.arg("/agentweb/home");
+        command.arg("--dir");
+        command.arg("/tmp/agentweb-mounts");
+        command.arg("--dir");
+        command.arg("/tmp/agentweb-mounts/runtimes");
+        command.arg("--dir");
+        command.arg("/tmp/agentweb-mounts/workspace");
         let runtime_root = std::env::var_os("AGENTWEB_RUNTIME_DIR")
             .map(std::path::PathBuf::from)
             .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
@@ -182,17 +180,24 @@ async fn run_terminal(
         command.arg("--tmpfs");
         command.arg("/data");
         command.arg("--dir");
-        command.arg("/data/home");
-        command.arg("--dir");
         command.arg("/data/runtimes");
-        command.arg("--ro-bind");
-        command.arg("/tmp/agentweb-mounts/home");
-        command.arg("/data/home");
         if runtime_root.is_some() {
             command.arg("--ro-bind");
             command.arg("/tmp/agentweb-mounts/runtimes");
             command.arg("/data/runtimes");
         }
+        command.arg("--tmpfs");
+        command.arg("/home");
+        command.arg("--tmpfs");
+        command.arg("/root");
+        command.arg("--tmpfs");
+        command.arg("/run");
+        command.arg("--tmpfs");
+        command.arg("/var");
+        command.arg("--tmpfs");
+        command.arg("/mnt");
+        command.arg("--tmpfs");
+        command.arg("/sys");
         if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces")
         {
             // Keep the selected project reachable via a temporary alias before
@@ -235,10 +240,10 @@ async fn run_terminal(
     };
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("HOME", "/data/home");
-    command.env("XDG_CONFIG_HOME", "/data/home/.config");
-    command.env("XDG_DATA_HOME", "/data/home/.local/share");
-    command.env("XDG_CACHE_HOME", "/data/home/.cache");
+    command.env("HOME", "/agentweb/home");
+    command.env("XDG_CONFIG_HOME", "/agentweb/home/.config");
+    command.env("XDG_DATA_HOME", "/agentweb/home/.local/share");
+    command.env("XDG_CACHE_HOME", "/agentweb/home/.cache");
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("SHELL", &shell);
 
