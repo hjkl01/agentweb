@@ -14,8 +14,9 @@ ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://mirrors.cernet.edu.cn/crates
 RUN cd backend && cargo build --release
 
 FROM archlinux:base
-RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
-  && pacman -Syu --noconfirm \
+# Keep the Arch base image's mirrorlist instead of rewriting every mirror
+# entry to Aliyun; duplicate entries can all point at a stale mirror and cause 404s.
+RUN pacman -Syu --noconfirm \
     ca-certificates \
     tzdata \
     curl \
