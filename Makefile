@@ -26,7 +26,6 @@ help: ## Show available commands
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 install: ## Install frontend dependencies and fetch Rust dependencies
-	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
 	cd frontend && npm install --no-audit --no-fund
 	cd backend && cargo fetch
 
@@ -42,7 +41,7 @@ dev-backend: ## Start Rust backend development server
 dev-frontend: ## Start Vite frontend development server
 	cd frontend && npm run dev -- --host 127.0.0.1
 
-build: ## Build frontend and backend into ./build for direct startup
+build: install ## Build frontend and backend into ./build for direct startup
 	cd frontend && npm run build
 	cd backend && cargo build
 	@mkdir -p $(BUILD_DIR)
