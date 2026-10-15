@@ -225,67 +225,95 @@ async fn git_status(
     Ok(result)
 }
 
+#[derive(serde::Deserialize)]
+pub struct WorkspaceFilesQuery {
+    /// Relative directory path; omitted or empty means the workspace root.
+    pub path: Option<String>,
+}
+
 pub async fn workspace_files(
     Path(id): Path<String>,
     State(s): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<WorkspaceFilesQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let session = get_session(Path(id), State(s.clone())).await?.0;
     let root = workspace_root(&session.workspace).await?;
+    let current = match query.path.as_deref().map(str::trim) {
+        None | Some("") | Some(".") => root.clone(),
+        Some(relative) => workspace_file_path(&session.workspace, relative).await?,
+    };
+    let current_metadata = fs::metadata(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if !current_metadata.is_dir() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let statuses = git_status(&root).await.unwrap_or_default();
+    let current_relative = current
+        .strip_prefix(&root)
+        .map_err(|_| StatusCode::FORBIDDEN)?
+        .to_string_lossy()
+        .replace('\\\\', "/");
+    let prefix = if current_relative.is_empty() {
+        String::new()
+    } else {
+        format!("{current_relative}/")
+    };
+
     let mut out = Vec::new();
-    let mut stack = vec![root.clone()];
-    while let Some(dir) = stack.pop() {
-        let mut entries = fs::read_dir(&dir)
-            .await
-            .map_err(|_| StatusCode::NOT_FOUND)?;
-        while let Some(entry) = entries
-            .next_entry()
-            .await
+    let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        if out.len() >= 2000 {
+            break;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if IGNORED_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        let file_type = entry.file_type().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let metadata = entry.metadata().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let relative = path
+            .strip_prefix(&root)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            if out.len() >= MAX_WORKSPACE_ENTRIES {
-                break;
-            }
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            // Keep symbolic links out of recursive traversal. A link may point
-            // outside the workspace or back to an ancestor and create a cycle.
-            if file_type.is_symlink() {
-                continue;
-            }
-            let metadata = entry
-                .metadata()
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            if metadata.is_dir() {
-                if ignored_dir(&path) {
-                    continue;
-                }
-                stack.push(path.clone());
-            }
-            let relative = path
-                .strip_prefix(&root)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push(serde_json::json!({ "name": entry.file_name().to_string_lossy(), "path": relative, "kind": if metadata.is_dir() { "directory" } else { "file" }, "size": metadata.len(), "status": statuses.get(&relative) }));
-        }
-        if out.len() >= MAX_WORKSPACE_ENTRIES {
-            break;
-        }
+            .to_string_lossy()
+            .replace('\\\\', "/");
+        out.push(serde_json::json!({
+            "name": name,
+            "path": relative,
+            "kind": if metadata.is_dir() { "directory" } else { "file" },
+            "size": metadata.len(),
+            "status": statuses.get(&relative)
+        }));
     }
+
+    // Keep deleted Git entries visible, but only for the directory currently
+    // being browsed; do not return descendants from unopened folders.
     for (path, status) in &statuses {
-        if out.len() >= MAX_WORKSPACE_ENTRIES {
+        if out.len() >= 2000 {
             break;
         }
-        if status == "deleted" && !out.iter().any(|item| item["path"].as_str() == Some(path)) {
-            out.push(serde_json::json!({ "name": path.rsplit('/').next().unwrap_or(path), "path": path, "kind": "file", "size": 0, "status": status }));
+        let parent = path.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("");
+        if status == "deleted"
+            && parent == current_relative
+            && !out.iter().any(|item| item["path"].as_str() == Some(path))
+        {
+            out.push(serde_json::json!({
+                "name": path.rsplit('/').next().unwrap_or(path),
+                "path": path,
+                "kind": "file",
+                "size": 0,
+                "status": status
+            }));
         }
     }
-    out.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    out.sort_by(|a, b| {
+        (a["kind"].as_str() != Some("directory"))
+            .cmp(&(b["kind"].as_str() != Some("directory")))
+            .then_with(|| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()))
+    });
     Ok(Json(out))
 }
 
