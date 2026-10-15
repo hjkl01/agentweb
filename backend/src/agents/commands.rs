@@ -307,6 +307,12 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     if let Some(dir) = &config.working_directory {
         command.current_dir(dir);
     }
+    // Inside the sandbox the selected host home is mounted at this stable path.
+    // Never pass through the host's HOME value, which may be hidden by bwrap.
+    command.env("HOME", "/data/home");
+    command.env("XDG_CONFIG_HOME", "/data/home/.config");
+    command.env("XDG_DATA_HOME", "/data/home/.local/share");
+    command.env("XDG_CACHE_HOME", "/data/home/.cache");
     // Do not leak AgentWeb's internal service configuration into third-party
     // Agent processes. Provider credentials and proxy settings remain inherited.
     for name in [
