@@ -438,6 +438,7 @@ pub(crate) async fn build_agent_config(
         command: binary.to_string_lossy().into_owned(),
         working_directory,
         native_session_id: None,
+        fork_from_native_session_id: None,
         runtime_path,
         model: None,
     })
