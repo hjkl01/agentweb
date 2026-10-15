@@ -448,7 +448,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             if orphan.status == "running" || workspace_is_valid {
                 return StatusCode::NOT_FOUND;
             }
-            let result = sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
+            let result = sqlx::query("DELETE FROM sessions WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND r.status!='running')")
                 .bind(&id)
                 .execute(&s.db)
                 .await;
@@ -464,7 +464,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         // Never stop a live execution when deletion will be rejected anyway.
         // Only expired leases may be cleaned up by this endpoint.
         let execution: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
-            "SELECT worker_id,lease_until FROM sessions WHERE id=? AND status='running'",
+            "SELECT worker_id,lease_until FROM session_runtime WHERE session_id=? AND status='running'",
         )
         .bind(&id)
         .fetch_optional(&s.db)
@@ -510,7 +510,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
     // Keep live leases, but allow deleting a running record whose lease expired
     // (the owning worker's monitor will observe the missing row and interrupt).
     let now = Utc::now().to_rfc3339();
-    match sqlx::query("DELETE FROM sessions WHERE id=? AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
+    match sqlx::query("DELETE FROM sessions WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND (r.status!='running' OR r.lease_until IS NULL OR (julianday(r.lease_until) IS NOT NULL AND julianday(r.lease_until)<julianday(?))))")
         .bind(&id)
         .bind(&now)
         .execute(&s.db)
