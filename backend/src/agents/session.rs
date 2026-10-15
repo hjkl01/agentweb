@@ -26,6 +26,50 @@ fn lease_is_expired(lease: &str, now: chrono::DateTime<Utc>) -> bool {
         .unwrap_or(true)
 }
 
+
+async fn finalize_session_with_native_id(
+    db: &sqlx::SqlitePool,
+    session_id: &str,
+    worker_id: &str,
+    status: &str,
+    native_session_id: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = db.begin().await?;
+    let ownership = sqlx::query(
+        "UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? \
+         WHERE session_id=? AND status='running' AND worker_id=?",
+    )
+    .bind(status)
+    .bind(&now)
+    .bind(session_id)
+    .bind(worker_id)
+    .execute(&mut *tx)
+    .await?;
+    if ownership.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    let metadata = sqlx::query(
+        "UPDATE sessions SET native_session_id=COALESCE(?,native_session_id), \
+         fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END, \
+         updated_at=? WHERE id=?",
+    )
+    .bind(native_session_id)
+    .bind(native_session_id)
+    .bind(&now)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+    if metadata.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
 async fn finish_session(
     db: &sqlx::SqlitePool,
     session_id: &str,
@@ -471,10 +515,16 @@ pub async fn run_session(
     {
         Ok(result) => {
             monitor.abort();
-            let now = Utc::now().to_rfc3339();
-            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END,status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
-            match updated {
-                Ok(update_result) if update_result.rows_affected() == 1 => {
+            match finalize_session_with_native_id(
+                &db,
+                &session.id,
+                &worker_id,
+                "idle",
+                result.native_session_id.as_deref(),
+            )
+            .await
+            {
+                Ok(true) => {
                     // Publish completion only after the database confirms the session
                     // transitioned from running to idle. Otherwise clients may refresh
                     // and still observe a stale running state.
@@ -484,18 +534,19 @@ pub async fn run_session(
                         })
                         .await;
                 }
-                Ok(update_result) => {
+                Ok(false) => {
                     tracing::warn!(
                         session_id = %session.id,
-                        rows_affected = update_result.rows_affected(),
-                        "session completion did not update the running session; skipping completion event"
+                        worker_id = %worker_id,
+                        "session completion no longer owns the runtime lease or metadata row; skipping completion event"
                     );
                 }
                 Err(error) => {
                     tracing::error!(
                         session_id = %session.id,
+                        worker_id = %worker_id,
                         %error,
-                        "failed to finalize session state; skipping completion event"
+                        "failed to finalize session state transactionally; skipping completion event"
                     );
                 }
             }
@@ -509,7 +560,6 @@ pub async fn run_session(
                 run_error.is_some_and(|run_error| run_error.native_session_missing);
             let native_session_id =
                 run_error.and_then(|run_error| run_error.native_session_id.as_deref());
-            let now = Utc::now().to_rfc3339();
             let status = if interrupted {
                 "interrupted"
             } else if native_session_missing {
@@ -517,32 +567,22 @@ pub async fn run_session(
             } else {
                 "error"
             };
-            let finalized = match sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END,status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
-                .bind(native_session_id)
-                .bind(native_session_id)
-                .bind(status)
-                .bind(&now)
-                .bind(&session.id)
-                .bind(&worker_id)
-                .execute(&db)
-                .await
+            let finalized = match finalize_session_with_native_id(
+                &db,
+                &session.id,
+                &worker_id,
+                status,
+                native_session_id,
+            )
+            .await
             {
-                Ok(result) if result.rows_affected() == 1 => true,
-                Ok(result) => {
-                    tracing::warn!(
-                        session_id = %session.id,
-                        worker_id = %worker_id,
-                        rows_affected = result.rows_affected(),
-                        "failed agent run no longer owns the session; skipping stale finalization event"
-                    );
-                    false
-                }
+                Ok(finalized) => finalized,
                 Err(update_error) => {
                     tracing::error!(
                         session_id = %session.id,
                         worker_id = %worker_id,
                         %update_error,
-                        "failed to save native session ID while finalizing failed agent run"
+                        "failed to finalize failed agent run transactionally"
                     );
                     false
                 }
