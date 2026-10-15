@@ -128,10 +128,30 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const [searchFiles, setSearchFiles] = useState<FileItem[]>();
   const searchRequest = useRef(0);
 
+  const previousSessionId = useRef(sessionId);
+
   useEffect(() => {
-    setAllFiles(files);
-    setExpanded(new Set());
-    setLoadedDirs(new Set([""]));
+    if (previousSessionId.current !== sessionId) {
+      previousSessionId.current = sessionId;
+      setAllFiles(files);
+      setExpanded(new Set());
+      setLoadedDirs(new Set([""]));
+      setLoadingDirs(new Set());
+      setSearchFiles(undefined);
+      return;
+    }
+
+    // Refresh the root listing without collapsing directories or discarding
+    // children already fetched through the lazy-loading API.
+    setAllFiles((current) => {
+      const merged = new Map(files.map((item) => [item.path, item]));
+      current.forEach((item) => {
+        if (item.path.includes("/") && !merged.has(item.path)) {
+          merged.set(item.path, item);
+        }
+      });
+      return [...merged.values()];
+    });
   }, [files, sessionId]);
 
   useEffect(() => {
