@@ -298,7 +298,16 @@ pub async fn create_pi_fork(
             FsPath::new(&workspace), &native_id_owned,
         )
     }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !exists { return Err(StatusCode::CONFLICT); }
+    if !exists {
+        sqlx::query("UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
+            .bind(Utc::now().to_rfc3339())
+            .bind(&id)
+            .bind(native_id)
+            .execute(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(StatusCode::CONFLICT);
+    }
     let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
         .bind(&id).bind(native_id).fetch_one(&s.db).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
