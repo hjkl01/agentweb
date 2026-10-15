@@ -127,7 +127,9 @@ pub async fn list_sessions(
     let discovered = tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for native in discovered {
+    // Incomplete discovery may still contribute found sessions, but must never be
+    // interpreted as proof that any previously imported native session was deleted.
+    for native in discovered.sessions {
         let id = Uuid::new_v4().to_string();
         // Keep discovery idempotent across multiple backend workers: only
         // insert metadata when this native session has not been imported yet.
