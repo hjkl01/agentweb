@@ -3090,3 +3090,126 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     max-height: min(60dvh, 420px);
   }
 }
+
+
+/* DiffViewer component styles: keep selectors aligned with its rendered class names. */
+.diff-viewer {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  color: var(--text-primary, #344054);
+  scrollbar-width: thin;
+  scrollbar-color: #cdd2dc transparent;
+}
+
+.diff-status,
+.diff-truncated,
+.diff-empty {
+  padding: 10px 12px;
+  color: var(--text-secondary, #667085);
+  font-size: 12px;
+}
+
+.diff-truncated {
+  color: #92400e;
+  background: #fffbeb;
+  border-bottom: 1px solid #f5d58a;
+}
+
+.diff-file + .diff-file {
+  border-top: 1px solid var(--ui-border);
+}
+
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--surface-muted, #f8f9fb);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-file-head:hover {
+  background: var(--surface-hover, #f1f4f8);
+}
+
+.diff-file-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.diff-renamed {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary, #667085);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.diff-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-secondary, #667085);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.diff-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: #eef2f6;
+  color: #475467;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.diff-status-added { background: #dcfce7; color: #166534; }
+.diff-status-deleted { background: #fee2e2; color: #991b1b; }
+.diff-status-renamed { background: #dbeafe; color: #1d4ed8; }
+.diff-status-binary { background: #f3e8ff; color: #6b21a8; }
+
+.diff-file-body {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.diff-file-body .diff-row > code {
+  min-width: 0;
+}
+
+.diff-binary {
+  padding: 18px 12px;
+  color: var(--text-secondary, #667085);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .diff-file-head {
+    gap: 6px;
+    padding-inline: 7px;
+  }
+
+  .diff-renamed {
+    display: none;
+  }
+}
