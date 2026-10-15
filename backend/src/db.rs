@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
-    // Remove legacy chat transcripts/activity payloads from earlier versions.
-    // New conversation content is owned exclusively by each Agent's native session.
-    sqlx::query("DELETE FROM messages").execute(pool).await?;
+    // Conversation transcripts are owned by Agent-native session files.
+    // The migration drops the obsolete messages table; keep only application and
+    // runtime coordination data in SQLite.
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
         .await?;
