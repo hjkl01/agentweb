@@ -116,7 +116,7 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
 }
 
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
-    let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
+    let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
     let base_path = default_workspace_root();
     if fs::create_dir_all(&base_path).await.is_err() {
         return Json(rows.iter().map(session_from_row).collect());
@@ -278,6 +278,39 @@ pub async fn get_session(
     Ok(Json(load_session(&s.db, &id).await?))
 }
 
+pub async fn create_pi_fork(
+    Path(id): Path<String>,
+    State(s): State<AppState>,
+) -> Result<Json<Session>, StatusCode> {
+    let source = load_session(&s.db, &id).await?;
+    if source.status == "running" || source.status == "missing" || source.native_session_id.is_none() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(&source.agent_id).fetch_optional(&s.db).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if kind.as_deref() != Some("pi") { return Err(StatusCode::BAD_REQUEST); }
+    let native_id = source.native_session_id.as_deref().ok_or(StatusCode::CONFLICT)?;
+    let workspace = source.workspace.clone();
+    let native_id_owned = native_id.to_owned();
+    let exists = tokio::task::spawn_blocking(move || {
+        crate::agents::pi_transcript::native_session_file_exists_from_workspace(
+            FsPath::new(&workspace), &native_id_owned,
+        )
+    }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !exists { return Err(StatusCode::CONFLICT); }
+
+    let new_id = Uuid::new_v4().to_string();
+    let title = format!("分支：{}", source.title.chars().take(70).collect::<String>());
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at,fork_from_native_session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(&new_id).bind(&source.agent_id).bind(&title).bind(&source.workspace)
+        .bind("idle").bind::<Option<String>>(None).bind(&source.model).bind(0i64)
+        .bind(&now).bind(&now).bind(native_id).execute(&s.db).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(load_session(&s.db, &new_id).await?))
+}
+
 pub async fn restart_missing_session(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -306,7 +339,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             // clean up its orphaned, non-running session record without ever
             // interrupting a running execution whose workspace is unavailable.
             let row = match sqlx::query(
-                "SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?",
+                "SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions WHERE id=?",
             )
             .bind(&id)
             .fetch_optional(&s.db)
