@@ -322,13 +322,17 @@ fn find_by_suffix(
                 const MAX_HEADER_BYTES: u64 = 64 * 1024;
                 let mut reader = std::io::BufReader::new(file).take(MAX_HEADER_BYTES);
                 let mut first_line = String::new();
-                if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
-                    || first_line.len() as u64 >= MAX_HEADER_BYTES
-                {
+                if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err() {
                     return Err(());
                 }
+                if first_line.len() as u64 >= MAX_HEADER_BYTES {
+                    // Ignore an oversized candidate and continue: another file
+                    // with the same suffix may still be the valid session.
+                    continue;
+                }
                 let Ok(header) = serde_json::from_str::<Value>(&first_line) else {
-                    return Err(());
+                    // A malformed duplicate filename is not authoritative.
+                    continue;
                 };
                 if header.get("type").and_then(Value::as_str) == Some("session")
                     && header.get("id").and_then(Value::as_str) == Some(native_session_id)
