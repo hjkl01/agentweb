@@ -16,6 +16,14 @@ export function useSessionActions({ setSessions }: Options) {
     },
     [setSessions],
   );
+  const createPiFork = useCallback(
+    async (sessionId: string) => {
+      const session = await api<Session>(`/sessions/${sessionId}/fork`, { method: "POST" });
+      setSessions((items) => [session, ...items]);
+      return session;
+    },
+    [setSessions],
+  );
   const restartMissingSession = useCallback(
     async (sessionId: string) => {
       const session = await api<Session>(`/sessions/${sessionId}/restart`, {
@@ -145,6 +153,7 @@ export function useSessionActions({ setSessions }: Options) {
   );
   return {
     createSession,
+    createPiFork,
     restartMissingSession,
     setModel,
     setAgent,
