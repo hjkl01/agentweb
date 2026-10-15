@@ -236,12 +236,19 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 // selected project and hide sibling projects from the Agent.
                 // The alias must be mounted before masking the original parent.
                 "--ro-bind",
-            ]).arg(&agent_home).args([
-                "/tmp/agentweb-mounts/home",
-                "--ro-bind",
-                "/data/runtimes",
-                "/tmp/agentweb-mounts/runtimes",
-                // Hide SQLite and other application data from the Agent.
+            ]).arg(&agent_home).args(["/tmp/agentweb-mounts/home"]);
+            let runtime_root = std::env::var_os("AGENTWEB_RUNTIME_DIR")
+                .map(std::path::PathBuf::from)
+                .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+                .filter(|path| path.is_dir())
+                .and_then(|path| path.canonicalize().ok());
+            if let Some(runtime_root) = &runtime_root {
+                sandbox.args(["--ro-bind"]).arg(runtime_root).args([
+                    "/tmp/agentweb-mounts/runtimes",
+                ]);
+            }
+            // Hide SQLite and other application data from the Agent.
+            sandbox.args([
                 "--tmpfs",
                 "/data",
                 "--dir",
@@ -251,11 +258,15 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "--ro-bind",
                 "/tmp/agentweb-mounts/home",
                 "/data/home",
-                "--ro-bind",
-                "/tmp/agentweb-mounts/runtimes",
-                "/data/runtimes",
-                "--bind",
             ]);
+            if runtime_root.is_some() {
+                sandbox.args([
+                    "--ro-bind",
+                    "/tmp/agentweb-mounts/runtimes",
+                    "/data/runtimes",
+                ]);
+            }
+            sandbox.args(["--bind"]);
             if workspace.starts_with("/workspaces")
                 && workspace != std::path::Path::new("/workspaces")
             {
