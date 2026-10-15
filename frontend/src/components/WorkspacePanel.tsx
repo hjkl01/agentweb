@@ -189,7 +189,7 @@ export function WorkspacePanel({
         </>
       )}
       {tab === "diff" && <DiffViewer diff={diff} />}
-      {selectedFile && (
+      {openTabs.length > 0 && (
         <div className="workspace-preview-area">
           <div className="preview-tabs" role="tablist" aria-label="Open files">
             {openTabs.map((path) => (
@@ -213,13 +213,19 @@ export function WorkspacePanel({
               </div>
             ))}
           </div>
-          <Preview
-            file={selectedFile}
-            line={selectedLine}
-            onClose={() => closeTab(selectedFile.path)}
-            maximized={maximized}
-            onToggleMaximize={() => setMaximized((value) => !value)}
-          />
+          {selectedFile?.path === activePath ? (
+            <Preview
+              file={selectedFile}
+              line={selectedLine}
+              onClose={() => closeTab(selectedFile.path)}
+              maximized={maximized}
+              onToggleMaximize={() => setMaximized((value) => !value)}
+            />
+          ) : (
+            <div className="preview-loading" role="status">
+              Loading {activePath}…
+            </div>
+          )}
         </div>
       )}
     </aside>
