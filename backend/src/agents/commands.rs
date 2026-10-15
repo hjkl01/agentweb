@@ -331,7 +331,6 @@ mod workspace_state_tests {
             working_directory: Some(workspace.to_string_lossy().into_owned()),
             native_session_id: None,
             fork_from_native_session_id: None,
-            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -381,7 +380,6 @@ mod workspace_state_tests {
             command: "pi".into(),
             working_directory: Some(workspace.to_string_lossy().into_owned()),
             native_session_id: Some("existing-native-session".into()),
-            fork_from_native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
