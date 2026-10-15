@@ -75,11 +75,42 @@ fn embedded_content_type(path: &str) -> &'static str {
 async fn main() -> Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        format!("sqlite://{}", home.join(".config/agentweb/agentweb.db").display())
+    let configured_db_url = std::env::var("DATABASE_URL").ok();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let default_db_path = home.join(".config/agentweb/agentweb.db");
+
+    // Migrate the old make-start default once, preserving SQLite WAL contents.
+    // Explicit DATABASE_URL always wins and is never migrated or overwritten.
+    let legacy_db_path = PathBuf::from("./data/agentweb.db");
+    if configured_db_url.is_none() && !default_db_path.exists() && legacy_db_path.is_file() {
+        if let Some(parent) = default_db_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let legacy_options = SqliteConnectOptions::new()
+            .filename(&legacy_db_path)
+            .create_if_missing(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let legacy_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(legacy_options)
+            .await?;
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&legacy_pool)
+            .await?;
+        legacy_pool.close().await;
+        tokio::fs::copy(&legacy_db_path, &default_db_path).await?;
+        tracing::info!(
+            source = %legacy_db_path.display(),
+            destination = %default_db_path.display(),
+            "Migrated SQLite database to the user config directory"
+        );
+    }
+
+    let db_url = configured_db_url.unwrap_or_else(|| {
+        format!("sqlite://{}", default_db_path.display())
     });
     if let Some(path) = db_url.strip_prefix("sqlite://") {
         let path = path.split('?').next().unwrap_or(path);
