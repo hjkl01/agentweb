@@ -377,7 +377,7 @@ pub async fn create_pi_fork(
             return Err(StatusCode::CONFLICT);
         }
     }
-    let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
+    let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=? AND s.native_session_id=? AND r.status!='running' AND r.worker_id IS NULL")
         .bind(&id).bind(native_id).fetch_one(&s.db).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if source_still_available != 1 {
@@ -555,7 +555,7 @@ pub async fn set_session_model(
         .map(|m| m.trim().to_owned())
         .filter(|m| !m.is_empty());
     let result =
-        sqlx::query("UPDATE sessions SET model=?,updated_at=? WHERE id=? AND status!='running'")
+        sqlx::query("UPDATE sessions SET model=?,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND r.status!='running')")
             .bind(&model)
             .bind(Utc::now().to_rfc3339())
             .bind(&id)
@@ -587,7 +587,7 @@ pub async fn set_session_agent(
     crate::api::runtime::build_agent_config(&s.db, agent_id)
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let result=sqlx::query("UPDATE sessions SET agent_id=?,model=NULL,native_session_id=NULL,fork_from_native_session_id=NULL,updated_at=? WHERE id=? AND status!='running'").bind(agent_id).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result=sqlx::query("UPDATE sessions SET agent_id=?,model=NULL,native_session_id=NULL,fork_from_native_session_id=NULL,updated_at=? WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND r.status!='running')").bind(agent_id).bind(Utc::now().to_rfc3339()).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() != 1 {
         return Err(StatusCode::CONFLICT);
     }
