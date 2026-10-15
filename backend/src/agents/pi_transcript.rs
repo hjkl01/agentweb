@@ -530,6 +530,61 @@ mod tests {
     }
 
     #[test]
+    fn detects_when_native_session_file_is_deleted() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!(
+            "pi-transcript-missing-{}-{unique}",
+            std::process::id()
+        ));
+        let session_dir = workspace.join(".agentweb-state").join("pi-sessions").join("project");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let transcript = session_dir.join("2026-01-01T00-00-00-000Z_deleted-id.jsonl");
+        std::fs::write(&transcript, r#"{"type":"session","id":"deleted-id"}"#).unwrap();
+
+        assert!(native_session_file_exists_from_workspace(&workspace, "deleted-id"));
+        std::fs::remove_file(&transcript).unwrap();
+        assert!(!native_session_file_exists_from_workspace(&workspace, "deleted-id"));
+
+        std::fs::remove_dir_all(workspace).ok();
+    }
+
+    #[test]
+    fn rejects_symlinked_session_directory_for_existence_check() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let workspace = std::env::temp_dir().join(format!(
+                "pi-transcript-symlink-{}-{unique}",
+                std::process::id()
+            ));
+            let outside = std::env::temp_dir().join(format!(
+                "pi-transcript-outside-{}-{unique}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(workspace.join(".agentweb-state")).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(
+                outside.join("2026-01-01T00-00-00-000Z_escape-id.jsonl"),
+                r#"{"type":"session","id":"escape-id"}"#,
+            )
+            .unwrap();
+            symlink(&outside, workspace.join(".agentweb-state").join("pi-sessions")).unwrap();
+
+            assert!(!native_session_file_exists_from_workspace(&workspace, "escape-id"));
+
+            std::fs::remove_dir_all(workspace).ok();
+            std::fs::remove_dir_all(outside).ok();
+        }
+    }
+
+    #[test]
     fn reads_only_user_and_assistant_messages() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
