@@ -683,6 +683,11 @@ mod tests {
                 .fetch_one(&db)
                 .await
                 .unwrap();
+        let (runtime_status, runtime_owner): (String, Option<String>) =
+            sqlx::query_as("SELECT status,worker_id FROM session_runtime WHERE session_id='s1'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
 
         db.close().await;
         std::fs::remove_dir_all(&workspace).unwrap();
@@ -692,5 +697,7 @@ mod tests {
         );
         assert_eq!(status, "running");
         assert_eq!(owner.as_deref(), Some("worker-new"));
+        assert_eq!(runtime_status, "running");
+        assert_eq!(runtime_owner.as_deref(), Some("worker-new"));
     }
 }
