@@ -592,6 +592,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
         assert!(std::path::Path::new("/bin/echo").is_file());
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
@@ -671,6 +672,9 @@ mod tests {
             .execute(&db)
             .await
             .unwrap();
+
+        sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-new',?,?)")
+            .bind(&lease).bind(now.to_rfc3339()).execute(&db).await.unwrap();
 
         let finalized = finish_session(&db, "s1", "worker-old", "idle").await;
         let (status, owner): (String, Option<String>) =
