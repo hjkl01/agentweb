@@ -137,7 +137,7 @@ export function ChatPanel({
               messages={messages}
               activity={activity}
             />
-            {currentAgent?.id === "pi" && current?.native_session_id && !running && current.status !== "missing" && (
+            {currentAgent?.kind === "pi" && current?.native_session_id && !running && current.status !== "missing" && (
               <button type="button" className="message-action" onClick={onForkSession} title="从当前 Pi 会话创建独立分支">
                 <GitBranch size={14} /> <span>创建分支</span>
               </button>
