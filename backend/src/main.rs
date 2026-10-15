@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
         // Match an exact worker prefix instead of LIKE, where '_' and '%' in a
         // worker ID would otherwise be interpreted as wildcard characters.
         let owner_prefix = format!("{}:", shutdown_worker);
-        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND substr(worker_id,1,length(?))=?")
+        let rows = sqlx::query("SELECT s.id,s.agent_id,r.worker_id FROM session_runtime r JOIN sessions s ON s.id=r.session_id WHERE r.status='running' AND substr(r.worker_id,1,length(?))=?")
             .bind(&owner_prefix)
             .bind(&owner_prefix)
             .fetch_all(&shutdown_db)
@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
             }
 
             let now = Utc::now().to_rfc3339();
-            match sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            match sqlx::query("UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(&now)
                 .bind(&id)
                 .bind(&execution_id)
