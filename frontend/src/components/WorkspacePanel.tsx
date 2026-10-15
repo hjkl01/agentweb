@@ -181,6 +181,7 @@ export function WorkspacePanel({
           </div>
           <FileTree
             key={current?.id}
+            sessionId={current?.id}
             files={files}
             filter={fileFilter}
             onOpenFile={(path) => onOpenFile(path)}
