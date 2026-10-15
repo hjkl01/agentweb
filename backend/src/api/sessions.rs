@@ -154,6 +154,16 @@ pub async fn list_sessions(
         .execute(&s.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        // Explicitly provision runtime state for imported sessions. This is
+        // idempotent across concurrent discovery workers and no longer relies
+        // on the sessions_runtime_insert compatibility trigger.
+        sqlx::query(
+            "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) SELECT id,'idle',NULL,NULL,updated_at FROM sessions WHERE agent_id='pi' AND native_session_id=?",
+        )
+        .bind(&native.id)
+        .execute(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     let rows=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id ORDER BY s.is_pinned DESC, s.updated_at DESC")
@@ -267,7 +277,12 @@ pub async fn create_session(
         .title
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| "New Chat".into());
-    sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&id).bind(&agent_id).bind(&title).bind(&workspace).bind("idle").bind::<Option<String>>(None).bind(&model).bind(0i64).bind(&now).bind(&now).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&id).bind(&agent_id).bind(&title).bind(&workspace).bind("idle").bind::<Option<String>>(None).bind(&model).bind(0i64).bind(&now).bind(&now).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(?,'idle',NULL,NULL,?)")
+        .bind(&id).bind(&now).execute(&mut *tx).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(Session {
         id,
         agent_id,
@@ -390,11 +405,16 @@ pub async fn create_pi_fork(
         source.title.chars().take(70).collect::<String>()
     );
     let now = Utc::now().to_rfc3339();
+    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at,fork_from_native_session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&new_id).bind(&source.agent_id).bind(&title).bind(&source.workspace)
         .bind("idle").bind::<Option<String>>(None).bind(&source.model).bind(0i64)
-        .bind(&now).bind(&now).bind(native_id).execute(&s.db).await
+        .bind(&now).bind(&now).bind(native_id).execute(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(?,'idle',NULL,NULL,?)")
+        .bind(&new_id).bind(&now).execute(&mut *tx).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(load_session(&s.db, &new_id).await?))
 }
 
