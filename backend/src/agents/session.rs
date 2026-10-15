@@ -599,6 +599,7 @@ mod tests {
         sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)").bind(now.to_rfc3339()).bind(now.to_rfc3339()).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO runtime_settings(key,value) VALUES('agent_paths','{\"echo\":\"/bin/echo\"}')").execute(&db).await.unwrap();
         sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,created_at,updated_at,worker_id,lease_until) VALUES('s1','echo','t',?,'running',?,?,'w1',?)").bind(workspace.to_string_lossy().into_owned()).bind(now.to_rfc3339()).bind(now.to_rfc3339()).bind(&lease).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES('s1','running','w1',?,?)").bind(&lease).bind(now.to_rfc3339()).execute(&db).await.unwrap();
         let session = Session {
             id: "s1".into(),
             agent_id: "echo".into(),
