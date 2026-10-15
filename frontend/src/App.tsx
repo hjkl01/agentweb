@@ -30,13 +30,8 @@ export function App({ sessionId, navigate }: Props) {
     contentVersion: `${c.session.messages.length}:${c.session.stream.length}:${activityVersion}:${sessionId || ""}`,
   });
   const openNewChat = () => {
-    if (
-      c.runtime.defaultAgentAvailable &&
-      c.runtime.defaultAgentId &&
-      c.runtime.defaultModel
-    )
-      c.createChat();
-    else c.setNewChatOpen(true);
+    // Workspace selection is mandatory even when default Agent/model settings exist.
+    c.setNewChatOpen(true);
   };
   return (
     <div
@@ -122,7 +117,7 @@ export function App({ sessionId, navigate }: Props) {
         onRefresh={c.workspace.refresh}
         onOpenFile={c.openWorkspaceFile}
         onCloseFile={() => {
-          c.workspace.setSelectedFile(undefined);
+          c.workspace.closeFile();
           c.setFocusLine(undefined);
         }}
       />

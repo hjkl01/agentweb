@@ -15,6 +15,10 @@ export function useSession(active?: string) {
   const [error, setError] = useState<string>();
   const refreshRequestId = useRef(0);
   const activeRefreshRequestId = useRef(0);
+  // Keep async callbacks from a previous session from mutating the newly active
+  // session's transcript after navigation.
+  const activeSessionRef = useRef(active);
+  activeSessionRef.current = active;
   // Incremented only when an authoritative session-detail response is accepted.
   // This prevents an older /sessions list response from overwriting that status.
   const acceptedDetailRevision = useRef(new Map<string, number>());
@@ -81,7 +85,7 @@ export function useSession(active?: string) {
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
       const content = message.trim();
-      if (!content) return;
+      if (!content || activeSessionRef.current !== sessionId) return;
       setMessages((items) => [
         ...items,
         { id: crypto.randomUUID(), role: "user", content },
@@ -91,14 +95,18 @@ export function useSession(active?: string) {
       try {
         await actions.sendMessage(sessionId, content);
       } catch (error) {
-        setMessages((items) => [
-          ...items,
-          {
-            id: crypto.randomUUID(),
-            role: "error",
-            content: error instanceof Error ? error.message : String(error),
-          },
-        ]);
+        // The request may fail after the user has navigated to another session.
+        // Do not append the old session's error to the new session's transcript.
+        if (activeSessionRef.current === sessionId) {
+          setMessages((items) => [
+            ...items,
+            {
+              id: crypto.randomUUID(),
+              role: "error",
+              content: error instanceof Error ? error.message : String(error),
+            },
+          ]);
+        }
         throw error;
       }
     },

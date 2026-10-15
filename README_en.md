@@ -129,6 +129,18 @@ volumes:
 
 The target is a simple personal/self-hosted deployment. The project does not need distributed workers or service orchestration in the first version.
 
+### Workspace execution sandbox
+
+On Linux, Agent processes and the browser terminal are launched through `bubblewrap` (`bwrap`). The root filesystem is mounted read-only, the selected session workspace is writable, and `/tmp` is isolated. Pi's native session state is written to `.agentweb-state/pi-sessions/` inside the workspace, without granting write access to the host HOME. Native state-directory compatibility for the other Agents still requires individual verification. If `bwrap` or the required namespace permissions are unavailable, execution fails closed instead of falling back to an unrestricted process. Workspace sandboxing is currently supported only on Linux; Agent and terminal execution is rejected on macOS and Windows.
+
+Install the dependency on Arch Linux with:
+
+```bash
+sudo pacman -S bubblewrap
+```
+
+This filesystem sandbox does not disable network access and should not be treated as a complete container security boundary.
+
 The Agent and Web server live in the same container so that an Agent can work directly against configured workspace paths.
 
 ## 5. Agent Installation Model

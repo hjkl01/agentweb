@@ -34,6 +34,7 @@ export type Session = {
   native_session_id?: string;
   model?: string;
   is_pinned: boolean;
+  workspace_available?: boolean;
 };
 export type ChatMessage = {
   id: string;
@@ -65,6 +66,7 @@ export type FileItem = {
 export type WorkspaceFile = {
   path: string;
   content: string;
+  error?: string;
   size?: number;
   binary?: boolean;
   truncated?: boolean;

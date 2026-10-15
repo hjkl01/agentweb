@@ -14,7 +14,7 @@ export function useAppController(
   const runtime = useAgentRuntime();
   const [input, setInput] = useState("");
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
-  const queueSendingRef = useRef(false);
+  const queueSendingRef = useRef<string | undefined>(undefined);
   const queueSessionRef = useRef(sessionId);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -49,9 +49,9 @@ export function useAppController(
       window.location.href = "/";
     }
   };
-  const createChat = async (agentId?: string, model?: string) => {
+  const createChat = async (agentId: string | undefined, model: string | undefined, workspace: string) => {
     try {
-      const created = await session.createSession(agentId, model);
+      const created = await session.createSession(agentId, model, workspace);
       navigate(sessionPath(created.id));
       setNewChatOpen(false);
       setCatalogOpen(false);
@@ -60,7 +60,7 @@ export function useAppController(
     }
   };
   useEffect(() => {
-    queueSessionRef.current = sessionId;
+    queueSessionRef.current = undefined;
     setQueuedMessages([]);
   }, [sessionId]);
   const send = useCallback(async () => {
@@ -83,14 +83,14 @@ export function useAppController(
       queueSessionRef.current !== sessionId ||
       current?.status === "running" ||
       queuedMessages.length === 0 ||
-      queueSendingRef.current
+      queueSendingRef.current === sessionId
     ) return;
     const [nextMessage, ...remaining] = queuedMessages;
-    queueSendingRef.current = true;
+    queueSendingRef.current = sessionId;
     setQueuedMessages(remaining);
     session.sendChat(sessionId, nextMessage)
       .catch(() => {})
-      .finally(() => { queueSendingRef.current = false; });
+      .finally(() => { if (queueSendingRef.current === sessionId) queueSendingRef.current = undefined; });
   }, [sessionId, current?.status, queuedMessages, session.sendChat]);
   const renameSession = async (id: string) => {
     const target = session.sessions.find((item) => item.id === id);

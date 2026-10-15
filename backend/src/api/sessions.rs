@@ -21,6 +21,7 @@ pub struct Session {
     pub native_session_id: Option<String>,
     pub model: Option<String>,
     pub is_pinned: bool,
+    pub workspace_available: bool,
 }
 fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
     Session {
@@ -32,6 +33,7 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
         native_session_id: row.get(5),
         model: row.get(6),
         is_pinned: row.get::<i64, _>(7) != 0,
+        workspace_available: false,
     }
 }
 fn default_workspace_root() -> PathBuf {
@@ -51,32 +53,90 @@ fn default_workspace_root() -> PathBuf {
 pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let mut session = session_from_row(&row);
+
+    // Persisted workspace paths are not trusted: a stale or edited database row
+    // must not cause an Agent or terminal to bind an arbitrary host directory.
     let base_path = default_workspace_root();
-    if let (Ok(base), Ok(workspace)) = (
-        fs::canonicalize(&base_path).await,
-        fs::canonicalize(&session.workspace).await,
-    ) {
-        let legacy = base.join(id);
-        if workspace == legacy {
-            session.workspace = base.to_string_lossy().into_owned();
-            let _ = sqlx::query("UPDATE sessions SET workspace=?,updated_at=? WHERE id=?")
-                .bind(&session.workspace)
-                .bind(Utc::now().to_rfc3339())
-                .bind(id)
-                .execute(db)
-                .await;
-            if let Ok(mut entries) = fs::read_dir(&legacy).await {
-                if entries.next_entry().await.ok().flatten().is_none() {
-                    let _ = fs::remove_dir(&legacy).await;
-                }
+    fs::create_dir_all(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace = fs::canonicalize(&session.workspace)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::FORBIDDEN
             }
-        }
+        })?;
+    if !workspace.is_dir() || !workspace.starts_with(&base) || workspace == base {
+        return Err(StatusCode::FORBIDDEN);
     }
+    session.workspace = workspace.to_string_lossy().into_owned();
+    session.workspace_available = true;
     Ok(session)
 }
+pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
+    let base_path = default_workspace_root();
+    fs::create_dir_all(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(&base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut entries = fs::read_dir(&base)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut workspaces = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        let path = entry.path();
+        match fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_dir() => {}
+            _ => continue,
+        }
+        let canonical = match fs::canonicalize(&path).await {
+            Ok(path) if path.starts_with(&base) => path,
+            _ => continue,
+        };
+        if let Ok(relative) = canonical.strip_prefix(&base) {
+            workspaces.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    workspaces.sort();
+    Ok(Json(workspaces))
+}
+
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
-    Json(rows.iter().map(session_from_row).collect())
+    let base_path = default_workspace_root();
+    if fs::create_dir_all(&base_path).await.is_err() {
+        return Json(rows.iter().map(session_from_row).collect());
+    }
+    let base = match fs::canonicalize(&base_path).await {
+        Ok(path) => path,
+        Err(_) => return Json(rows.iter().map(session_from_row).collect()),
+    };
+    let mut sessions = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut session = session_from_row(row);
+        if let Ok(workspace) = fs::canonicalize(&session.workspace).await {
+            session.workspace_available = workspace.is_dir()
+                && workspace.starts_with(&base)
+                && workspace != base;
+            if session.workspace_available {
+                session.workspace = workspace.to_string_lossy().into_owned();
+            }
+        }
+        sessions.push(session);
+    }
+    Json(sessions)
 }
 #[derive(Deserialize)]
 pub struct CreateSession {
@@ -86,33 +146,56 @@ pub struct CreateSession {
     pub model: Option<String>,
 }
 async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode> {
-    let base_path = default_workspace_root();
-    fs::create_dir_all(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base = fs::canonicalize(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let name = requested.unwrap_or("").trim();
+    resolve_workspace_under(&default_workspace_root(), name).await
+}
+
+async fn resolve_workspace_under(base_path: &FsPath, name: &str) -> Result<String, StatusCode> {
+    fs::create_dir_all(base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = fs::canonicalize(base_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if name.is_empty() || name == "." {
-        return Ok(base.to_string_lossy().into_owned());
-    }
-    let path = FsPath::new(name);
-    if path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let workspace = base.join(path);
-    fs::create_dir_all(&workspace)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let canonical = fs::canonicalize(&workspace)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !canonical.starts_with(&base) {
-        return Err(StatusCode::FORBIDDEN);
+    let path = FsPath::new(name);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            !matches!(component, Component::Normal(_))
+        })
+    {
+        return Err(StatusCode::BAD_REQUEST);
     }
-    Ok(canonical.to_string_lossy().into_owned())
+
+    // Resolve/create one component at a time. create_dir_all on an unchecked
+    // nested path could follow an existing symlink and create directories
+    // outside the configured workspace root before the final check.
+    let mut current = base.clone();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::metadata(&current).await {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(StatusCode::BAD_REQUEST),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }
+            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        }
+        let canonical = fs::canonicalize(&current)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !canonical.starts_with(&base) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        current = canonical;
+    }
+    Ok(current.to_string_lossy().into_owned())
 }
+
 pub async fn create_session(
     State(s): State<AppState>,
     Json(v): Json<CreateSession>,
@@ -150,6 +233,7 @@ pub async fn create_session(
         native_session_id: None,
         model,
         is_pinned: false,
+        workspace_available: true,
     }))
 }
 #[derive(Deserialize)]
@@ -213,22 +297,107 @@ pub async fn restart_missing_session(
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
     let session = match load_session(&s.db, &id).await {
         Ok(v) => v,
+        Err(StatusCode::NOT_FOUND) | Err(StatusCode::FORBIDDEN) => {
+            // A project directory may have been removed manually, or an old
+            // database row may point outside the permitted workspace root. Let users
+            // clean up its orphaned, non-running session record without ever
+            // interrupting a running execution whose workspace is unavailable.
+            let row = match sqlx::query(
+                "SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned FROM sessions WHERE id=?",
+            )
+            .bind(&id)
+            .fetch_optional(&s.db)
+            .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => return StatusCode::NOT_FOUND,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            let orphan = session_from_row(&row);
+            let base = fs::canonicalize(default_workspace_root()).await;
+            let workspace = fs::canonicalize(&orphan.workspace).await;
+            let workspace_is_valid = match (base, workspace) {
+                (Ok(base), Ok(workspace)) => {
+                    workspace.is_dir() && workspace.starts_with(&base) && workspace != base
+                }
+                _ => false,
+            };
+            if orphan.status == "running" || workspace_is_valid {
+                return StatusCode::NOT_FOUND;
+            }
+            let result = sqlx::query("DELETE FROM sessions WHERE id=? AND status!='running'")
+                .bind(&id)
+                .execute(&s.db)
+                .await;
+            return match result {
+                Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT,
+                Ok(_) => StatusCode::CONFLICT,
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+        }
         Err(e) => return e,
     };
     if session.status == "running" {
-        // Keep the session record if the agent process could not be stopped.
-        // Deleting it here would hide a potentially still-running child process.
-        if s.agents.interrupt(&id).await.is_err() {
+        // Never stop a live execution when deletion will be rejected anyway.
+        // Only expired leases may be cleaned up by this endpoint.
+        let execution: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
+            "SELECT worker_id,lease_until FROM sessions WHERE id=? AND status='running'",
+        )
+        .bind(&id)
+        .fetch_optional(&s.db)
+        .await
+        {
+            Ok(value) => value,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let Some((execution_id, lease_until)) = execution else {
+            return StatusCode::CONFLICT;
+        };
+        match lease_until.as_deref() {
+            Some(lease) => match chrono::DateTime::parse_from_rfc3339(lease) {
+                Ok(lease) if lease.with_timezone(&Utc) >= Utc::now() => {
+                    return StatusCode::CONFLICT;
+                }
+                // Treat malformed lease timestamps conservatively: do not stop
+                // or delete a possibly live execution based on invalid data.
+                Err(_) => return StatusCode::CONFLICT,
+                _ => {}
+            },
+            None => {}
+        }
+        let execution_id = execution_id;
+        let Some(execution_id) = execution_id else {
+            return StatusCode::CONFLICT;
+        };
+        let agent_kind: String = match sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+            .bind(&session.agent_id)
+            .fetch_optional(&s.db)
+            .await
+        {
+            Ok(value) => value.unwrap_or_else(|| session.agent_id.clone()),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let adapter = s.agents.adapter(&agent_kind).await;
+        if adapter.interrupt(&id, &execution_id).await.is_err() {
+            // Keep the session record if the agent process could not be stopped.
             return StatusCode::BAD_GATEWAY;
         }
     }
-    match sqlx::query("DELETE FROM sessions WHERE id=?")
+    // A send request may claim the session after the initial read/interrupt.
+    // Keep live leases, but allow deleting a running record whose lease expired
+    // (the owning worker's monitor will observe the missing row and interrupt).
+    let now = Utc::now().to_rfc3339();
+    match sqlx::query("DELETE FROM sessions WHERE id=? AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&id)
+        .bind(&now)
         .execute(&s.db)
         .await
     {
         Ok(r) if r.rows_affected() == 1 => StatusCode::NO_CONTENT,
-        Ok(_) => StatusCode::NOT_FOUND,
+        Ok(_) => match load_session(&s.db, &id).await {
+            Ok(_) => StatusCode::CONFLICT,
+            Err(status) => status,
+        },
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -284,4 +453,56 @@ pub async fn set_session_agent(
         return Err(StatusCode::CONFLICT);
     }
     Ok(Json(load_session(&s.db, &id).await?))
+}
+
+
+#[cfg(test)]
+mod workspace_path_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("agentweb-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn rejects_parent_and_absolute_workspace_paths() {
+        let root = temp_root("workspace-path");
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            resolve_workspace_under(&root, "../outside").await.unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            resolve_workspace_under(&root, root.join("absolute").to_str().unwrap())
+                .await
+                .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_symlink_escape_before_creating_outside_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("workspace-root");
+        let outside = temp_root("workspace-outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let result = resolve_workspace_under(&root, "escape/should-not-exist").await;
+        assert_eq!(result.unwrap_err(), StatusCode::FORBIDDEN);
+        assert!(
+            !outside.join("should-not-exist").exists(),
+            "a rejected symlink path must not create anything outside the workspace root"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
 }

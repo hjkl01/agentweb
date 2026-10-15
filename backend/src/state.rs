@@ -19,11 +19,13 @@ impl AppState {
     }
 
     pub fn new(db: SqlitePool) -> Self {
+        let worker_id = Uuid::new_v4().to_string();
+        let events = EventBus::new(db.clone()).with_relay_from_env();
         Self {
-            events: EventBus::new(db.clone()),
+            events,
             db,
             agents: Arc::new(AgentManager::new()),
-            worker_id: Uuid::new_v4().to_string(),
+            worker_id,
         }
     }
 }

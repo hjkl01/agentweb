@@ -30,6 +30,7 @@ pub struct ProcessAdapter {
 // leaving a stale session entry behind.
 struct ProcessRunGuard {
     session_id: String,
+    execution_id: String,
     process_id: Option<u32>,
     child: Arc<Mutex<Child>>,
     processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
@@ -40,12 +41,13 @@ struct ProcessRunGuard {
 impl ProcessRunGuard {
     fn new(
         session_id: String,
+        execution_id: String,
         process_id: Option<u32>,
         child: Arc<Mutex<Child>>,
         processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
         interrupted: Arc<Mutex<HashSet<String>>>,
     ) -> Self {
-        Self { session_id, process_id, child, processes, interrupted, armed: true }
+        Self { session_id, execution_id, process_id, child, processes, interrupted, armed: true }
     }
 
     fn disarm(&mut self) {
@@ -60,6 +62,7 @@ impl Drop for ProcessRunGuard {
         }
 
         let session_id = self.session_id.clone();
+        let execution_id = self.execution_id.clone();
         let process_id = self.process_id;
         let child = self.child.clone();
         let processes = self.processes.clone();
@@ -91,11 +94,11 @@ impl Drop for ProcessRunGuard {
 
                 let mut process_map = processes.lock().await;
                 if process_map
-                    .get(&session_id)
+                    .get(&execution_id)
                     .is_some_and(|registered| Arc::ptr_eq(registered, &child))
                 {
-                    process_map.remove(&session_id);
-                    interrupted.lock().await.remove(&session_id);
+                    process_map.remove(&execution_id);
+                    interrupted.lock().await.remove(&execution_id);
                 }
             });
         } else {
@@ -335,31 +338,52 @@ impl ProcessAdapter {
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
+        self.run_for_execution(kind, config, session_id, session_id, message, events).await
+    }
+
+    pub async fn run_for_execution(
+        &self,
+        kind: ProcessKind,
+        config: &AgentConfig,
+        session_id: &str,
+        execution_id: &str,
+        message: &str,
+        events: &EventBus,
+    ) -> Result<AgentRunResult> {
         // Keep the process-map lock until the newly spawned child is registered.
         // Otherwise two concurrent runs for the same session can both pass the
         // contains_key check and spawn duplicate agent processes.
         let mut processes = self.processes.lock().await;
-        if processes.contains_key(session_id) {
+        if processes.contains_key(execution_id) {
             return Err(anyhow!("session already has a running agent process"));
         }
         let command = commands::build(kind, config, message)?;
         let mut command = Self::wrap_process_group(command);
         command.kill_on_drop(true);
-        let mut child_process = command.spawn()?;
+        let mut child_process = command.spawn().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow!(
+                    "failed to start agent process: sandbox launch was denied by the OS ({error}); check bubblewrap namespace support and the container's seccomp/AppArmor policy"
+                )
+            } else {
+                anyhow!("failed to spawn agent process: {error}")
+            }
+        })?;
         let process_id = child_process.id();
         let stdout = child_process.stdout.take();
         let stderr = child_process.stderr.take();
         let child = Arc::new(Mutex::new(child_process));
-        processes.insert(session_id.to_owned(), child.clone());
+        processes.insert(execution_id.to_owned(), child.clone());
         drop(processes);
         let mut run_guard = ProcessRunGuard::new(
             session_id.to_owned(),
+            execution_id.to_owned(),
             process_id,
             child.clone(),
             self.processes.clone(),
             self.interrupted.clone(),
         );
-        if self.interrupted.lock().await.contains(session_id) {
+        if self.interrupted.lock().await.contains(execution_id) {
             // Do not return early here: stdout/stderr readers and the normal
             // process-monitor cleanup still need to run even if the first stop
             // attempt fails. Keeping the child in the process map also allows a
@@ -517,8 +541,8 @@ impl ProcessAdapter {
         let was_interrupted = {
             let mut processes = self.processes.lock().await;
             let mut interrupted = self.interrupted.lock().await;
-            processes.remove(session_id);
-            interrupted.remove(session_id)
+            processes.remove(execution_id);
+            interrupted.remove(execution_id)
         };
         run_guard.disarm();
         let result = result.lock().await.clone();
@@ -531,12 +555,10 @@ impl ProcessAdapter {
             return Err(AgentRunError::interrupted(result.native_session_id.clone()).into());
         }
         if let Err(error) = output_result {
-            events
-                .publish(AgentEvent::Error {
-                    session_id: session_id.into(),
-                    message: error.to_string(),
-                })
-                .await;
+            // The session lifecycle layer publishes the user-facing error after
+            // it has finalized the session state. Publishing here as well caused
+            // duplicate errors and could surface a stale failure after ownership
+            // of the session had moved to another worker.
             return Err(AgentRunError::failed(
                 error.to_string(),
                 result.native_session_id.clone(),
@@ -558,12 +580,8 @@ impl ProcessAdapter {
             } else {
                 format!("agent exited with status {status}")
             };
-            events
-                .publish(AgentEvent::Error {
-                    session_id: session_id.into(),
-                    message: message.clone(),
-                })
-                .await;
+            // run_session publishes the error after persisting the final
+            // status, so this layer must not emit a duplicate or stale error.
             let error = if missing_session {
                 AgentRunError::missing_session(message, result.native_session_id.clone())
             } else {
@@ -596,16 +614,36 @@ impl ProcessAdapter {
         command
     }
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
+        self.interrupt_execution(session_id, session_id).await
+    }
+
+    pub async fn interrupt_execution(&self, session_id: &str, execution_id: &str) -> Result<()> {
         let child = {
             let processes = self.processes.lock().await;
-            let child = processes.get(session_id).cloned();
-            if child.is_some() {
-                self.interrupted.lock().await.insert(session_id.to_owned());
-            }
+            let child = processes.get(execution_id).cloned();
+            // Record cancellation even before spawn registration. run_for_execution
+            // checks this marker immediately after registering the child, closing
+            // the stop-vs-start race for this specific execution token.
+            self.interrupted.lock().await.insert(execution_id.to_owned());
             child
         };
         if let Some(child) = child {
+            tracing::info!(session_id = %session_id, execution_id = %execution_id, "interrupting agent execution");
             Self::stop_child(&child).await?;
+        } else {
+            // A stop can race ahead of process registration. Keep the marker
+            // long enough for that run to observe it, but do not retain it
+            // forever if the claimed execution never starts.
+            let processes = self.processes.clone();
+            let interrupted = self.interrupted.clone();
+            let execution_id = execution_id.to_owned();
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(60)).await;
+                let processes = processes.lock().await;
+                if !processes.contains_key(&execution_id) {
+                    interrupted.lock().await.remove(&execution_id);
+                }
+            });
         }
         Ok(())
     }
@@ -617,14 +655,15 @@ impl AgentAdapter for ProcessAdapter {
         &self,
         config: &AgentConfig,
         session_id: &str,
+        execution_id: &str,
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
-        self.run(ProcessKind::Generic, config, session_id, message, events)
+        self.run_for_execution(ProcessKind::Generic, config, session_id, execution_id, message, events)
             .await
     }
-    async fn interrupt(&self, session_id: &str) -> Result<()> {
-        self.interrupt_process(session_id).await
+    async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
+        self.interrupt_execution(session_id, execution_id).await
     }
 }
 pub use super::session::run_session;
@@ -959,6 +998,182 @@ mod tests {
         assert!(
             next_result.is_ok(),
             "a subsequent run should not inherit the previous run's interruption"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupting_stale_execution_does_not_stop_new_execution_for_same_session() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{sleep, timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let events = EventBus::new(db);
+        let adapter = Arc::new(ProcessAdapter::new());
+        let config = super::super::adapter::AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        let old_adapter = adapter.clone();
+        let old_config = config.clone();
+        let old_events = events.clone();
+        let old_run = tokio::spawn(async move {
+            old_adapter
+                .run_for_execution(
+                    ProcessKind::Generic,
+                    &old_config,
+                    "shared-session",
+                    "execution-old",
+                    "30",
+                    &old_events,
+                )
+                .await
+        });
+        let new_adapter = adapter.clone();
+        let new_config = config.clone();
+        let new_events = events.clone();
+        let new_run = tokio::spawn(async move {
+            new_adapter
+                .run_for_execution(
+                    ProcessKind::Generic,
+                    &new_config,
+                    "shared-session",
+                    "execution-new",
+                    "30",
+                    &new_events,
+                )
+                .await
+        });
+
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let processes = adapter.processes.lock().await;
+                if processes.contains_key("execution-old")
+                    && processes.contains_key("execution-new")
+                {
+                    break;
+                }
+                drop(processes);
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both execution-specific children should register");
+
+        adapter
+            .interrupt_execution("shared-session", "execution-old")
+            .await
+            .expect("the stale execution should be interruptible");
+
+        let old_result = timeout(Duration::from_secs(3), old_run)
+            .await
+            .expect("the old execution should stop promptly")
+            .expect("the old execution task should not panic");
+        assert!(old_result.is_err(), "the old execution should report interruption");
+
+        let new_child = adapter
+            .processes
+            .lock()
+            .await
+            .get("execution-new")
+            .cloned()
+            .expect("the new execution must remain registered");
+        assert!(
+            new_child.lock().await.try_wait().unwrap().is_none(),
+            "interrupting the old token must not stop the new execution"
+        );
+
+        adapter
+            .interrupt_execution("shared-session", "execution-new")
+            .await
+            .expect("the new execution should be independently interruptible");
+        let new_result = timeout(Duration::from_secs(3), new_run)
+            .await
+            .expect("the new execution should stop promptly")
+            .expect("the new execution task should not panic");
+        assert!(new_result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupt_before_process_registration_is_applied_to_that_execution() {
+        use super::super::adapter::AgentConfig;
+        use super::super::commands::ProcessKind;
+        use crate::events::EventBus;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use tokio::time::{timeout, Duration};
+
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite should be available");
+        sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT,worker_id TEXT,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL)")
+            .execute(&db)
+            .await
+            .unwrap();
+        let events = EventBus::new(db);
+        let adapter = ProcessAdapter::new();
+        let config = AgentConfig {
+            id: "test".into(),
+            command: "sleep".into(),
+            working_directory: None,
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+
+        adapter
+            .interrupt_execution("shared-session", "execution-old")
+            .await
+            .expect("pre-start interruption should be accepted");
+
+        let result = timeout(
+            Duration::from_secs(3),
+            adapter.run_for_execution(
+                ProcessKind::Generic,
+                &config,
+                "shared-session",
+                "execution-old",
+                "30",
+                &events,
+            ),
+        )
+        .await
+        .expect("the pre-interrupted process should stop promptly");
+
+        assert!(result.is_err(), "the pre-start stop must interrupt the run");
+        assert!(
+            !adapter.processes.lock().await.contains_key("execution-old"),
+            "the interrupted child must be removed from the execution registry"
+        );
+        assert!(
+            !adapter.interrupted.lock().await.contains("execution-old"),
+            "the execution's interruption marker must be cleared after cleanup"
         );
     }
 

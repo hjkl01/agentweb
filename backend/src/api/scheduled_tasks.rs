@@ -27,6 +27,40 @@ fn default_timezone() -> String { "UTC".into() }
 fn default_strategy() -> String { "new".into() }
 fn default_enabled() -> bool { true }
 
+fn step_split_is_present(part: &str) -> bool { part.contains('/') }
+
+fn cron_field_valid(field: &str, min: u32, max: u32) -> bool {
+    if field.is_empty() { return false; }
+    field.split(',').all(|part| {
+        if part.is_empty() { return false; }
+        let (base, step) = match part.split_once('/') {
+            Some((base, raw_step)) => {
+                let Ok(step) = raw_step.parse::<u32>() else { return false };
+                if step == 0 || base.is_empty() { return false; }
+                (base, step)
+            }
+            None => (part, 1),
+        };
+        let (start, end) = if base == "*" {
+            (min, max)
+        } else if let Some((raw_start, raw_end)) = base.split_once('-') {
+            let (Ok(start), Ok(end)) = (raw_start.parse::<u32>(), raw_end.parse::<u32>()) else { return false };
+            if start > end { return false; }
+            (start, end)
+        } else {
+            let Ok(value) = base.parse::<u32>() else { return false };
+            if step_split_is_present(part) { (value, max) } else { (value, value) }
+        };
+        start >= min && end <= max && start <= end && step > 0
+    })
+}
+
+fn cron_expression_valid(expression: &str) -> bool {
+    let fields: Vec<_> = expression.split_whitespace().collect();
+    fields.len() == 5
+        && fields.iter().zip([(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)])
+            .all(|(field, (min, max))| cron_field_valid(field, min, max))
+}
 fn validate(v: &TaskInput) -> Result<(), StatusCode> {
     if v.name.trim().is_empty() || v.name.chars().count() > 120 || v.prompt.trim().is_empty()
         || v.agent_id.trim().is_empty() || v.working_directory.trim().is_empty() {
@@ -42,7 +76,7 @@ fn validate(v: &TaskInput) -> Result<(), StatusCode> {
         }
         "cron" => {
             let expr = v.schedule_config.get("expression").and_then(Value::as_str).unwrap_or("");
-            if expr.split_whitespace().count() != 5 || !matches!(v.timezone.as_str(), "UTC" | "Etc/UTC") { return Err(StatusCode::BAD_REQUEST); }
+            if !cron_expression_valid(expr) || !matches!(v.timezone.as_str(), "UTC" | "Etc/UTC") { return Err(StatusCode::BAD_REQUEST); }
         }
         _ => return Err(StatusCode::BAD_REQUEST),
     }
@@ -95,7 +129,7 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
                     f.split(',').any(|part| {
                         let (base,step) = part.split_once('/').map(|(a,b)|(a,b.parse::<u32>().unwrap_or(0))).unwrap_or((part,1));
                         if step == 0 { return false; }
-                        let (a,b) = if base=="*" { (*lo,*hi) } else if let Some((a,b))=base.split_once('-') { (a.parse().unwrap_or(u32::MAX),b.parse().unwrap_or(0)) } else { let x=base.parse().unwrap_or(u32::MAX); (x,x) };
+                        let (a,b) = if base=="*" { (*lo,*hi) } else if let Some((a,b))=base.split_once('-') { (a.parse().unwrap_or(u32::MAX),b.parse().unwrap_or(0)) } else { let x=base.parse().unwrap_or(u32::MAX); (x,if part.contains('/') { *hi } else { x }) };
                         *val>=a && *val<=b && (*val-a)%step==0
                     })
                 });
@@ -108,6 +142,37 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
     };
     if dt <= now { return Err(StatusCode::BAD_REQUEST); }
     Ok(Some(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)))
+}
+
+
+#[cfg(test)]
+mod cron_validation_tests {
+    use super::{cron_expression_valid, cron_field_valid};
+
+    #[test]
+    fn accepts_valid_cron_fields() {
+        assert!(cron_expression_valid("*/5 9-17 * * 1-5"));
+        assert!(cron_expression_valid("0 0 1 1 *"));
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_malformed_cron_fields() {
+        for expression in ["99 * * * *", "* 24 * * *", "* * 0 * *", "* * * 13 *", "* * * * 7", "*/0 * * * *", "5-2 * * * *", "1,,2 * * * *", "x * * * *", "* * * *"] {
+            assert!(!cron_expression_valid(expression), "unexpectedly accepted: {}", expression);
+        }
+    }
+
+    #[test]
+    fn accepts_single_value_with_step_as_range_to_field_max() {
+        assert!(cron_field_valid("5/10", 0, 59));
+    }
+
+    #[test]
+    fn rejects_empty_or_invalid_field_parts() {
+        assert!(!cron_field_valid("", 0, 59));
+        assert!(!cron_field_valid("1,", 0, 59));
+        assert!(!cron_field_valid("*/abc", 0, 59));
+    }
 }
 
 pub async fn list(State(s): State<AppState>) -> Result<Json<Vec<Value>>, StatusCode> {
@@ -144,14 +209,20 @@ pub async fn update(Path(id): Path<String>, State(s): State<AppState>, Json(v): 
     }
     let next = initial_next(&v)?;
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query("UPDATE scheduled_tasks SET name=?,prompt=?,agent_id=?,working_directory=?,model=?,schedule_type=?,schedule_config=?,timezone=?,session_strategy=?,reuse_session_id=?,enabled=?,next_run_at=?,updated_at=? WHERE id=?")
-        .bind(v.name.trim()).bind(v.prompt.trim()).bind(v.agent_id.trim()).bind(v.working_directory.trim()).bind(v.model.as_deref()).bind(&v.schedule_type).bind(v.schedule_config.to_string()).bind(v.timezone.trim()).bind(&v.session_strategy).bind(v.reuse_session_id.as_deref()).bind(v.enabled as i64).bind(if v.enabled {next} else {None}).bind(&now).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if result.rows_affected()==0 { return Err(StatusCode::NOT_FOUND); }
+    let result = sqlx::query("UPDATE scheduled_tasks SET name=?,prompt=?,agent_id=?,working_directory=?,model=?,schedule_type=?,schedule_config=?,timezone=?,session_strategy=?,reuse_session_id=?,enabled=?,next_run_at=?,updated_at=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(v.name.trim()).bind(v.prompt.trim()).bind(v.agent_id.trim()).bind(v.working_directory.trim()).bind(v.model.as_deref()).bind(&v.schedule_type).bind(v.schedule_config.to_string()).bind(v.timezone.trim()).bind(&v.session_strategy).bind(v.reuse_session_id.as_deref()).bind(v.enabled as i64).bind(if v.enabled {next} else {None}).bind(&now).bind(&id).bind(&id).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected()==0 {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?").bind(&id).fetch_one(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(if exists == 0 { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT });
+    }
     get(Path(id), State(s)).await
 }
-pub async fn delete(Path(id): Path<String>, State(s): State<AppState>) -> Result<StatusCode, StatusCode> {
-    let result=sqlx::query("DELETE FROM scheduled_tasks WHERE id=?").bind(id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
-    if result.rows_affected()==0 { return Err(StatusCode::NOT_FOUND); }
+pub async fn delete(Path(id):Path<String>,State(s):State<AppState>)->Result<StatusCode,StatusCode>{
+    let exists:i64=sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?").bind(&id).fetch_one(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if exists==0 { return Err(StatusCode::NOT_FOUND); }
+    let result=sqlx::query("DELETE FROM scheduled_tasks WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(&id).bind(&id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected()==0 { return Err(StatusCode::CONFLICT); }
     Ok(StatusCode::NO_CONTENT)
 }
 async fn set_enabled(s: &AppState, id: &str, enabled: bool) -> Result<(), StatusCode> {
@@ -164,7 +235,14 @@ async fn set_enabled(s: &AppState, id: &str, enabled: bool) -> Result<(), Status
         if kind=="interval" { Some((Utc::now()+chrono::Duration::seconds(config.get("seconds").and_then(Value::as_i64).unwrap_or(60))).to_rfc3339()) }
         else { initial_next(&TaskInput{name:"x".into(),prompt:"x".into(),agent_id:"x".into(),working_directory:".".into(),model:None,schedule_type:kind.clone(),schedule_config:config,timezone,session_strategy:"new".into(),reuse_session_id:None,enabled:true})? }
     }} else {None};
-    sqlx::query("UPDATE scheduled_tasks SET enabled=?,next_run_at=?,updated_at=? WHERE id=?").bind(enabled as i64).bind(next).bind(now).bind(id).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = sqlx::query("UPDATE scheduled_tasks SET enabled=?,next_run_at=?,updated_at=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(enabled as i64).bind(next).bind(now).bind(id).bind(id)
+        .execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_tasks WHERE id=?")
+            .bind(id).fetch_one(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Err(if exists == 0 { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT });
+    }
     Ok(())
 }
 pub async fn enable(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Value>,StatusCode>{set_enabled(&s,&id,true).await?;get(Path(id),State(s)).await}
@@ -172,9 +250,14 @@ pub async fn disable(Path(id):Path<String>,State(s):State<AppState>)->Result<Jso
 
 pub async fn run_now(Path(id):Path<String>,State(s):State<AppState>)->Result<Json<Value>,StatusCode>{
     let row=sqlx::query("SELECT name FROM scheduled_tasks WHERE id=?").bind(&id).fetch_optional(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    let name:String=row.get(0); let now=Utc::now().to_rfc3339(); let run_id=Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?)")
-        .bind(&run_id).bind(id).bind(name).bind(&now).bind(&now).bind(&now).execute(&s.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let name:String=row.get(0);
+    let now=Utc::now().to_rfc3339();
+    let run_id=Uuid::new_v4().to_string();
+    // A single conditional INSERT avoids a check-then-insert race between callers.
+    let inserted=sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) SELECT ?,?,?, 'queued',?,?,? WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE id=?) AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status IN ('queued','running'))")
+        .bind(&run_id).bind(&id).bind(name).bind(&now).bind(&now).bind(&now).bind(&id).bind(&id)
+        .execute(&s.db).await.map_err(|e| { tracing::error!(%e, task_id=%id, "queue manual run failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+    if inserted.rows_affected()!=1 { return Err(StatusCode::CONFLICT); }
     Ok(Json(json!({"run_id":run_id,"status":"queued"})))
 }
 #[derive(Deserialize)] pub struct HistoryQuery { pub limit: Option<i64>, pub offset: Option<i64> }

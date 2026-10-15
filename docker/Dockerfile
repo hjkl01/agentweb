@@ -14,14 +14,17 @@ ENV CARGO_REGISTRIES_CRATES_IO_INDEX=sparse+https://mirrors.cernet.edu.cn/crates
 RUN cd backend && cargo build --release
 
 FROM archlinux:base
-RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/$repo\/os\/$arch/' /etc/pacman.d/mirrorlist \
-  && pacman -Syu --noconfirm \
+# Keep the Arch base image's mirrorlist instead of rewriting every mirror
+# entry to Aliyun; duplicate entries can all point at a stale mirror and cause 404s.
+RUN pacman -Syu --noconfirm \
     ca-certificates \
+    tzdata \
     curl \
     xz \
     tar \
     git \
     procps-ng \
+    bubblewrap \
     util-linux \
     bash \
     coreutils \
@@ -37,6 +40,8 @@ RUN sed -i 's/^#\?Server = .*/Server = https:\/\/mirrors.aliyun.com\/archlinux\/
     base-devel \
     python \
     nginx \
+  && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+  && printf 'Asia/Shanghai\n' > /etc/timezone \
   && pacman -Scc --noconfirm
 COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY --from=frontend /src/frontend/dist /app/frontend
@@ -44,6 +49,7 @@ COPY docker/nginx.conf /etc/agentweb/nginx.conf.template
 COPY docker/entrypoint.sh /usr/local/bin/agentweb-entrypoint
 RUN chmod +x /usr/local/bin/agentweb-entrypoint \
   && mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents /etc/agentweb
+ENV TZ=Asia/Shanghai
 ENV HOME=/data/home
 ENV XDG_CONFIG_HOME=/data/home/.config
 ENV XDG_DATA_HOME=/data/home/.local/share

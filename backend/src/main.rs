@@ -120,6 +120,7 @@ async fn main() -> Result<()> {
             get(api::get_agent_config).put(api::save_agent_config),
         )
         .route("/terminal/ws", get(terminal::ws_terminal))
+        .route("/workspaces", get(api::list_workspaces))
         .route(
             "/sessions",
             get(api::list_sessions).post(api::create_session),
@@ -180,7 +181,7 @@ async fn main() -> Result<()> {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_request(DefaultOnRequest::new().level(tracing::Level::INFO))
+                .on_request(DefaultOnRequest::new().level(tracing::Level::DEBUG))
                 .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
         )
         .with_state(state.clone());
@@ -211,16 +212,50 @@ async fn main() -> Result<()> {
             "Shutdown signal received, stopping agents owned by worker {}",
             shutdown_worker
         );
-        let rows = sqlx::query("SELECT id FROM sessions WHERE status='running' AND worker_id=?")
-            .bind(&shutdown_worker)
+        // Execution tokens are prefixed with the process worker ID. Only stop
+        // sessions owned by this backend process; other processes may share SQLite.
+        // Match an exact worker prefix instead of LIKE, where '_' and '%' in a
+        // worker ID would otherwise be interpreted as wildcard characters.
+        let owner_prefix = format!("{}:", shutdown_worker);
+        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND substr(worker_id,1,length(?))=?")
+            .bind(&owner_prefix)
+            .bind(&owner_prefix)
             .fetch_all(&shutdown_db)
             .await
             .unwrap_or_default();
-        let now = Utc::now().to_rfc3339();
-        let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND worker_id=?").bind(&now).bind(&shutdown_worker).execute(&shutdown_db).await;
         for row in rows {
             let id = sqlx::Row::get::<String, _>(&row, 0);
-            let _ = shutdown_agents.interrupt(&id).await;
+            let agent_id = sqlx::Row::get::<String, _>(&row, 1);
+            let agent_kind: String = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+                .bind(&agent_id)
+                .fetch_optional(&shutdown_db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(agent_id);
+            let execution_id = sqlx::Row::get::<String, _>(&row, 2);
+            let adapter = shutdown_agents.adapter(&agent_kind).await;
+
+            // Stop the exact execution before releasing its lease. If stopping
+            // fails, leave the ownership record intact so another worker cannot
+            // claim this session until the lease expires.
+            if let Err(error) = adapter.interrupt(&id, &execution_id).await {
+                tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to stop agent during backend shutdown; preserving lease");
+                continue;
+            }
+
+            let now = Utc::now().to_rfc3339();
+            match sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+                .bind(&now)
+                .bind(&id)
+                .bind(&execution_id)
+                .execute(&shutdown_db)
+                .await
+            {
+                Ok(result) if result.rows_affected() == 1 => {}
+                Ok(_) => tracing::debug!(session_id = %id, execution_id = %execution_id, "session ownership changed during shutdown; leaving newer execution untouched"),
+                Err(error) => tracing::warn!(session_id = %id, execution_id = %execution_id, %error, "failed to update session state during backend shutdown"),
+            }
         }
     };
     axum::serve(

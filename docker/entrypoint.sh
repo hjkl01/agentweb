@@ -12,7 +12,7 @@ upstream_servers=""
 for port in $(seq 8081 $((8080 + workers))); do
   upstream_servers+="        server 127.0.0.1:${port};\n"
 done
-sed "s|__UPSTREAM_SERVERS__|${upstream_servers}|" /etc/agentweb/nginx.conf.template > "$nginx_conf"
+sed -e "s|__UPSTREAM_SERVERS__|${upstream_servers}|" -e "s|__SESSION_UPSTREAM_SERVERS__|${upstream_servers}|" /etc/agentweb/nginx.conf.template > "$nginx_conf"
 nginx -t -c "$nginx_conf"
 
 pids=()
@@ -28,8 +28,24 @@ cleanup() {
 }
 trap cleanup TERM INT EXIT
 
-for port in $(seq 8081 $((8080 + workers))); do
-  AGENTWEB_BIND_ADDR="0.0.0.0:${port}" /usr/local/bin/agentweb &
+for worker_index in $(seq 1 "$workers"); do
+  port=$((8080 + worker_index))
+  event_port=$((18100 + worker_index))
+  event_peers=""
+  for peer_index in $(seq 1 "$workers"); do
+    if [[ "$peer_index" == "$worker_index" ]]; then
+      continue
+    fi
+    peer_port=$((18100 + peer_index))
+    if [[ -n "$event_peers" ]]; then
+      event_peers+=","
+    fi
+    event_peers+="127.0.0.1:${peer_port}"
+  done
+  AGENTWEB_BIND_ADDR="0.0.0.0:${port}" \
+    AGENTWEB_EVENT_LISTEN_ADDR="127.0.0.1:${event_port}" \
+    AGENTWEB_EVENT_PEERS="$event_peers" \
+    /usr/local/bin/agentweb &
   pids+=("$!")
 done
 

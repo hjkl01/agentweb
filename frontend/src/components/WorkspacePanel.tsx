@@ -9,7 +9,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CodePreview } from "./CodePreview";
 import { DiffViewer } from "./DiffViewer";
 import { FileTree } from "./FileTree";
@@ -51,12 +51,14 @@ function Preview({
   file,
   line,
   onClose,
+  onRetry,
   maximized,
   onToggleMaximize,
 }: {
   file: WorkspaceFile;
   line?: number;
   onClose: () => void;
+  onRetry: () => void;
   maximized: boolean;
   onToggleMaximize: () => void;
 }) {
@@ -88,8 +90,18 @@ function Preview({
           </button>
         </div>
       </div>
-      <PreviewNotice file={file} />
-      {!unavailable && <CodePreview file={file} focusLine={line} />}
+      {file.error ? (
+        <div className="preview-error" role="alert">
+          <AlertTriangle size={18} />
+          <p>{file.error}</p>
+          <button onClick={onRetry}>Retry</button>
+        </div>
+      ) : (
+        <>
+          <PreviewNotice file={file} />
+          {!unavailable && <CodePreview file={file} focusLine={line} />}
+        </>
+      )}
     </div>
   );
 }
@@ -111,31 +123,47 @@ export function WorkspacePanel({
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [maximized, setMaximized] = useState(false);
+  const closedPathsRef = useRef(new Set<string>());
+  const previousSessionId = useRef(current?.id);
 
   useEffect(() => {
+    closedPathsRef.current.clear();
     setOpenTabs([]);
     setActivePath(undefined);
     setMaximized(false);
   }, [current?.id]);
 
   useEffect(() => {
-    if (!selectedFile?.path) return;
+    // The selected file may still belong to the previous session during the
+    // render before useWorkspace clears its state. Never add that stale file
+    // back to the tabs after the session-reset effect has run.
+    if (previousSessionId.current !== current?.id) {
+      previousSessionId.current = current?.id;
+      return;
+    }
+    if (!selectedFile?.path || closedPathsRef.current.has(selectedFile.path)) return;
     setOpenTabs((tabs) => tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path]);
     setActivePath(selectedFile.path);
-  }, [selectedFile?.path]);
+  }, [current?.id, selectedFile?.path]);
+
+  const openFile = (path: string, line?: number) => {
+    closedPathsRef.current.delete(path);
+    onOpenFile(path, line);
+  };
 
   const activateTab = (path: string) => {
     setActivePath(path);
-    if (path !== selectedFile?.path) onOpenFile(path);
+    if (path !== selectedFile?.path) openFile(path);
   };
 
   const closeTab = (path: string) => {
+    closedPathsRef.current.add(path);
     const remaining = openTabs.filter((item) => item !== path);
     setOpenTabs(remaining);
     if (activePath === path) {
       const next = remaining[remaining.length - 1];
       setActivePath(next);
-      if (next) onOpenFile(next);
+      if (next) openFile(next);
       else {
         setMaximized(false);
         onCloseFile();
@@ -180,14 +208,16 @@ export function WorkspacePanel({
             />
           </div>
           <FileTree
+            key={current?.id}
+            sessionId={current?.id}
             files={files}
             filter={fileFilter}
-            onOpenFile={(path) => onOpenFile(path)}
+            onOpenFile={(path) => openFile(path)}
           />
         </>
       )}
       {tab === "diff" && <DiffViewer diff={diff} />}
-      {selectedFile && (
+      {openTabs.length > 0 && (
         <div className="workspace-preview-area">
           <div className="preview-tabs" role="tablist" aria-label="Open files">
             {openTabs.map((path) => (
@@ -211,13 +241,23 @@ export function WorkspacePanel({
               </div>
             ))}
           </div>
-          <Preview
-            file={selectedFile}
-            line={selectedLine}
-            onClose={() => closeTab(selectedFile.path)}
-            maximized={maximized}
-            onToggleMaximize={() => setMaximized((value) => !value)}
-          />
+          {selectedFile?.path === activePath ? (
+            <Preview
+              file={selectedFile}
+              line={selectedLine}
+              onClose={() => closeTab(selectedFile.path)}
+              onRetry={() => {
+                onCloseFile();
+                openFile(selectedFile.path);
+              }}
+              maximized={maximized}
+              onToggleMaximize={() => setMaximized((value) => !value)}
+            />
+          ) : (
+            <div className="preview-loading" role="status">
+              Loading {activePath}…
+            </div>
+          )}
         </div>
       )}
     </aside>

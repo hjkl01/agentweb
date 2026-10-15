@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Bot,
   Edit3,
   LogOut,
@@ -75,7 +76,7 @@ export function Sidebar({
         {sessions.map((session) => (
           <div
             key={session.id}
-            className={`session ${active === session.id ? "active" : ""} ${session.is_pinned ? "pinned" : ""}`}
+            className={`session ${active === session.id ? "active" : ""} ${session.is_pinned ? "pinned" : ""} ${session.workspace_available === false ? "workspace-missing" : ""}`}
             onClick={() => onSelectSession(session.id)}
           >
             {session.is_pinned ? (
@@ -86,8 +87,14 @@ export function Sidebar({
             <div className="session-main">
               <span>{session.title}</span>
               <small>
-                {agents.find((a) => a.id === session.agent_id)?.name ||
-                  session.agent_id}
+                {session.workspace_available === false ? (
+                  <span className="workspace-warning" title="工作区目录不存在或不在允许的工作区根目录内">
+                    <AlertTriangle size={12} /> 工作区不可用
+                  </span>
+                ) : (
+                  agents.find((a) => a.id === session.agent_id)?.name ||
+                  session.agent_id
+                )}
               </small>
             </div>
             <button
@@ -101,13 +108,17 @@ export function Sidebar({
             </button>
             {sessionMenu === session.id && (
               <div className="menu" onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => onTogglePin(session.id)}>
-                  {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
-                  {session.is_pinned ? "取消置顶" : "置顶"}
-                </button>
-                <button onClick={() => onRenameSession(session.id)}>
-                  <Edit3 size={14} /> Rename
-                </button>
+                {session.workspace_available !== false && (
+                  <>
+                    <button onClick={() => onTogglePin(session.id)}>
+                      {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+                      {session.is_pinned ? "取消置顶" : "置顶"}
+                    </button>
+                    <button onClick={() => onRenameSession(session.id)}>
+                      <Edit3 size={14} /> Rename
+                    </button>
+                  </>
+                )}
                 <button onClick={() => onDeleteSession(session.id)}>
                   <Trash2 size={14} /> Delete
                 </button>

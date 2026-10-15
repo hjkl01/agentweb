@@ -76,11 +76,12 @@ pub trait AgentAdapter: Send + Sync {
         &self,
         config: &AgentConfig,
         session_id: &str,
+        execution_id: &str,
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult>;
 
-    async fn interrupt(&self, session_id: &str) -> Result<()>;
+    async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()>;
 
     async fn list_models(&self, config: &AgentConfig) -> Result<Vec<AgentModel>> {
         crate::agents::models::discover(&config.id, config).await

@@ -1,13 +1,23 @@
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::sync::{broadcast, mpsc};
+use futures::{SinkExt, StreamExt};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc},
+    time::{sleep, Duration},
+};
+use tokio_util::codec::{Framed, LinesCodec};
+
+const MAX_RELAY_EVENT_BYTES: usize = 1024 * 1024;
+const RELAY_QUEUE_CAPACITY: usize = 256;
 
 #[derive(Clone)]
 pub struct EventBus {
     sender: broadcast::Sender<AgentEvent>,
     persist_sender: mpsc::Sender<PersistedEvent>,
     worker_id: Option<String>,
+    relay_sender: Option<mpsc::Sender<AgentEvent>>,
 }
 
 struct PersistedEvent {
@@ -18,7 +28,7 @@ struct PersistedEvent {
     created_at: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum AgentEvent {
     #[serde(rename = "session.started")]
@@ -202,6 +212,7 @@ impl EventBus {
             sender: broadcast::channel(512).0,
             persist_sender,
             worker_id: None,
+            relay_sender: None,
         }
     }
 
@@ -210,6 +221,79 @@ impl EventBus {
             sender: self.sender.clone(),
             persist_sender: self.persist_sender.clone(),
             worker_id: Some(worker_id),
+            relay_sender: self.relay_sender.clone(),
+        }
+    }
+
+    /// Enable best-effort live event relay between backend workers. Conversation
+    /// events remain transient and are never written to SQLite by this relay.
+    pub fn with_relay_from_env(mut self) -> Self {
+        let listen_addr = std::env::var("AGENTWEB_EVENT_LISTEN_ADDR").ok();
+        let peers = std::env::var("AGENTWEB_EVENT_PEERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|peer| !peer.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let Some(listen_addr) = listen_addr.filter(|addr| !addr.trim().is_empty()) else {
+            return self;
+        };
+        if peers.is_empty() {
+            return self;
+        }
+
+        let (relay_sender, mut relay_receiver) = mpsc::channel::<AgentEvent>(1024);
+        let local_sender = self.sender.clone();
+        tokio::spawn(async move {
+            match TcpListener::bind(&listen_addr).await {
+                Ok(listener) => {
+                    tracing::info!(%listen_addr, "event relay listener started");
+                    loop {
+                        match listener.accept().await {
+                            Ok((stream, _)) => {
+                                let sender = local_sender.clone();
+                                tokio::spawn(async move {
+                                    receive_relay_events(stream, sender).await;
+                                });
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, %listen_addr, "event relay accept failed");
+                                sleep(Duration::from_millis(250)).await;
+                            }
+                        }
+                    }
+                }
+                Err(error) => tracing::error!(%error, %listen_addr, "event relay listener failed to bind"),
+            }
+        });
+
+        let peer_senders = peers
+            .into_iter()
+            .map(|peer| {
+                let (sender, receiver) = mpsc::channel(RELAY_QUEUE_CAPACITY);
+                tokio::spawn(connect_relay_peer(peer.clone(), receiver));
+                (peer, sender)
+            })
+            .collect::<Vec<_>>();
+        tokio::spawn(async move {
+            while let Some(event) = relay_receiver.recv().await {
+                for (peer, sender) in &peer_senders {
+                    if sender.try_send(event.clone()).is_err() {
+                        tracing::warn!(%peer, "dropping live event because relay peer queue is full or closed");
+                    }
+                }
+            }
+        });
+        self.relay_sender = Some(relay_sender);
+        self
+    }
+
+    fn relay(&self, event: AgentEvent) {
+        if let Some(sender) = &self.relay_sender {
+            if sender.try_send(event).is_err() {
+                tracing::warn!("dropping live event because relay queue is full or closed");
+            }
         }
     }
 
@@ -220,7 +304,8 @@ impl EventBus {
             &event,
             AgentEvent::InstallOutput { .. } | AgentEvent::InstallCompleted { .. }
         ) {
-            let _ = self.sender.send(event);
+            let _ = self.sender.send(event.clone());
+            self.relay(event);
             return;
         }
         let Ok(payload) = serde_json::to_string(&event) else {
@@ -247,7 +332,8 @@ impl EventBus {
                 return;
             }
         };
-        let _ = self.sender.send(event);
+        let _ = self.sender.send(event.clone());
+        self.relay(event);
         permit.send(PersistedEvent {
             session_id,
             worker_id: self.worker_id.clone(),
@@ -262,10 +348,103 @@ impl EventBus {
     }
 }
 
+
+
+async fn receive_relay_events(stream: TcpStream, sender: broadcast::Sender<AgentEvent>) {
+    let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+    while let Some(result) = framed.next().await {
+        match result {
+            Ok(line) => match serde_json::from_str::<AgentEvent>(&line) {
+                Ok(event) => { let _ = sender.send(event); }
+                Err(error) => tracing::warn!(%error, "ignoring invalid event relay payload"),
+            },
+            Err(error) => {
+                tracing::warn!(%error, "event relay connection closed after invalid or oversized frame");
+                break;
+            }
+        }
+    }
+}
+
+async fn connect_relay_peer(peer: String, mut receiver: mpsc::Receiver<AgentEvent>) {
+    loop {
+        match TcpStream::connect(&peer).await {
+            Ok(stream) => {
+                tracing::info!(%peer, "connected to event relay peer");
+                let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+                while let Some(event) = receiver.recv().await {
+                    let payload = match serde_json::to_string(&event) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            tracing::warn!(%error, %peer, "failed to serialize event relay payload");
+                            continue;
+                        }
+                    };
+                    if let Err(error) = framed.send(payload).await {
+                        tracing::warn!(%error, %peer, "event relay write failed; reconnecting");
+                        break;
+                    }
+                }
+            }
+            Err(error) => tracing::debug!(%error, %peer, "event relay peer unavailable; retrying"),
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn transient_events_round_trip_through_relay_json() {
+        let event = AgentEvent::ToolOutput {
+            session_id: "session-1".into(),
+            tool: "terminal".into(),
+            output: "line one\\nline two".into(),
+        };
+        let payload = serde_json::to_string(&event).unwrap();
+        let decoded: AgentEvent = serde_json::from_str(&payload).unwrap();
+        match decoded {
+            AgentEvent::ToolOutput { session_id, tool, output } => {
+                assert_eq!(session_id, "session-1");
+                assert_eq!(tool, "terminal");
+                assert_eq!(output, "line one\\nline two");
+            }
+            _ => panic!("relay payload decoded to the wrong event type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_relay_delivers_transient_events_to_another_bus() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, mut receiver) = broadcast::channel(8);
+        let server_sender = sender.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            receive_relay_events(stream, server_sender).await;
+        });
+        let stream = TcpStream::connect(address).await.unwrap();
+        let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+        let expected = AgentEvent::MessageDelta {
+            session_id: "relay-session".into(),
+            text: "live delta".into(),
+        };
+        framed.send(serde_json::to_string(&expected).unwrap()).await.unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await.unwrap().unwrap();
+        match received {
+            AgentEvent::MessageDelta { session_id, text } => {
+                assert_eq!(session_id, "relay-session");
+                assert_eq!(text, "live delta");
+            }
+            _ => panic!("TCP relay delivered the wrong event type"),
+        }
+        drop(framed);
+        server.abort();
+    }
 
     #[test]
     fn retries_only_sqlite_busy_and_locked_codes() {

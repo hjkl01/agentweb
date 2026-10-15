@@ -7,7 +7,7 @@ type Props = {
   open: boolean;
   agents: Agent[];
   onClose: () => void;
-  onCreate: (agentId?: string, model?: string) => void;
+  onCreate: (agentId: string | undefined, model: string | undefined, workspace: string) => void;
   defaultAgentId?: string;
   defaultModel?: string;
   onDefaultChange: (agentId?: string, model?: string) => void;
@@ -26,14 +26,31 @@ export function ChatSelectionDialog({
   const installed = agents.filter((a) => a.installed);
   const [agentId, setAgentId] = useState(defaultAgentId || "");
   const [model, setModel] = useState(defaultModel || "");
+  const [workspace, setWorkspace] = useState("");
+  const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [models, setModels] = useState<AgentModel[]>([]);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     if (open) {
       setAgentId(defaultAgentId || "");
       setModel(defaultModel || "");
+      setWorkspace("");
     }
   }, [open, defaultAgentId, defaultModel]);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api<string[]>("/workspaces")
+      .then((items) => {
+        if (!cancelled) setWorkspaces(items);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
   useEffect(() => {
     if (!open || !agentId) {
       setModels([]);
@@ -60,7 +77,7 @@ export function ChatSelectionDialog({
     setAgentId(id);
     setModel("");
   };
-  const canCreate = !!agentId;
+  const canCreate = !!agentId && !!workspace.trim();
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -70,13 +87,26 @@ export function ChatSelectionDialog({
         <div className="modal-head">
           <div>
             <h3>New chat</h3>
-            <p>选择 Agent 后，只显示该 Agent 可用的模型。</p>
+            <p>先指定工作区，再选择 Agent 和模型。Agent 将以该目录作为工作目录。</p>
           </div>
           <button className="icon-button" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <div className="model-picker">
+          <label className="model-picker-label">工作区目录</label>
+          <input
+            value={workspace}
+            onChange={(e) => setWorkspace(e.target.value)}
+            placeholder="选择已有目录或输入新目录名"
+            list="agentweb-workspace-options"
+            autoComplete="off"
+            required
+          />
+          <datalist id="agentweb-workspace-options">
+            {workspaces.map((item) => <option key={item} value={item} />)}
+          </datalist>
+          <small className="field-hint">可选择已有工作区，或输入新目录名。路径限定在 AgentWeb 工作区根目录内。</small>
           <label className="model-picker-label">Agent</label>
           <select value={agentId} onChange={(e) => chooseAgent(e.target.value)}>
             <option value="">请选择已安装 Agent</option>
@@ -114,7 +144,7 @@ export function ChatSelectionDialog({
           <button
             className="primary-button create-chat-button"
             disabled={!canCreate}
-            onClick={() => onCreate(agentId, model || undefined)}
+            onClick={() => onCreate(agentId, model || undefined, workspace.trim())}
           >
             <Bot size={15} /> 开始对话
           </button>
@@ -124,7 +154,7 @@ export function ChatSelectionDialog({
               onClick={() =>
                 onDefaultChange(agentId || undefined, model || undefined)
               }
-              disabled={!canCreate}
+              disabled={!agentId}
             >
               <Settings size={15} /> 设为默认
             </button>
