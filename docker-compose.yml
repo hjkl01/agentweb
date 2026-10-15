@@ -16,7 +16,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-      - ${HOME:?Set HOME to your host home directory}/workspaces:/workspaces
+      - ${HOME:?Set HOME to your host home directory}:/workspaces
     environment:
       - TZ=Asia/Shanghai
       - HOME=/data/home/
