@@ -484,15 +484,38 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             if orphan.status == "running" || workspace_is_valid {
                 return StatusCode::NOT_FOUND;
             }
+            // Delete metadata and runtime state in one transaction. Without
+            // the compatibility trigger, both records must be cleaned up
+            // explicitly; the guarded DELETE also serializes against lease claims.
+            let mut tx = match s.db.begin().await {
+                Ok(tx) => tx,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+            };
             let result = sqlx::query("DELETE FROM sessions WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND r.status!='running')")
                 .bind(&id)
-                .execute(&s.db)
+                .execute(&mut *tx)
                 .await;
-            return match result {
-                Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT,
-                Ok(_) => StatusCode::CONFLICT,
-                Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            };
+            match result {
+                Ok(result) if result.rows_affected() == 1 => {
+                    if sqlx::query("DELETE FROM session_runtime WHERE session_id=?")
+                        .bind(&id).execute(&mut *tx).await.is_err() {
+                        let _ = tx.rollback().await;
+                        return StatusCode::INTERNAL_SERVER_ERROR;
+                    }
+                    if tx.commit().await.is_err() {
+                        return StatusCode::INTERNAL_SERVER_ERROR;
+                    }
+                    return StatusCode::NO_CONTENT;
+                }
+                Ok(_) => {
+                    let _ = tx.rollback().await;
+                    return StatusCode::CONFLICT;
+                }
+                Err(_) => {
+                    let _ = tx.rollback().await;
+                    return StatusCode::INTERNAL_SERVER_ERROR;
+                }
+            }
         }
         Err(e) => return e,
     };
@@ -546,18 +569,38 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
     // Keep live leases, but allow deleting a running record whose lease expired
     // (the owning worker's monitor will observe the missing row and interrupt).
     let now = Utc::now().to_rfc3339();
-    match sqlx::query("DELETE FROM sessions WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND (r.status!='running' OR r.lease_until IS NULL OR (julianday(r.lease_until) IS NOT NULL AND julianday(r.lease_until)<julianday(?))))")
+    let mut tx = match s.db.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let deleted = sqlx::query("DELETE FROM sessions WHERE id=? AND EXISTS (SELECT 1 FROM session_runtime r WHERE r.session_id=sessions.id AND (r.status!='running' OR r.lease_until IS NULL OR (julianday(r.lease_until) IS NOT NULL AND julianday(r.lease_until)<julianday(?))))")
         .bind(&id)
         .bind(&now)
-        .execute(&s.db)
-        .await
-    {
-        Ok(r) if r.rows_affected() == 1 => StatusCode::NO_CONTENT,
-        Ok(_) => match load_session(&s.db, &id).await {
-            Ok(_) => StatusCode::CONFLICT,
-            Err(status) => status,
-        },
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        .execute(&mut *tx)
+        .await;
+    match deleted {
+        Ok(r) if r.rows_affected() == 1 => {
+            if sqlx::query("DELETE FROM session_runtime WHERE session_id=?")
+                .bind(&id).execute(&mut *tx).await.is_err() {
+                let _ = tx.rollback().await;
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+            if tx.commit().await.is_err() {
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+            StatusCode::NO_CONTENT
+        }
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            match load_session(&s.db, &id).await {
+                Ok(_) => StatusCode::CONFLICT,
+                Err(status) => status,
+            }
+        }
+        Err(_) => {
+            let _ = tx.rollback().await;
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 #[derive(Deserialize)]
