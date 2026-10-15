@@ -51,12 +51,14 @@ function Preview({
   file,
   line,
   onClose,
+  onRetry,
   maximized,
   onToggleMaximize,
 }: {
   file: WorkspaceFile;
   line?: number;
   onClose: () => void;
+  onRetry: () => void;
   maximized: boolean;
   onToggleMaximize: () => void;
 }) {
@@ -88,8 +90,18 @@ function Preview({
           </button>
         </div>
       </div>
-      <PreviewNotice file={file} />
-      {!unavailable && <CodePreview file={file} focusLine={line} />}
+      {file.error ? (
+        <div className="preview-error" role="alert">
+          <AlertTriangle size={18} />
+          <p>{file.error}</p>
+          <button onClick={onRetry}>Retry</button>
+        </div>
+      ) : (
+        <>
+          <PreviewNotice file={file} />
+          {!unavailable && <CodePreview file={file} focusLine={line} />}
+        </>
+      )}
     </div>
   );
 }
@@ -226,6 +238,7 @@ export function WorkspacePanel({
               file={selectedFile}
               line={selectedLine}
               onClose={() => closeTab(selectedFile.path)}
+              onRetry={() => openFile(selectedFile.path)}
               maximized={maximized}
               onToggleMaximize={() => setMaximized((value) => !value)}
             />
