@@ -743,6 +743,7 @@ mod tests {
             working_directory: None,
             native_session_id: None,
             fork_from_native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -836,6 +837,7 @@ mod tests {
             command: "sleep".into(),
             working_directory: None,
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -918,6 +920,7 @@ mod tests {
             command: "sleep".into(),
             working_directory: None,
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -981,6 +984,7 @@ mod tests {
             command: "sleep".into(),
             working_directory: None,
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -1031,6 +1035,7 @@ mod tests {
             command: "sleep".into(),
             working_directory: None,
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
@@ -1144,6 +1149,7 @@ mod tests {
             command: "sleep".into(),
             working_directory: None,
             native_session_id: None,
+            fork_from_native_session_id: None,
             runtime_path: None,
             model: None,
         };
