@@ -622,7 +622,7 @@ mod tests {
     // Session lifecycle remains in the metadata table; chat transcripts and session events
     // must not be written to SQLite.
     #[tokio::test]
-    async fn session_completion_updates_metadata_without_persisting_chat_content() {
+    async fn session_completion_updates_runtime_without_persisting_chat_content() {
         let workspace =
             std::env::temp_dir().join(format!("agentweb-race-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -634,7 +634,6 @@ mod tests {
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
         sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
-        sqlx::query("CREATE TRIGGER sessions_runtime_update AFTER UPDATE OF status,worker_id,lease_until,updated_at ON sessions BEGIN INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(NEW.id,NEW.status,NEW.worker_id,NEW.lease_until,NEW.updated_at) ON CONFLICT(session_id) DO UPDATE SET status=excluded.status,worker_id=excluded.worker_id,lease_until=excluded.lease_until,updated_at=excluded.updated_at; END").execute(&db).await.unwrap();
         assert!(std::path::Path::new("/bin/echo").is_file());
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
@@ -664,10 +663,6 @@ mod tests {
             "w1".into(),
         )
         .await;
-        let status: String = sqlx::query_scalar("SELECT status FROM sessions WHERE id='s1'")
-            .fetch_one(&db)
-            .await
-            .unwrap();
         let runtime_status: String = sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id='s1'")
             .fetch_one(&db)
             .await
@@ -683,8 +678,7 @@ mod tests {
                 .await
                 .unwrap();
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert_eq!(status, "idle", "session status should be finalized");
-        assert_eq!(runtime_status, "idle", "runtime state should be finalized with the session");
+        assert_eq!(runtime_status, "idle", "runtime state is authoritative and must be finalized");
         assert_eq!(message_count, 0, "chat content must not be persisted");
         assert_eq!(
             persisted_event_count, 0,
