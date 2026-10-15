@@ -7,7 +7,11 @@ type Props = {
   open: boolean;
   agents: Agent[];
   onClose: () => void;
-  onCreate: (agentId: string | undefined, model: string | undefined, workspace: string) => void;
+  onCreate: (
+    agentId: string | undefined,
+    model: string | undefined,
+    workspace: string,
+  ) => void;
   defaultAgentId?: string;
   defaultModel?: string;
   onDefaultChange: (agentId?: string, model?: string) => void;
@@ -87,7 +91,9 @@ export function ChatSelectionDialog({
         <div className="modal-head">
           <div>
             <h3>New chat</h3>
-            <p>先指定工作区，再选择 Agent 和模型。Agent 将以该目录作为工作目录。</p>
+            <p>
+              先指定工作区，再选择 Agent 和模型。Agent 将以该目录作为工作目录。
+            </p>
           </div>
           <button className="icon-button" onClick={onClose}>
             <X size={16} />
@@ -104,9 +110,14 @@ export function ChatSelectionDialog({
             required
           />
           <datalist id="agentweb-workspace-options">
-            {workspaces.map((item) => <option key={item} value={item} />)}
+            {workspaces.map((item) => (
+              <option key={item} value={item} />
+            ))}
           </datalist>
-          <small className="field-hint">可选择已有工作区，或输入新目录名。路径限定在 AgentWeb 工作区根目录内。</small>
+          <small className="field-hint">
+            可选择已有工作区，或输入新目录名。路径限定在 AgentWeb
+            工作区根目录内。
+          </small>
           <label className="model-picker-label">Agent</label>
           <select value={agentId} onChange={(e) => chooseAgent(e.target.value)}>
             <option value="">请选择已安装 Agent</option>
@@ -144,7 +155,9 @@ export function ChatSelectionDialog({
           <button
             className="primary-button create-chat-button"
             disabled={!canCreate}
-            onClick={() => onCreate(agentId, model || undefined, workspace.trim())}
+            onClick={() =>
+              onCreate(agentId, model || undefined, workspace.trim())
+            }
           >
             <Bot size={15} /> 开始对话
           </button>

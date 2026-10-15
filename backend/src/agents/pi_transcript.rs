@@ -266,7 +266,9 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
     // Pi v2/v3 sessions are trees. On load, Pi restores the leaf from the last
     // persisted entry, then derives the visible branch by following parentId.
     // Older linear sessions have no parentId fields and remain readable as-is.
-    let has_tree_links = entries.iter().any(|(_, entry)| entry.get("parentId").is_some());
+    let has_tree_links = entries
+        .iter()
+        .any(|(_, entry)| entry.get("parentId").is_some());
     let active_ids = if has_tree_links {
         let mut by_id = std::collections::HashMap::new();
         for (_, entry) in &entries {
@@ -281,14 +283,11 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
             }
         }
         let mut active = std::collections::HashSet::new();
-        let mut current = entries
-            .iter()
-            .rev()
-            .find_map(|(_, entry)| {
-                (entry.get("type").and_then(Value::as_str) != Some("session"))
-                    .then(|| entry.get("id").and_then(Value::as_str))
-                    .flatten()
-            });
+        let mut current = entries.iter().rev().find_map(|(_, entry)| {
+            (entry.get("type").and_then(Value::as_str) != Some("session"))
+                .then(|| entry.get("id").and_then(Value::as_str))
+                .flatten()
+        });
         while let Some(id) = current {
             if !active.insert(id.to_owned()) {
                 break;
@@ -432,9 +431,7 @@ mod tests {
     fn rejects_transcript_with_too_many_entries() {
         let mut lines = vec![r#"{"type":"session","id":"session-limit","version":3}"#.to_owned()];
         for index in 0..100_000 {
-            lines.push(format!(
-                r#"{{"type":"custom","id":"entry-{index}"}}"#
-            ));
+            lines.push(format!(r#"{{"type":"custom","id":"entry-{index}"}}"#));
         }
         let content = lines.join("\n");
         assert!(parse_messages(&content, "session-limit").is_empty());
@@ -442,9 +439,8 @@ mod tests {
 
     #[test]
     fn rejects_transcript_with_too_many_malformed_lines() {
-        let mut lines = vec![
-            r#"{"type":"session","id":"session-line-limit","version":3}"#.to_owned(),
-        ];
+        let mut lines =
+            vec![r#"{"type":"session","id":"session-line-limit","version":3}"#.to_owned()];
         lines.resize(200_001, "not-json".to_owned());
         let content = lines.join("\n");
         assert!(parse_messages(&content, "session-line-limit").is_empty());
@@ -539,14 +535,23 @@ mod tests {
             "pi-transcript-missing-{}-{unique}",
             std::process::id()
         ));
-        let session_dir = workspace.join(".agentweb-state").join("pi-sessions").join("project");
+        let session_dir = workspace
+            .join(".agentweb-state")
+            .join("pi-sessions")
+            .join("project");
         std::fs::create_dir_all(&session_dir).unwrap();
         let transcript = session_dir.join("2026-01-01T00-00-00-000Z_deleted-id.jsonl");
         std::fs::write(&transcript, r#"{"type":"session","id":"deleted-id"}"#).unwrap();
 
-        assert!(native_session_file_exists_from_workspace(&workspace, "deleted-id"));
+        assert!(native_session_file_exists_from_workspace(
+            &workspace,
+            "deleted-id"
+        ));
         std::fs::remove_file(&transcript).unwrap();
-        assert!(!native_session_file_exists_from_workspace(&workspace, "deleted-id"));
+        assert!(!native_session_file_exists_from_workspace(
+            &workspace,
+            "deleted-id"
+        ));
 
         std::fs::remove_dir_all(workspace).ok();
     }
@@ -575,9 +580,16 @@ mod tests {
                 r#"{"type":"session","id":"escape-id"}"#,
             )
             .unwrap();
-            symlink(&outside, workspace.join(".agentweb-state").join("pi-sessions")).unwrap();
+            symlink(
+                &outside,
+                workspace.join(".agentweb-state").join("pi-sessions"),
+            )
+            .unwrap();
 
-            assert!(!native_session_file_exists_from_workspace(&workspace, "escape-id"));
+            assert!(!native_session_file_exists_from_workspace(
+                &workspace,
+                "escape-id"
+            ));
 
             std::fs::remove_dir_all(workspace).ok();
             std::fs::remove_dir_all(outside).ok();
@@ -590,8 +602,12 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("pi-transcript-{}-{unique}", std::process::id()));
-        let nested = dir.join(".agentweb-state").join("pi-sessions").join("--workspaces--");
+        let dir =
+            std::env::temp_dir().join(format!("pi-transcript-{}-{unique}", std::process::id()));
+        let nested = dir
+            .join(".agentweb-state")
+            .join("pi-sessions")
+            .join("--workspaces--");
         std::fs::create_dir_all(&nested).unwrap();
         // Pi uses <timestamp>_<session-id>.jsonl; exercise that exact format.
         let file = nested.join("2026-01-01T00-00-00-000Z_abc123.jsonl");
@@ -613,7 +629,9 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(messages.len(), 2);
-        assert!(messages.iter().all(|message| message.content != "abandoned branch"));
+        assert!(messages
+            .iter()
+            .all(|message| message.content != "abandoned branch"));
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hi");
         assert_eq!(

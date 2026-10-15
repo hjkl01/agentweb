@@ -47,7 +47,15 @@ impl ProcessRunGuard {
         processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
         interrupted: Arc<Mutex<HashSet<String>>>,
     ) -> Self {
-        Self { session_id, execution_id, process_id, child, processes, interrupted, armed: true }
+        Self {
+            session_id,
+            execution_id,
+            process_id,
+            child,
+            processes,
+            interrupted,
+            armed: true,
+        }
     }
 
     fn disarm(&mut self) {
@@ -75,7 +83,8 @@ impl Drop for ProcessRunGuard {
                 #[cfg(unix)]
                 if let Some(pid) = process_id {
                     let group = format!("-{pid}");
-                    if let Err(error) = Command::new("kill").args(["-KILL", &group]).status().await {
+                    if let Err(error) = Command::new("kill").args(["-KILL", &group]).status().await
+                    {
                         tracing::warn!(
                             session_id = %session_id,
                             %error,
@@ -106,7 +115,9 @@ impl Drop for ProcessRunGuard {
             #[cfg(unix)]
             if let Some(pid) = self.process_id {
                 let group = format!("-{pid}");
-                let _ = std::process::Command::new("kill").args(["-KILL", &group]).status();
+                let _ = std::process::Command::new("kill")
+                    .args(["-KILL", &group])
+                    .status();
             }
         }
     }
@@ -262,10 +273,11 @@ impl ProcessAdapter {
                     .await;
             }
         }
-        let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
-        if matches!(kind, ProcessKind::Claude | ProcessKind::Qwen)
-            && event_type == "assistant"
-        {
+        let event_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(kind, ProcessKind::Claude | ProcessKind::Qwen) && event_type == "assistant" {
             if let Some(final_text) = event_parser::parsed(&value).2 {
                 let accumulated = result.lock().await.assistant_text.clone();
                 if !accumulated.is_empty() {
@@ -338,7 +350,8 @@ impl ProcessAdapter {
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
-        self.run_for_execution(kind, config, session_id, session_id, message, events).await
+        self.run_for_execution(kind, config, session_id, session_id, message, events)
+            .await
     }
 
     pub async fn run_for_execution(
@@ -492,14 +505,12 @@ impl ProcessAdapter {
                     match Command::new("kill").args(["-KILL", &group]).status().await {
                         Ok(status) if status.success() => {}
                         Ok(status) => {
-                            cleanup_error = Some(format!(
-                                "process-group kill exited with status {status}"
-                            ));
+                            cleanup_error =
+                                Some(format!("process-group kill exited with status {status}"));
                         }
                         Err(error) => {
-                            cleanup_error = Some(format!(
-                                "failed to execute process-group kill: {error}"
-                            ));
+                            cleanup_error =
+                                Some(format!("failed to execute process-group kill: {error}"));
                         }
                     }
                     if cleanup_error.is_some() {
@@ -514,9 +525,8 @@ impl ProcessAdapter {
                 }
                 #[cfg(not(unix))]
                 {
-                    cleanup_error = Some(
-                        "process-group cleanup is unavailable on this platform".to_owned(),
-                    );
+                    cleanup_error =
+                        Some("process-group cleanup is unavailable on this platform".to_owned());
                 }
                 if let Some(error) = cleanup_error.as_deref() {
                     tracing::warn!(
@@ -559,11 +569,9 @@ impl ProcessAdapter {
             // it has finalized the session state. Publishing here as well caused
             // duplicate errors and could surface a stale failure after ownership
             // of the session had moved to another worker.
-            return Err(AgentRunError::failed(
-                error.to_string(),
-                result.native_session_id.clone(),
-            )
-            .into());
+            return Err(
+                AgentRunError::failed(error.to_string(), result.native_session_id.clone()).into(),
+            );
         }
         if status.success() {
             events
@@ -624,7 +632,10 @@ impl ProcessAdapter {
             // Record cancellation even before spawn registration. run_for_execution
             // checks this marker immediately after registering the child, closing
             // the stop-vs-start race for this specific execution token.
-            self.interrupted.lock().await.insert(execution_id.to_owned());
+            self.interrupted
+                .lock()
+                .await
+                .insert(execution_id.to_owned());
             child
         };
         if let Some(child) = child {
@@ -659,15 +670,21 @@ impl AgentAdapter for ProcessAdapter {
         message: &str,
         events: &EventBus,
     ) -> Result<AgentRunResult> {
-        self.run_for_execution(ProcessKind::Generic, config, session_id, execution_id, message, events)
-            .await
+        self.run_for_execution(
+            ProcessKind::Generic,
+            config,
+            session_id,
+            execution_id,
+            message,
+            events,
+        )
+        .await
     }
     async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
         self.interrupt_execution(session_id, execution_id).await
     }
 }
 pub use super::session::run_session;
-
 
 #[cfg(test)]
 mod tests {
@@ -704,7 +721,12 @@ mod tests {
             .await
             .expect("the running child should be stopped");
         assert!(
-            child.lock().await.try_wait().expect("wait should succeed").is_some(),
+            child
+                .lock()
+                .await
+                .try_wait()
+                .expect("wait should succeed")
+                .is_some(),
             "the child should have exited after stop_child"
         );
 
@@ -750,7 +772,13 @@ mod tests {
         let run_adapter = adapter.clone();
         let run = tokio::spawn(async move {
             run_adapter
-                .run(ProcessKind::Generic, &config, "cancelled-run", "30", &events)
+                .run(
+                    ProcessKind::Generic,
+                    &config,
+                    "cancelled-run",
+                    "30",
+                    &events,
+                )
                 .await
         });
 
@@ -778,7 +806,8 @@ mod tests {
 
         timeout(Duration::from_secs(3), async {
             loop {
-                let process_registered = adapter.processes.lock().await.contains_key("cancelled-run");
+                let process_registered =
+                    adapter.processes.lock().await.contains_key("cancelled-run");
                 let interrupted = adapter.interrupted.lock().await.contains("cancelled-run");
                 if !process_registered && !interrupted {
                     break;
@@ -814,7 +843,7 @@ mod tests {
         use super::super::commands::ProcessKind;
         use crate::events::EventBus;
         use sqlx::sqlite::SqlitePoolOptions;
-        use tokio::time::{sleep, Duration, timeout};
+        use tokio::time::{sleep, timeout, Duration};
 
         let db = SqlitePoolOptions::new()
             .max_connections(1)
@@ -846,7 +875,13 @@ mod tests {
         let first_events = events.clone();
         let first = tokio::spawn(async move {
             first_adapter
-                .run(ProcessKind::Generic, &first_config, "same-session", "30", &first_events)
+                .run(
+                    ProcessKind::Generic,
+                    &first_config,
+                    "same-session",
+                    "30",
+                    &first_events,
+                )
                 .await
         });
 
@@ -868,12 +903,10 @@ mod tests {
             second.is_err(),
             "a concurrent run for the same session must be rejected"
         );
-        assert!(
-            second
-                .expect_err("the duplicate run should fail")
-                .to_string()
-                .contains("session already has a running agent process")
-        );
+        assert!(second
+            .expect_err("the duplicate run should fail")
+            .to_string()
+            .contains("session already has a running agent process"));
 
         adapter
             .interrupt_process("same-session")
@@ -928,7 +961,13 @@ mod tests {
         let run_events = events.clone();
         let run = tokio::spawn(async move {
             run_adapter
-                .run(ProcessKind::Generic, &config, "exit-race", "0.1", &run_events)
+                .run(
+                    ProcessKind::Generic,
+                    &config,
+                    "exit-race",
+                    "0.1",
+                    &run_events,
+                )
                 .await
         });
 
@@ -944,9 +983,8 @@ mod tests {
         .expect("the process should register before the race is triggered");
 
         let interrupt_adapter = adapter.clone();
-        let interrupt = tokio::spawn(async move {
-            interrupt_adapter.interrupt_process("exit-race").await
-        });
+        let interrupt =
+            tokio::spawn(async move { interrupt_adapter.interrupt_process("exit-race").await });
 
         timeout(Duration::from_secs(3), async {
             let run_result = run.await.expect("the run task should not panic");
@@ -1094,7 +1132,10 @@ mod tests {
             .await
             .expect("the old execution should stop promptly")
             .expect("the old execution task should not panic");
-        assert!(old_result.is_err(), "the old execution should report interruption");
+        assert!(
+            old_result.is_err(),
+            "the old execution should report interruption"
+        );
 
         let new_child = adapter
             .processes
@@ -1228,9 +1269,12 @@ mod tests {
             .expect("stdout should close after the descendant is killed")
             .expect("reading stdout should succeed");
         let mut error_output = Vec::new();
-        timeout(Duration::from_secs(2), stderr.read_to_end(&mut error_output))
-            .await
-            .expect("stderr should close after the descendant is killed")
-            .expect("reading stderr should succeed");
+        timeout(
+            Duration::from_secs(2),
+            stderr.read_to_end(&mut error_output),
+        )
+        .await
+        .expect("stderr should close after the descendant is killed")
+        .expect("reading stderr should succeed");
     }
 }

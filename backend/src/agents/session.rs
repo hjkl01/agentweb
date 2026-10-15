@@ -26,7 +26,12 @@ fn lease_is_expired(lease: &str, now: chrono::DateTime<Utc>) -> bool {
         .unwrap_or(true)
 }
 
-async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) -> bool {
+async fn finish_session(
+    db: &sqlx::SqlitePool,
+    session_id: &str,
+    worker_id: &str,
+    status: &str,
+) -> bool {
     let result = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
     match result {
         Ok(result) if result.rows_affected() == 1 => true,
@@ -388,24 +393,27 @@ pub async fn run_session(
             ticker.tick().await;
             let now = Utc::now();
             let now_text = now.to_rfc3339();
-            let row = match sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
-                .bind(&monitor_id)
-                .fetch_optional(&monitor_db)
-                .await
-            {
-                Ok(row) => row,
-                Err(error) => {
-                    tracing::warn!(
-                        session_id = %monitor_id,
-                        worker_id = %monitor_worker,
-                        %error,
-                        "failed to check session ownership; retrying interruption check"
-                    );
-                    continue;
-                }
-            };
+            let row =
+                match sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
+                    .bind(&monitor_id)
+                    .fetch_optional(&monitor_db)
+                    .await
+                {
+                    Ok(row) => row,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %monitor_id,
+                            worker_id = %monitor_worker,
+                            %error,
+                            "failed to check session ownership; retrying interruption check"
+                        );
+                        continue;
+                    }
+                };
             let Some(row) = row else {
-                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                let _ = monitor_adapter
+                    .interrupt(&monitor_id, &monitor_worker)
+                    .await;
                 continue;
             };
             let status: String = sqlx::Row::get(&row, 0);
@@ -420,7 +428,9 @@ pub async fn run_session(
             {
                 // Do not exit: the child may not have registered yet. Repeated
                 // attempts stop it if registration completes after this check.
-                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                let _ = monitor_adapter
+                    .interrupt(&monitor_id, &monitor_worker)
+                    .await;
                 continue;
             }
 
@@ -440,7 +450,9 @@ pub async fn run_session(
                     last_renewal = time::Instant::now();
                 }
                 Ok(_) => {
-                    let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                    let _ = monitor_adapter
+                        .interrupt(&monitor_id, &monitor_worker)
+                        .await;
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -625,7 +637,10 @@ mod tests {
         std::fs::remove_dir_all(&workspace).unwrap();
         assert_eq!(status, "idle", "session status should be finalized");
         assert_eq!(message_count, 0, "chat content must not be persisted");
-        assert_eq!(persisted_event_count, 0, "session events must remain transient");
+        assert_eq!(
+            persisted_event_count, 0,
+            "session events must remain transient"
+        );
     }
 
     #[tokio::test]
@@ -666,7 +681,10 @@ mod tests {
 
         db.close().await;
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert!(!finalized, "a stale worker must not finalize a newer worker's session");
+        assert!(
+            !finalized,
+            "a stale worker must not finalize a newer worker's session"
+        );
         assert_eq!(status, "running");
         assert_eq!(owner.as_deref(), Some("worker-new"));
     }

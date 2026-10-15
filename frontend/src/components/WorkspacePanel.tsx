@@ -85,7 +85,12 @@ function Preview({
           >
             {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-          <button className="icon-button" onClick={onClose} title="Close preview" aria-label="Close preview">
+          <button
+            className="icon-button"
+            onClick={onClose}
+            title="Close preview"
+            aria-label="Close preview"
+          >
             <X size={15} />
           </button>
         </div>
@@ -141,8 +146,11 @@ export function WorkspacePanel({
       previousSessionId.current = current?.id;
       return;
     }
-    if (!selectedFile?.path || closedPathsRef.current.has(selectedFile.path)) return;
-    setOpenTabs((tabs) => tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path]);
+    if (!selectedFile?.path || closedPathsRef.current.has(selectedFile.path))
+      return;
+    setOpenTabs((tabs) =>
+      tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path],
+    );
     setActivePath(selectedFile.path);
   }, [current?.id, selectedFile?.path]);
 
@@ -221,7 +229,10 @@ export function WorkspacePanel({
         <div className="workspace-preview-area">
           <div className="preview-tabs" role="tablist" aria-label="Open files">
             {openTabs.map((path) => (
-              <div className={`preview-tab${path === activePath ? " active" : ""}`} key={path}>
+              <div
+                className={`preview-tab${path === activePath ? " active" : ""}`}
+                key={path}
+              >
                 <button
                   role="tab"
                   aria-selected={path === activePath}

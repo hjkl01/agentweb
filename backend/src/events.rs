@@ -1,7 +1,7 @@
 use chrono::Utc;
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use futures::{SinkExt, StreamExt};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{broadcast, mpsc},
@@ -264,7 +264,9 @@ impl EventBus {
                         }
                     }
                 }
-                Err(error) => tracing::error!(%error, %listen_addr, "event relay listener failed to bind"),
+                Err(error) => {
+                    tracing::error!(%error, %listen_addr, "event relay listener failed to bind")
+                }
             }
         });
 
@@ -348,14 +350,17 @@ impl EventBus {
     }
 }
 
-
-
 async fn receive_relay_events(stream: TcpStream, sender: broadcast::Sender<AgentEvent>) {
-    let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+    let mut framed = Framed::new(
+        stream,
+        LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES),
+    );
     while let Some(result) = framed.next().await {
         match result {
             Ok(line) => match serde_json::from_str::<AgentEvent>(&line) {
-                Ok(event) => { let _ = sender.send(event); }
+                Ok(event) => {
+                    let _ = sender.send(event);
+                }
                 Err(error) => tracing::warn!(%error, "ignoring invalid event relay payload"),
             },
             Err(error) => {
@@ -371,7 +376,10 @@ async fn connect_relay_peer(peer: String, mut receiver: mpsc::Receiver<AgentEven
         match TcpStream::connect(&peer).await {
             Ok(stream) => {
                 tracing::info!(%peer, "connected to event relay peer");
-                let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+                let mut framed = Framed::new(
+                    stream,
+                    LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES),
+                );
                 while let Some(event) = receiver.recv().await {
                     let payload = match serde_json::to_string(&event) {
                         Ok(payload) => payload,
@@ -407,7 +415,11 @@ mod tests {
         let payload = serde_json::to_string(&event).unwrap();
         let decoded: AgentEvent = serde_json::from_str(&payload).unwrap();
         match decoded {
-            AgentEvent::ToolOutput { session_id, tool, output } => {
+            AgentEvent::ToolOutput {
+                session_id,
+                tool,
+                output,
+            } => {
                 assert_eq!(session_id, "session-1");
                 assert_eq!(tool, "terminal");
                 assert_eq!(output, "line one\\nline two");
@@ -427,14 +439,22 @@ mod tests {
             receive_relay_events(stream, server_sender).await;
         });
         let stream = TcpStream::connect(address).await.unwrap();
-        let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES));
+        let mut framed = Framed::new(
+            stream,
+            LinesCodec::new_with_max_length(MAX_RELAY_EVENT_BYTES),
+        );
         let expected = AgentEvent::MessageDelta {
             session_id: "relay-session".into(),
             text: "live delta".into(),
         };
-        framed.send(serde_json::to_string(&expected).unwrap()).await.unwrap();
+        framed
+            .send(serde_json::to_string(&expected).unwrap())
+            .await
+            .unwrap();
         let received = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         match received {
             AgentEvent::MessageDelta { session_id, text } => {
                 assert_eq!(session_id, "relay-session");

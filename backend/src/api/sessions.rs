@@ -129,9 +129,8 @@ pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
     for row in &rows {
         let mut session = session_from_row(row);
         if let Ok(workspace) = fs::canonicalize(&session.workspace).await {
-            session.workspace_available = workspace.is_dir()
-                && workspace.starts_with(&base)
-                && workspace != base;
+            session.workspace_available =
+                workspace.is_dir() && workspace.starts_with(&base) && workspace != base;
             if session.workspace_available {
                 session.workspace = workspace.to_string_lossy().into_owned();
             }
@@ -164,9 +163,9 @@ async fn resolve_workspace_under(base_path: &FsPath, name: &str) -> Result<Strin
     }
     let path = FsPath::new(name);
     if path.is_absolute()
-        || path.components().any(|component| {
-            !matches!(component, Component::Normal(_))
-        })
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -283,21 +282,34 @@ pub async fn create_pi_fork(
     State(s): State<AppState>,
 ) -> Result<Json<Session>, StatusCode> {
     let source = load_session(&s.db, &id).await?;
-    if source.status == "running" || source.status == "missing" || source.native_session_id.is_none() {
+    if source.status == "running"
+        || source.status == "missing"
+        || source.native_session_id.is_none()
+    {
         return Err(StatusCode::CONFLICT);
     }
     let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
-        .bind(&source.agent_id).fetch_optional(&s.db).await
+        .bind(&source.agent_id)
+        .fetch_optional(&s.db)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if kind.as_deref() != Some("pi") { return Err(StatusCode::BAD_REQUEST); }
-    let native_id = source.native_session_id.as_deref().ok_or(StatusCode::CONFLICT)?;
+    if kind.as_deref() != Some("pi") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let native_id = source
+        .native_session_id
+        .as_deref()
+        .ok_or(StatusCode::CONFLICT)?;
     let workspace = source.workspace.clone();
     let native_id_owned = native_id.to_owned();
     let exists = tokio::task::spawn_blocking(move || {
         crate::agents::pi_transcript::native_session_file_exists_from_workspace(
-            FsPath::new(&workspace), &native_id_owned,
+            FsPath::new(&workspace),
+            &native_id_owned,
         )
-    }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !exists {
         sqlx::query("UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
             .bind(Utc::now().to_rfc3339())
@@ -311,10 +323,15 @@ pub async fn create_pi_fork(
     let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
         .bind(&id).bind(native_id).fetch_one(&s.db).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if source_still_available != 1 { return Err(StatusCode::CONFLICT); }
+    if source_still_available != 1 {
+        return Err(StatusCode::CONFLICT);
+    }
 
     let new_id = Uuid::new_v4().to_string();
-    let title = format!("分支：{}", source.title.chars().take(70).collect::<String>());
+    let title = format!(
+        "分支：{}",
+        source.title.chars().take(70).collect::<String>()
+    );
     let now = Utc::now().to_rfc3339();
     sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at,fork_from_native_session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&new_id).bind(&source.agent_id).bind(&title).bind(&source.workspace)
@@ -504,7 +521,6 @@ pub async fn set_session_agent(
     Ok(Json(load_session(&s.db, &id).await?))
 }
 
-
 #[cfg(test)]
 mod workspace_path_tests {
     use super::*;
@@ -520,7 +536,9 @@ mod workspace_path_tests {
         std::fs::create_dir_all(&root).unwrap();
 
         assert_eq!(
-            resolve_workspace_under(&root, "../outside").await.unwrap_err(),
+            resolve_workspace_under(&root, "../outside")
+                .await
+                .unwrap_err(),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(

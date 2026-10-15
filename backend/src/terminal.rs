@@ -100,8 +100,7 @@ async fn run_terminal(
         return;
     }
 
-    let shell = std::env::var("AGENTWEB_TERMINAL_SHELL")
-        .unwrap_or_else(|_| "/bin/bash".into());
+    let shell = std::env::var("AGENTWEB_TERMINAL_SHELL").unwrap_or_else(|_| "/bin/bash".into());
 
     #[cfg(not(target_os = "linux"))]
     let mut command = CommandBuilder::new("/bin/false");
@@ -172,7 +171,8 @@ async fn run_terminal(
         command.arg("--ro-bind");
         command.arg("/tmp/agentweb-mounts/runtimes");
         command.arg("/data/runtimes");
-        if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces") {
+        if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces")
+        {
             // Keep the selected project reachable via a temporary alias before
             // hiding /workspaces, so sibling projects are not visible in shell.
             command.arg("--bind");
@@ -184,7 +184,9 @@ async fn run_terminal(
                 Ok(path) => path,
                 Err(_) => {
                     let mut socket = socket;
-                    let _ = socket.send(Message::Text("Invalid terminal workspace path.".into())).await;
+                    let _ = socket
+                        .send(Message::Text("Invalid terminal workspace path.".into()))
+                        .await;
                     return;
                 }
             };

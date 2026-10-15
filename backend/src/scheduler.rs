@@ -9,7 +9,9 @@ use uuid::Uuid;
 const POLL_SECONDS: u64 = 2;
 const LEASE_SECONDS: i64 = 30;
 
-fn stamp(t: DateTime<Utc>) -> String { t.to_rfc3339_opts(SecondsFormat::Millis, true) }
+fn stamp(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
 
 fn session_lease_is_live(status: &str, lease_until: Option<&str>, now: DateTime<Utc>) -> bool {
     if status != "running" {
@@ -29,24 +31,42 @@ fn cron_field_matches(field: &str, value: u32, min: u32, max: u32) -> bool {
     field.split(',').any(|part| {
         let mut step_split = part.splitn(2, '/');
         let base = step_split.next().unwrap_or("");
-        let step = step_split.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
-        if step == 0 { return false; }
-        let (lo, hi) = if base == "*" { (min, max) } else if let Some((a,b)) = base.split_once('-') {
-            match (a.parse::<u32>(), b.parse::<u32>()) { (Ok(a),Ok(b)) => (a,b), _ => return false }
+        let step = step_split
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1);
+        if step == 0 {
+            return false;
+        }
+        let (lo, hi) = if base == "*" {
+            (min, max)
+        } else if let Some((a, b)) = base.split_once('-') {
+            match (a.parse::<u32>(), b.parse::<u32>()) {
+                (Ok(a), Ok(b)) => (a, b),
+                _ => return false,
+            }
         } else {
-            match base.parse::<u32>() { Ok(v) if part.contains('/') => (v,max), Ok(v) => (v,v), Err(_) => return false }
+            match base.parse::<u32>() {
+                Ok(v) if part.contains('/') => (v, max),
+                Ok(v) => (v, v),
+                Err(_) => return false,
+            }
         };
-        value >= lo && value <= hi && (value-lo) % step == 0
+        value >= lo && value <= hi && (value - lo) % step == 0
     })
 }
 
 fn next_cron(config: &Value, after: DateTime<Utc>, timezone: &str) -> Option<DateTime<Utc>> {
     let expr = config.get("expression")?.as_str()?;
     let fields: Vec<_> = expr.split_whitespace().collect();
-    if fields.len() != 5 { return None; }
+    if fields.len() != 5 {
+        return None;
+    }
     // Cron expressions are evaluated in UTC unless a timezone-aware expression is added later.
     // Reject non-UTC zones instead of silently scheduling at the wrong local time.
-    if timezone != "UTC" && timezone != "Etc/UTC" { return None; }
+    if timezone != "UTC" && timezone != "Etc/UTC" {
+        return None;
+    }
     let mut candidate = after.with_second(0)?.with_nanosecond(0)? + Duration::minutes(1);
     for _ in 0..60 * 24 * 366 {
         let weekday = candidate.weekday().num_days_from_sunday();
@@ -54,7 +74,8 @@ fn next_cron(config: &Value, after: DateTime<Utc>, timezone: &str) -> Option<Dat
             && cron_field_matches(fields[1], candidate.hour(), 0, 23)
             && cron_field_matches(fields[2], candidate.day(), 1, 31)
             && cron_field_matches(fields[3], candidate.month(), 1, 12)
-            && cron_field_matches(fields[4], weekday, 0, 6) {
+            && cron_field_matches(fields[4], weekday, 0, 6)
+        {
             return Some(candidate);
         }
         candidate += Duration::minutes(1);
@@ -62,11 +83,19 @@ fn next_cron(config: &Value, after: DateTime<Utc>, timezone: &str) -> Option<Dat
     None
 }
 
-fn next_occurrence(kind: &str, config: &Value, timezone: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn next_occurrence(
+    kind: &str,
+    config: &Value,
+    timezone: &str,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
     match kind {
         "once" => None,
         "interval" => {
-            let seconds = config.get("seconds").and_then(Value::as_i64).filter(|v| *v >= 1)?;
+            let seconds = config
+                .get("seconds")
+                .and_then(Value::as_i64)
+                .filter(|v| *v >= 1)?;
             Some(now + Duration::seconds(seconds))
         }
         "cron" => next_cron(config, now, timezone),
@@ -90,7 +119,10 @@ async fn materialize_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         let raw_config: String = row.get("schedule_config");
         let timezone: String = row.get("timezone");
         let scheduled_at: String = row.get("next_run_at");
-        let config: Value = match serde_json::from_str(&raw_config) { Ok(v) => v, Err(_) => continue };
+        let config: Value = match serde_json::from_str(&raw_config) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         let next = next_occurrence(&kind, &config, &timezone, now).map(stamp);
         let run_id = Uuid::new_v4().to_string();
         let mut tx = pool.begin().await?;
@@ -202,7 +234,20 @@ async fn execute_run(state: AppState, run_id: &str) {
     let now = Utc::now();
     let now_text = stamp(now);
     let session_id = if strategy == "reuse" {
-        match reuse_id { Some(id) => id, None => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("复用会话 ID 缺失")).await; return; } }
+        match reuse_id {
+            Some(id) => id,
+            None => {
+                finish_run(
+                    &state.db,
+                    run_id,
+                    &state.worker_id,
+                    "failed",
+                    Some("复用会话 ID 缺失"),
+                )
+                .await;
+                return;
+            }
+        }
     } else {
         Uuid::new_v4().to_string()
     };
@@ -213,24 +258,94 @@ async fn execute_run(state: AppState, run_id: &str) {
             let status: String = r.get(4);
             let session_lease: Option<String> = r.get(8);
             if session_lease_is_live(&status, session_lease.as_deref(), Utc::now()) {
-                finish_run(&state.db, run_id, &state.worker_id, "failed", Some("目标会话正在执行或租约状态未知")).await;
+                finish_run(
+                    &state.db,
+                    run_id,
+                    &state.worker_id,
+                    "failed",
+                    Some("目标会话正在执行或租约状态未知"),
+                )
+                .await;
                 return;
             }
-            Session { id:r.get(0), agent_id:r.get(1), title:r.get(2), workspace:r.get(3), status, native_session_id:r.get(5), model:r.get(6), is_pinned:r.get::<i64,_>(7)!=0, fork_from_native_session_id:r.get(9), workspace_available:true }
+            Session {
+                id: r.get(0),
+                agent_id: r.get(1),
+                title: r.get(2),
+                workspace: r.get(3),
+                status,
+                native_session_id: r.get(5),
+                model: r.get(6),
+                is_pinned: r.get::<i64, _>(7) != 0,
+                fork_from_native_session_id: r.get(9),
+                workspace_available: true,
+            }
         }
         Ok(None) if strategy == "new" => {
-            if crate::api::build_agent_config(&state.db, &agent_id).await.is_err() {
-                finish_run(&state.db, run_id, &state.worker_id, "failed", Some("Agent 未配置或不可用")).await; return;
+            if crate::api::build_agent_config(&state.db, &agent_id)
+                .await
+                .is_err()
+            {
+                finish_run(
+                    &state.db,
+                    run_id,
+                    &state.worker_id,
+                    "failed",
+                    Some("Agent 未配置或不可用"),
+                )
+                .await;
+                return;
             }
             if sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,'idle',NULL,?,0,?,?)")
                 .bind(&session_id).bind(&agent_id).bind(format!("定时任务：{}", task_id)).bind(&workspace).bind(&model).bind(&now_text).bind(&now_text).execute(&state.db).await.is_err() {
                 finish_run(&state.db, run_id, &state.worker_id, "failed", Some("创建执行会话失败")).await; return;
             }
-            Session { id:session_id.clone(), agent_id, title:format!("定时任务：{}",task_id), workspace, status:"idle".into(), native_session_id:None, model, is_pinned:false, fork_from_native_session_id:None, workspace_available:true }
+            Session {
+                id: session_id.clone(),
+                agent_id,
+                title: format!("定时任务：{}", task_id),
+                workspace,
+                status: "idle".into(),
+                native_session_id: None,
+                model,
+                is_pinned: false,
+                fork_from_native_session_id: None,
+                workspace_available: true,
+            }
         }
-        Ok(None) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("复用的会话不存在")).await; return; }
-        Ok(Some(_)) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("新会话 ID 冲突")).await; return; }
-        Err(_) => { finish_run(&state.db, run_id, &state.worker_id, "failed", Some("读取会话失败")).await; return; }
+        Ok(None) => {
+            finish_run(
+                &state.db,
+                run_id,
+                &state.worker_id,
+                "failed",
+                Some("复用的会话不存在"),
+            )
+            .await;
+            return;
+        }
+        Ok(Some(_)) => {
+            finish_run(
+                &state.db,
+                run_id,
+                &state.worker_id,
+                "failed",
+                Some("新会话 ID 冲突"),
+            )
+            .await;
+            return;
+        }
+        Err(_) => {
+            finish_run(
+                &state.db,
+                run_id,
+                &state.worker_id,
+                "failed",
+                Some("读取会话失败"),
+            )
+            .await;
+            return;
+        }
     };
     // Link the session before claiming it. If the process crashes immediately
     // after the session claim, recovery can still see the association and will
@@ -246,7 +361,15 @@ async fn execute_run(state: AppState, run_id: &str) {
     let claimed = sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
-        finish_run(&state.db, run_id, &state.worker_id, "failed", Some("会话无法认领，可能正在运行")).await; return;
+        finish_run(
+            &state.db,
+            run_id,
+            &state.worker_id,
+            "failed",
+            Some("会话无法认领，可能正在运行"),
+        )
+        .await;
+        return;
     }
     // The run lease may have expired after the initial link but before the
     // session claim. Re-check ownership before starting any Agent process.
@@ -272,7 +395,15 @@ async fn execute_run(state: AppState, run_id: &str) {
     let renew_session_worker = session_worker_id.clone();
     let (lease_lost_tx, mut lease_lost_rx) = tokio::sync::oneshot::channel();
     let heartbeat = tokio::spawn(async move {
-        renew_run_lease(renew_db, renew_run, renew_session, renew_worker, renew_session_worker, lease_lost_tx).await;
+        renew_run_lease(
+            renew_db,
+            renew_run,
+            renew_session,
+            renew_worker,
+            renew_session_worker,
+            lease_lost_tx,
+        )
+        .await;
     });
     let session_id_for_run = session.id.clone();
     let agent_kind_for_run: String = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
@@ -316,7 +447,12 @@ async fn execute_run(state: AppState, run_id: &str) {
         }
     }
     heartbeat.abort();
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM sessions WHERE id=?").bind(&session_id).fetch_optional(&state.db).await.ok().flatten();
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM sessions WHERE id=?")
+        .bind(&session_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
     let (final_status, error) = match status.as_deref() {
         Some("idle") => ("succeeded", None),
         Some("interrupted") => ("cancelled", Some("执行被中断")),
@@ -337,11 +473,22 @@ pub fn start(state: AppState) {
         let mut ticker = time::interval(StdDuration::from_secs(POLL_SECONDS));
         loop {
             ticker.tick().await;
-            if let Err(error) = recover_expired(&state.db).await { tracing::warn!(%error, "scheduled task recovery failed"); continue; }
-            if let Err(error) = materialize_due(&state.db).await { tracing::warn!(%error, "scheduled task scan failed"); continue; }
+            if let Err(error) = recover_expired(&state.db).await {
+                tracing::warn!(%error, "scheduled task recovery failed");
+                continue;
+            }
+            if let Err(error) = materialize_due(&state.db).await {
+                tracing::warn!(%error, "scheduled task scan failed");
+                continue;
+            }
             match claim(&state.db, &state.worker_id).await {
-                Ok(Some(id)) => { let state = state.clone(); tokio::spawn(async move { execute_run(state, &id).await; }); }
-                Ok(None) => {},
+                Ok(Some(id)) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        execute_run(state, &id).await;
+                    });
+                }
+                Ok(None) => {}
                 Err(error) => tracing::warn!(%error, "scheduled task claim failed"),
             }
         }
@@ -371,7 +518,8 @@ mod tests {
     #[test]
     fn interval_schedule_skips_missed_occurrences_in_one_step() {
         let now = Utc::now();
-        let next = next_occurrence("interval", &serde_json::json!({"seconds":60}), "UTC", now).unwrap();
+        let next =
+            next_occurrence("interval", &serde_json::json!({"seconds":60}), "UTC", now).unwrap();
         assert!(next > now && next <= now + Duration::seconds(61));
     }
     #[test]
@@ -382,19 +530,35 @@ mod tests {
     }
     #[test]
     fn cron_single_value_step_advances_through_field_range() {
-        let after = DateTime::parse_from_rfc3339("2026-01-01T00:05:00Z").unwrap().with_timezone(&Utc);
-        let next = next_cron(&serde_json::json!({"expression":"5/10 * * * *"}), after, "UTC").unwrap();
+        let after = DateTime::parse_from_rfc3339("2026-01-01T00:05:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let next = next_cron(
+            &serde_json::json!({"expression":"5/10 * * * *"}),
+            after,
+            "UTC",
+        )
+        .unwrap();
         assert_eq!(next.to_rfc3339(), "2026-01-01T00:15:00+00:00");
     }
 
     #[test]
     fn invalid_cron_is_rejected() {
-        assert!(next_cron(&serde_json::json!({"expression":"not cron"}), Utc::now(), "UTC").is_none());
+        assert!(next_cron(
+            &serde_json::json!({"expression":"not cron"}),
+            Utc::now(),
+            "UTC"
+        )
+        .is_none());
     }
     async fn test_pool() -> SqlitePool {
         let path = std::env::temp_dir().join(format!("agentweb-scheduler-{}.db", Uuid::new_v4()));
         let url = format!("sqlite://{}?mode=rwc", path.display());
-        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(5).connect(&url).await.unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .unwrap();
         sqlx::query("CREATE TABLE scheduled_task_runs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL, status TEXT NOT NULL, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, agent_session_id TEXT, summary TEXT, error_message TEXT, lease_owner TEXT, lease_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
         pool
@@ -408,8 +572,8 @@ mod tests {
             .bind(&now).bind(&now).bind(&now).execute(&pool).await.unwrap();
         let p1 = pool.clone();
         let p2 = pool.clone();
-        let (a,b) = tokio::join!(claim(&p1,"worker-a"),claim(&p2,"worker-b"));
-        let claimed = [a.unwrap(),b.unwrap()].into_iter().flatten().count();
+        let (a, b) = tokio::join!(claim(&p1, "worker-a"), claim(&p2, "worker-b"));
+        let claimed = [a.unwrap(), b.unwrap()].into_iter().flatten().count();
         assert_eq!(claimed, 1, "only one worker may claim a queued run");
     }
 
@@ -420,8 +584,12 @@ mod tests {
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'dead-worker',?,?,?)")
             .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
         recover_expired(&pool).await.unwrap();
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'").fetch_one(&pool).await.unwrap();
-        assert_eq!(status,"queued");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "queued");
     }
     #[tokio::test]
     async fn expired_run_waits_for_live_session_lease_before_requeueing() {
@@ -430,38 +598,65 @@ mod tests {
         let expired = stamp(now - Duration::minutes(1));
         let live = stamp(now + Duration::minutes(1));
         sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s1','running',?)")
-            .bind(&live).execute(&pool).await.unwrap();
+            .bind(&live)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r1','t1','task','running',?,'s1','worker-a',?,?,?)")
             .bind(&expired).bind(&expired).bind(&expired).bind(&expired).execute(&pool).await.unwrap();
 
         recover_expired(&pool).await.unwrap();
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
-            .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, "running", "must not requeue while the associated session lease is live");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "running",
+            "must not requeue while the associated session lease is live"
+        );
 
         sqlx::query("UPDATE sessions SET lease_until=? WHERE id='s1'")
-            .bind(&expired).execute(&pool).await.unwrap();
+            .bind(&expired)
+            .execute(&pool)
+            .await
+            .unwrap();
         recover_expired(&pool).await.unwrap();
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
-            .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, "queued", "must requeue after the associated session lease expires");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "queued",
+            "must requeue after the associated session lease expires"
+        );
     }
-
 
     #[tokio::test]
     async fn expired_run_does_not_requeue_when_running_session_has_no_lease() {
         let pool = test_pool().await;
         let old = stamp(Utc::now() - Duration::minutes(1));
-        sqlx::query("INSERT INTO sessions(id,status,lease_until) VALUES('s-no-lease','running',NULL)")
-            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO sessions(id,status,lease_until) VALUES('s-no-lease','running',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-no-lease','t1','task','running',?,'s-no-lease','dead-worker',?,?,?)")
             .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
 
         recover_expired(&pool).await.unwrap();
 
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-no-lease'")
-            .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, "running", "an unknown session lease must not trigger a possible duplicate execution");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-no-lease'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "running",
+            "an unknown session lease must not trigger a possible duplicate execution"
+        );
     }
 
     #[tokio::test]
@@ -475,9 +670,15 @@ mod tests {
 
         recover_expired(&pool).await.unwrap();
 
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-bad-lease'")
-            .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, "running", "a malformed session lease must be treated conservatively");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-bad-lease'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "running",
+            "a malformed session lease must be treated conservatively"
+        );
     }
 
     #[tokio::test]
@@ -501,8 +702,15 @@ mod tests {
         assert!(!renew_session_lease_once(&pool, "s1", "worker-b").await);
 
         let lease: String = sqlx::query_scalar("SELECT lease_until FROM sessions WHERE id='s1'")
-            .fetch_one(&pool).await.unwrap();
-        assert!(DateTime::parse_from_rfc3339(&lease).unwrap().with_timezone(&Utc) > Utc::now());
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            DateTime::parse_from_rfc3339(&lease)
+                .unwrap()
+                .with_timezone(&Utc)
+                > Utc::now()
+        );
     }
 
     #[tokio::test]
@@ -514,13 +722,27 @@ mod tests {
         sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t1','task','do it','codex','/tmp','interval','{\"seconds\":60}','UTC',?,1,?)")
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
         materialize_due(&pool).await.unwrap();
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t1'").fetch_one(&pool).await.unwrap();
-        let next: String = sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t1'").fetch_one(&pool).await.unwrap();
-        assert_eq!(count, 1, "downtime must not create a backlog of missed interval runs");
-        assert!(chrono::DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc) > Utc::now());
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let next: String =
+            sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 1,
+            "downtime must not create a backlog of missed interval runs"
+        );
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&next)
+                .unwrap()
+                .with_timezone(&Utc)
+                > Utc::now()
+        );
     }
-
-
 
     #[tokio::test]
     async fn due_occurrence_is_coalesced_while_task_has_active_run() {
@@ -535,11 +757,24 @@ mod tests {
 
         materialize_due(&pool).await.unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-active'").fetch_one(&pool).await.unwrap();
-        let next: String = sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t-active'").fetch_one(&pool).await.unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-active'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let next: String =
+            sqlx::query_scalar("SELECT next_run_at FROM scheduled_tasks WHERE id='t-active'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count, 1, "a due occurrence must not overlap an active run");
-        assert!(DateTime::parse_from_rfc3339(&next).unwrap().with_timezone(&Utc) > Utc::now(),
-            "the schedule cursor should advance to coalesce missed occurrences");
+        assert!(
+            DateTime::parse_from_rfc3339(&next)
+                .unwrap()
+                .with_timezone(&Utc)
+                > Utc::now(),
+            "the schedule cursor should advance to coalesce missed occurrences"
+        );
     }
 
     #[tokio::test]
@@ -550,24 +785,37 @@ mod tests {
         // This local timestamp is earlier than UTC now, even though its hour
         // component can sort after a UTC timestamp when compared as plain text.
         let now = Utc::now();
-        let due = (now - Duration::minutes(5)).with_timezone(&chrono::FixedOffset::east_opt(2 * 3600).unwrap()).to_rfc3339();
+        let due = (now - Duration::minutes(5))
+            .with_timezone(&chrono::FixedOffset::east_opt(2 * 3600).unwrap())
+            .to_rfc3339();
         sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-offset','task','do it','codex','/tmp','interval','{\"seconds\":60}','UTC',?,1,?)")
             .bind(&due).bind(stamp(now)).execute(&pool).await.unwrap();
 
         materialize_due(&pool).await.unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-offset'").fetch_one(&pool).await.unwrap();
-        assert_eq!(count, 1, "due timestamps must be compared by instant, not lexical representation");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE task_id='t-offset'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 1,
+            "due timestamps must be compared by instant, not lexical representation"
+        );
     }
 
     #[tokio::test]
     async fn orphaned_queued_run_is_failed_without_touching_valid_queue() {
         let pool = test_pool().await;
         sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY)")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         let now = stamp(Utc::now());
         sqlx::query("INSERT INTO scheduled_tasks(id) VALUES('existing-task')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,created_at,updated_at) VALUES('orphan','deleted-task','deleted','queued',?,?,?),('valid','existing-task','valid','queued',?,?,?)")
             .bind(&now).bind(&now).bind(&now)
             .bind(&now).bind(&now).bind(&now)
@@ -576,14 +824,22 @@ mod tests {
         recover_expired(&pool).await.unwrap();
 
         let orphan: (String, Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT status,error_message,lease_owner FROM scheduled_task_runs WHERE id='orphan'"
-        ).fetch_one(&pool).await.unwrap();
+            "SELECT status,error_message,lease_owner FROM scheduled_task_runs WHERE id='orphan'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(orphan.0, "failed");
-        assert!(orphan.1.as_deref().is_some_and(|message| message.contains("parent task missing")));
+        assert!(orphan
+            .1
+            .as_deref()
+            .is_some_and(|message| message.contains("parent task missing")));
         assert_eq!(orphan.2, None);
-        let valid: String = sqlx::query_scalar(
-            "SELECT status FROM scheduled_task_runs WHERE id='valid'"
-        ).fetch_one(&pool).await.unwrap();
+        let valid: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='valid'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(valid, "queued", "valid tasks must remain queued");
     }
 
@@ -596,8 +852,14 @@ mod tests {
 
         recover_expired(&pool).await.unwrap();
 
-        let status: String = sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-malformed'")
-            .fetch_one(&pool).await.unwrap();
-        assert_eq!(status, "queued", "invalid lease timestamps must be treated as expired");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r-malformed'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "queued",
+            "invalid lease timestamps must be treated as expired"
+        );
     }
 }

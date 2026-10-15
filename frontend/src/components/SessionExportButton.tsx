@@ -53,10 +53,12 @@ export function SessionExportButton({ session, messages, activity }: Props) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${(session.title || "agentweb-session")
-      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
-      .trim()
-      .slice(0, 100) || "agentweb-session"}.md`;
+    anchor.download = `${
+      (session.title || "agentweb-session")
+        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+        .trim()
+        .slice(0, 100) || "agentweb-session"
+    }.md`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };

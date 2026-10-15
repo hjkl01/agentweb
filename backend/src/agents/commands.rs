@@ -90,7 +90,11 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             args.push(message.into());
         }
         ProcessKind::Claude => {
-            args = vec!["--output-format".into(), "stream-json".into(), "--verbose".into()];
+            args = vec![
+                "--output-format".into(),
+                "stream-json".into(),
+                "--verbose".into(),
+            ];
             if let Some(id) = &config.native_session_id {
                 args.extend(["--resume".into(), id.clone()]);
             }
@@ -110,7 +114,11 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             args.extend(["--prompt".into(), message.into()]);
         }
         ProcessKind::Qwen => {
-            args = vec!["--output-format".into(), "stream-json".into(), "--include-partial-messages".into()];
+            args = vec![
+                "--output-format".into(),
+                "stream-json".into(),
+                "--include-partial-messages".into(),
+            ];
             if let Some(id) = &config.native_session_id {
                 args.extend(["--resume".into(), id.clone()]);
             }
@@ -166,7 +174,9 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
             // Never allow the shared workspace mount itself as a project:
             // binding it writable would expose every sibling project.
             if is_shared_workspace_root(&workspace) {
-                bail!("Agent workspace must be a project directory, not the shared /workspaces root");
+                bail!(
+                    "Agent workspace must be a project directory, not the shared /workspaces root"
+                );
             }
             let mut sandbox = Command::new("bwrap");
             sandbox.args([
@@ -233,11 +243,16 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
                 "/data/runtimes",
                 "--bind",
             ]);
-            if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces") {
+            if workspace.starts_with("/workspaces")
+                && workspace != std::path::Path::new("/workspaces")
+            {
                 sandbox.args(["--bind"]);
-                sandbox.arg(&workspace).arg("/tmp/agentweb-mounts/workspace");
+                sandbox
+                    .arg(&workspace)
+                    .arg("/tmp/agentweb-mounts/workspace");
                 sandbox.args(["--tmpfs", "/workspaces"]);
-                let relative = workspace.strip_prefix("/workspaces")
+                let relative = workspace
+                    .strip_prefix("/workspaces")
                     .map_err(|error| anyhow!("cannot isolate workspace parent: {error}"))?;
                 let mut target = std::path::PathBuf::from("/workspaces");
                 for component in relative.components() {
@@ -316,9 +331,15 @@ mod workspace_state_tests {
 
     #[test]
     fn shared_workspaces_root_is_not_a_valid_project_workspace() {
-        assert!(is_shared_workspace_root(std::path::Path::new("/workspaces")));
-        assert!(!is_shared_workspace_root(std::path::Path::new("/workspaces/project")));
-        assert!(!is_shared_workspace_root(std::path::Path::new("/workspaces-other/project")));
+        assert!(is_shared_workspace_root(std::path::Path::new(
+            "/workspaces"
+        )));
+        assert!(!is_shared_workspace_root(std::path::Path::new(
+            "/workspaces/project"
+        )));
+        assert!(!is_shared_workspace_root(std::path::Path::new(
+            "/workspaces-other/project"
+        )));
     }
 
     #[test]
@@ -363,7 +384,9 @@ mod workspace_state_tests {
             model: None,
         };
         let command = build(ProcessKind::Pi, &config, "first message").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(!args.iter().any(|arg| arg == "--session"));
@@ -385,12 +408,19 @@ mod workspace_state_tests {
             model: None,
         };
         let command = build(ProcessKind::Pi, &config, "follow-up").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let session_arg = args.iter().position(|arg| arg == "--session")
+        let session_arg = args
+            .iter()
+            .position(|arg| arg == "--session")
             .expect("existing Pi session should be resumed");
-        assert_eq!(args.get(session_arg + 1).map(String::as_str), Some("existing-native-session"));
+        assert_eq!(
+            args.get(session_arg + 1).map(String::as_str),
+            Some("existing-native-session")
+        );
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -408,12 +438,19 @@ mod workspace_state_tests {
             model: None,
         };
         let command = build(ProcessKind::Pi, &config, "continue from this point").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let fork_arg = args.iter().position(|arg| arg == "--fork")
+        let fork_arg = args
+            .iter()
+            .position(|arg| arg == "--fork")
             .expect("Pi fork should use the native --fork flag");
-        assert_eq!(args.get(fork_arg + 1).map(String::as_str), Some("source-native-session"));
+        assert_eq!(
+            args.get(fork_arg + 1).map(String::as_str),
+            Some("source-native-session")
+        );
         assert!(!args.iter().any(|arg| arg == "--session"));
         std::fs::remove_dir_all(workspace).unwrap();
     }

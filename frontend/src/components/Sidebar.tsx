@@ -55,9 +55,16 @@ export function Sidebar({
   const normalizedQuery = sessionQuery.trim().toLocaleLowerCase();
   const filteredSessions = sessions.filter((session) => {
     if (!normalizedQuery) return true;
-    const agentName = agents.find((agent) => agent.id === session.agent_id)?.name || session.agent_id;
-    return [session.title, session.workspace, session.agent_id, agentName, session.status]
-      .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+    const agentName =
+      agents.find((agent) => agent.id === session.agent_id)?.name ||
+      session.agent_id;
+    return [
+      session.title,
+      session.workspace,
+      session.agent_id,
+      agentName,
+      session.status,
+    ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
   });
   return (
     <aside className="sidebar">
@@ -80,7 +87,12 @@ export function Sidebar({
         <Terminal size={16} /> Terminal
       </button>
       <div className="section-label">
-        Chats <span>{normalizedQuery ? filteredSessions.length + "/" + sessions.length : sessions.length}</span>
+        Chats{" "}
+        <span>
+          {normalizedQuery
+            ? filteredSessions.length + "/" + sessions.length
+            : sessions.length}
+        </span>
       </div>
       <div className="session-search" role="search">
         <Search size={14} aria-hidden="true" />
@@ -108,7 +120,10 @@ export function Sidebar({
               <span>{session.title}</span>
               <small>
                 {session.workspace_available === false ? (
-                  <span className="workspace-warning" title="工作区目录不存在或不在允许的工作区根目录内">
+                  <span
+                    className="workspace-warning"
+                    title="工作区目录不存在或不在允许的工作区根目录内"
+                  >
                     <AlertTriangle size={12} /> 工作区不可用
                   </span>
                 ) : (
@@ -131,7 +146,11 @@ export function Sidebar({
                 {session.workspace_available !== false && (
                   <>
                     <button onClick={() => onTogglePin(session.id)}>
-                      {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+                      {session.is_pinned ? (
+                        <PinOff size={14} />
+                      ) : (
+                        <Pin size={14} />
+                      )}{" "}
                       {session.is_pinned ? "取消置顶" : "置顶"}
                     </button>
                     <button onClick={() => onRenameSession(session.id)}>

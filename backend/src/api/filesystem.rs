@@ -101,7 +101,12 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
             }
             // Do not traverse symlinks, even when they point back inside the
             // workspace: directory links can create cycles and unbounded scans.
-            if entry.file_type().await.map(|kind| kind.is_symlink()).unwrap_or(true) {
+            if entry
+                .file_type()
+                .await
+                .map(|kind| kind.is_symlink())
+                .unwrap_or(true)
+            {
                 continue;
             }
             let canonical = match fs::canonicalize(entry.path()).await {
@@ -201,7 +206,12 @@ pub async fn tree(
         if ignored(&name) {
             continue;
         }
-        if entry.file_type().await.map(|kind| kind.is_symlink()).unwrap_or(true) {
+        if entry
+            .file_type()
+            .await
+            .map(|kind| kind.is_symlink())
+            .unwrap_or(true)
+        {
             continue;
         }
         let metadata = match entry.metadata().await {
@@ -326,7 +336,10 @@ mod symlink_tree_tests {
         symlink(&root, root.join("nested/back-to-root")).unwrap();
 
         let (result, truncated) = search_tree(&root, "outside-secret").await.unwrap();
-        assert!(result.is_empty(), "search must not follow an external symlink");
+        assert!(
+            result.is_empty(),
+            "search must not follow an external symlink"
+        );
         assert!(!truncated);
         let (result, truncated) = search_tree(&root, "nested").await.unwrap();
         assert_eq!(result.len(), 1);

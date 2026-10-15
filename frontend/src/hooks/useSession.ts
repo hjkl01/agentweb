@@ -29,11 +29,15 @@ export function useSession(active?: string) {
       const latestSessions = await api<Session[]>("/sessions");
       if (requestId !== refreshRequestId.current) return;
       setSessions((currentSessions) => {
-        const currentById = new Map(currentSessions.map((session) => [session.id, session]));
+        const currentById = new Map(
+          currentSessions.map((session) => [session.id, session]),
+        );
         return latestSessions.map((latest) => {
           const current = currentById.get(latest.id);
-          const revisionAtRequest = detailRevisionsAtRequest.get(latest.id) ?? 0;
-          const currentRevision = acceptedDetailRevision.current.get(latest.id) ?? 0;
+          const revisionAtRequest =
+            detailRevisionsAtRequest.get(latest.id) ?? 0;
+          const currentRevision =
+            acceptedDetailRevision.current.get(latest.id) ?? 0;
           // A detail request completed after this list request began. Keep the
           // newer detail status rather than regressing to a stale list snapshot.
           if (current && currentRevision > revisionAtRequest) {

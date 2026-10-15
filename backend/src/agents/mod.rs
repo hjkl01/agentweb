@@ -57,12 +57,7 @@ impl AgentManager {
         adapter
     }
 
-    pub async fn interrupt(
-        &self,
-        kind: &str,
-        session_id: &str,
-        execution_id: &str,
-    ) -> Result<()> {
+    pub async fn interrupt(&self, kind: &str, session_id: &str, execution_id: &str) -> Result<()> {
         // An execution token belongs to one adapter only. Broadcasting a
         // pre-start cancellation marker to every adapter would leak markers and
         // could affect unrelated future runs.
@@ -73,14 +68,19 @@ impl AgentManager {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{AgentAdapter, AgentConfig, AgentManager};
-    use crate::{agents::{adapter::AgentRunResult, models::AgentModel}, events::EventBus};
+    use crate::{
+        agents::{adapter::AgentRunResult, models::AgentModel},
+        events::EventBus,
+    };
     use anyhow::{bail, Result};
     use async_trait::async_trait;
-    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     struct MockAdapter {
         interrupt_calls: Arc<AtomicUsize>,
@@ -137,7 +137,9 @@ mod tests {
             );
         }
 
-        let result = manager.interrupt("failing", "test-session", "test-execution").await;
+        let result = manager
+            .interrupt("failing", "test-session", "test-execution")
+            .await;
 
         assert!(result.is_err(), "the first adapter error must be returned");
         assert_eq!(failed_calls.load(Ordering::SeqCst), 1);
@@ -156,7 +158,10 @@ mod tests {
             }),
         );
 
-        assert!(manager.interrupt("successful", "test-session", "test-execution").await.is_ok());
+        assert!(manager
+            .interrupt("successful", "test-session", "test-execution")
+            .await
+            .is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

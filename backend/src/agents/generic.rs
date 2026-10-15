@@ -17,7 +17,10 @@ impl GenericAdapter {
     }
 
     pub fn with_kind(kind: ProcessKind) -> Self {
-        Self { process: ProcessAdapter::new(), kind }
+        Self {
+            process: ProcessAdapter::new(),
+            kind,
+        }
     }
 }
 #[async_trait]
@@ -35,6 +38,8 @@ impl AgentAdapter for GenericAdapter {
             .await
     }
     async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
-        self.process.interrupt_execution(session_id, execution_id).await
+        self.process
+            .interrupt_execution(session_id, execution_id)
+            .await
     }
 }

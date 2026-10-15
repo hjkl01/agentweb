@@ -1,4 +1,14 @@
-import { Activity, AlertTriangle, AtSign, Bot, Check, Copy, GitBranch, Send, Square } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  AtSign,
+  Bot,
+  Check,
+  Copy,
+  GitBranch,
+  Send,
+  Square,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import type { RefObject } from "react";
 import type {
@@ -27,7 +37,13 @@ function CopyMessageButton({ content }: { content: string }) {
     }
   };
   return (
-    <button type="button" className="message-action" onClick={copy} title="复制消息" aria-label="复制消息">
+    <button
+      type="button"
+      className="message-action"
+      onClick={copy}
+      title="复制消息"
+      aria-label="复制消息"
+    >
       {copied ? <Check size={13} /> : <Copy size={13} />}
       <span>{copied ? "已复制" : "复制"}</span>
     </button>
@@ -92,8 +108,7 @@ export function ChatPanel({
     const match = input.match(/(?:^|\s)@(?:\{([^}]*)\}|([^\s]*))$/);
     return match ? (match[1] ?? match[2] ?? "") : "";
   }, [input]);
-  const shouldMention =
-    !!active && /(?:^|\s)@(?:\{[^}]*|[^\s]*)$/.test(input);
+  const shouldMention = !!active && /(?:^|\s)@(?:\{[^}]*|[^\s]*)$/.test(input);
   const chooseMention = (path: string) => {
     const match = input.match(/(?:^|\s)@(?:\{[^}]*)?[^\s]*$/);
     if (!match) return;
@@ -137,11 +152,19 @@ export function ChatPanel({
               messages={messages}
               activity={activity}
             />
-            {currentAgent?.kind === "pi" && current?.native_session_id && !running && current.status !== "missing" && (
-              <button type="button" className="message-action" onClick={onForkSession} title="从当前 Pi 会话创建独立分支">
-                <GitBranch size={14} /> <span>创建分支</span>
-              </button>
-            )}
+            {currentAgent?.kind === "pi" &&
+              current?.native_session_id &&
+              !running &&
+              current.status !== "missing" && (
+                <button
+                  type="button"
+                  className="message-action"
+                  onClick={onForkSession}
+                  title="从当前 Pi 会话创建独立分支"
+                >
+                  <GitBranch size={14} /> <span>创建分支</span>
+                </button>
+              )}
           </div>
         )}
       </header>
@@ -165,11 +188,19 @@ export function ChatPanel({
             <AlertTriangle size={18} />
             <div className="session-warning-content">
               <strong>原生会话已不存在</strong>
-              <p>Agent 的原生 Session 可能已被手动删除，原有上下文无法恢复。会话元数据已保留；重新开始会创建新的原生 Session。</p>
+              <p>
+                Agent 的原生 Session
+                可能已被手动删除，原有上下文无法恢复。会话元数据已保留；重新开始会创建新的原生
+                Session。
+              </p>
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm("确认重新开始？旧的原生 Session ID 将被清除，并在发送下一条消息时创建新会话。")) {
+                  if (
+                    window.confirm(
+                      "确认重新开始？旧的原生 Session ID 将被清除，并在发送下一条消息时创建新会话。",
+                    )
+                  ) {
                     onRestartMissingSession();
                   }
                 }}
@@ -284,7 +315,11 @@ export function ChatPanel({
             <button
               className="send-button"
               onClick={running ? onStop : onSend}
-              disabled={!active || current?.status === "missing" || (!running && !input.trim())}
+              disabled={
+                !active ||
+                current?.status === "missing" ||
+                (!running && !input.trim())
+              }
               aria-label={running ? "Stop" : "Send"}
               title={running ? "Stop agent" : "Send message"}
             >
@@ -297,8 +332,10 @@ export function ChatPanel({
           </div>
         </div>
         <div className="composer-hint">
-          <AtSign size={12} /> @ 选择文件/文件夹 · Enter 发送 · Shift + Enter 换行
-          {queuedCount > 0 && ` · 已排队 ${queuedCount} 条，当前回复结束后自动发送`}
+          <AtSign size={12} /> @ 选择文件/文件夹 · Enter 发送 · Shift + Enter
+          换行
+          {queuedCount > 0 &&
+            ` · 已排队 ${queuedCount} 条，当前回复结束后自动发送`}
         </div>
       </div>
     </main>

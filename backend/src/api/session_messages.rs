@@ -43,20 +43,22 @@ pub async fn list_messages(
     if !is_pi {
         return Ok(Json(Vec::new()));
     }
-    let is_fork_preview = session.native_session_id.is_none() && session.fork_from_native_session_id.is_some();
-    let Some(native_session_id) = session.native_session_id.as_deref().or(session.fork_from_native_session_id.as_deref()) else {
+    let is_fork_preview =
+        session.native_session_id.is_none() && session.fork_from_native_session_id.is_some();
+    let Some(native_session_id) = session
+        .native_session_id
+        .as_deref()
+        .or(session.fork_from_native_session_id.as_deref())
+    else {
         return Ok(Json(Vec::new()));
     };
     // Reading Pi JSONL is synchronous filesystem traversal plus JSON parsing.
     // Keep that work off Tokio's async executor so frequent transcript polling
     // cannot stall unrelated API requests.
-    let permit = TRANSCRIPT_READ_LIMIT
-        .acquire()
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "Pi transcript read limiter is unavailable");
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
+    let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+        tracing::error!(%error, "Pi transcript read limiter is unavailable");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let workspace = session.workspace.clone();
     let native_session_id = native_session_id.to_owned();
     let (transcript_exists, messages) = tokio::task::spawn_blocking(move || {
@@ -105,7 +107,6 @@ pub async fn list_messages(
 pub struct SendMessage {
     pub message: String,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -228,14 +229,13 @@ pub async fn interrupt(
         .unwrap_or(session.agent_id);
     // Capture the current execution token first. The conditional update below
     // prevents a concurrent lease takeover from being interrupted by this request.
-    let execution_id: Option<String> = sqlx::query_scalar(
-        "SELECT worker_id FROM sessions WHERE id=? AND status='running'",
-    )
-    .bind(&id)
-    .fetch_optional(&s.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .flatten();
+    let execution_id: Option<String> =
+        sqlx::query_scalar("SELECT worker_id FROM sessions WHERE id=? AND status='running'")
+            .bind(&id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .flatten();
     let Some(execution_id) = execution_id else {
         return Ok(Json(
             serde_json::json!({"status":load_session(&s.db,&id).await?.status}),

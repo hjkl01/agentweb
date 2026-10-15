@@ -1291,7 +1291,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-
 /* Chat readability: Markdown blocks and lightweight message actions. */
 .message-heading {
   display: flex;
@@ -1300,7 +1299,9 @@ button:disabled {
   gap: 12px;
   min-height: 22px;
 }
-.message-heading .message-role { margin: 2px 0 7px; }
+.message-heading .message-role {
+  margin: 2px 0 7px;
+}
 .message-action {
   border: 0;
   padding: 3px 6px;
@@ -1312,8 +1313,13 @@ button:disabled {
   transition: opacity 0.15s;
 }
 .message-row:hover .message-action,
-.message-action:focus-visible { opacity: 1; }
-.message-action:hover:not(:disabled) { background: #ededf0; color: #444; }
+.message-action:focus-visible {
+  opacity: 1;
+}
+.message-action:hover:not(:disabled) {
+  background: #ededf0;
+  color: #444;
+}
 .markdown-message {
   min-width: 0;
   color: #29292f;
@@ -1334,9 +1340,16 @@ button:disabled {
   background: #fff0ef;
   border-radius: 10px;
 }
-.markdown-message > :first-child { margin-top: 0; }
-.markdown-message > :last-child { margin-bottom: 0; }
-.markdown-message p { margin: 0 0 10px; white-space: normal; }
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+.markdown-message p {
+  margin: 0 0 10px;
+  white-space: normal;
+}
 .markdown-message h1,
 .markdown-message h2,
 .markdown-message h3,
@@ -1347,26 +1360,48 @@ button:disabled {
   margin: 18px 0 9px;
   font-weight: 650;
 }
-.markdown-message h1 { font-size: 1.45em; }
-.markdown-message h2 { font-size: 1.28em; }
-.markdown-message h3 { font-size: 1.12em; }
-.markdown-message h4 { font-size: 1em; }
+.markdown-message h1 {
+  font-size: 1.45em;
+}
+.markdown-message h2 {
+  font-size: 1.28em;
+}
+.markdown-message h3 {
+  font-size: 1.12em;
+}
+.markdown-message h4 {
+  font-size: 1em;
+}
 .markdown-message ul,
-.markdown-message ol { margin: 6px 0 12px; padding-left: 24px; }
-.markdown-message li { padding-left: 2px; margin: 3px 0; }
+.markdown-message ol {
+  margin: 6px 0 12px;
+  padding-left: 24px;
+}
+.markdown-message li {
+  padding-left: 2px;
+  margin: 3px 0;
+}
 .markdown-message blockquote {
   margin: 8px 0 12px;
   padding: 3px 12px;
   border-left: 3px solid #d4d4dc;
   color: #686873;
 }
-.markdown-message hr { border: 0; border-top: 1px solid #e5e5e9; margin: 14px 0; }
+.markdown-message hr {
+  border: 0;
+  border-top: 1px solid #e5e5e9;
+  margin: 14px 0;
+}
 .md-inline-code {
   padding: 2px 5px;
   border-radius: 5px;
   background: #efeff2;
   color: #9b285b;
-  font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    0.9em ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   overflow-wrap: anywhere;
 }
 .md-code-block {
@@ -1400,7 +1435,9 @@ button:disabled {
   color: #696975;
   font-size: 10px;
 }
-.md-copy-button:hover:not(:disabled) { background: #e3e3e9; }
+.md-copy-button:hover:not(:disabled) {
+  background: #e3e3e9;
+}
 .md-code-block > pre {
   margin: 0;
   padding: 12px 14px;
@@ -1410,13 +1447,21 @@ button:disabled {
   word-break: normal;
   color: #292932;
   background: transparent;
-  font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font:
+    12px/1.65 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
 }
-.md-code-block > pre code { font: inherit; }
+.md-code-block > pre code {
+  font: inherit;
+}
 @media (hover: none) {
-  .message-action { opacity: 1; }
+  .message-action {
+    opacity: 1;
+  }
 }
-
 
 .md-table-wrap {
   max-width: 100%;
@@ -1444,18 +1489,32 @@ button:disabled {
   color: #44444d;
   font-weight: 650;
 }
-.md-table tr:last-child td { border-bottom: 0; }
+.md-table tr:last-child td {
+  border-bottom: 0;
+}
 .md-table th:last-child,
-.md-table td:last-child { border-right: 0; }
-
+.md-table td:last-child {
+  border-right: 0;
+}
 
 /* Lightweight token colors; syntax highlighting is intentionally dependency-free. */
-.md-code-block .syntax-keyword { color: #8250df; font-weight: 600; }
-.md-code-block .syntax-string { color: #0a7a55; }
-.md-code-block .syntax-comment { color: #85858f; font-style: italic; }
-.md-code-block .syntax-number { color: #b35c00; }
-.md-code-block .syntax-function { color: #0969da; }
-
+.md-code-block .syntax-keyword {
+  color: #8250df;
+  font-weight: 600;
+}
+.md-code-block .syntax-string {
+  color: #0a7a55;
+}
+.md-code-block .syntax-comment {
+  color: #85858f;
+  font-style: italic;
+}
+.md-code-block .syntax-number {
+  color: #b35c00;
+}
+.md-code-block .syntax-function {
+  color: #0969da;
+}
 
 /* Workspace preview tabs and focused reading mode. */
 .workspace-preview-area {
@@ -1540,7 +1599,9 @@ button:disabled {
   background: transparent;
   color: #888;
 }
-.preview-tab-close:hover { background: #ececf0; }
+.preview-tab-close:hover {
+  background: #ececf0;
+}
 .preview-head-actions {
   display: flex;
   align-items: center;
@@ -1569,7 +1630,6 @@ button:disabled {
     max-width: 100vw;
   }
 }
-
 
 .session-warning {
   display: flex;
@@ -1608,7 +1668,6 @@ button:disabled {
   background: var(--surface-hover, rgba(127, 127, 127, 0.12));
 }
 
-
 /* Sessions whose workspace was deleted or moved outside the configured root. */
 .session.workspace-missing {
   opacity: 0.82;
@@ -1622,7 +1681,6 @@ button:disabled {
 .workspace-warning svg {
   flex: 0 0 auto;
 }
-
 
 /* Agent Web visual system: quiet surfaces, consistent spacing, and clear focus. */
 :root {
@@ -1656,7 +1714,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-button, input, textarea, select {
+button,
+input,
+textarea,
+select {
   accent-color: var(--ui-accent);
 }
 
@@ -1664,7 +1725,12 @@ button {
   border-color: var(--ui-border);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-text);
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 
 button:hover:not(:disabled) {
@@ -1676,17 +1742,25 @@ button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
   outline: 2px solid rgb(91 91 214 / 45%);
   outline-offset: 2px;
 }
 
 .app {
   background: var(--ui-bg);
-  grid-template-columns: clamp(224px, 19vw, 292px) minmax(360px, 1fr) clamp(270px, 25vw, 390px);
+  grid-template-columns: clamp(224px, 19vw, 292px) minmax(360px, 1fr) clamp(
+      270px,
+      25vw,
+      390px
+    );
 }
 
-.sidebar, .workspace {
+.sidebar,
+.workspace {
   background: var(--ui-surface);
   border-color: var(--ui-border);
 }
@@ -1711,7 +1785,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand strong {
   color: var(--ui-text);
   font-size: 13px;
-  letter-spacing: -.01em;
+  letter-spacing: -0.01em;
 }
 
 .brand span {
@@ -1719,7 +1793,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-size: 10px;
 }
 
-.new-chat, .send-button {
+.new-chat,
+.send-button {
   background: var(--ui-accent);
   border-color: var(--ui-accent);
   color: #fff;
@@ -1732,7 +1807,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   box-shadow: 0 2px 5px rgb(91 91 214 / 13%);
 }
 
-.new-chat:hover:not(:disabled), .send-button:hover:not(:disabled) {
+.new-chat:hover:not(:disabled),
+.send-button:hover:not(:disabled) {
   background: var(--ui-accent-hover);
   border-color: var(--ui-accent-hover);
   color: #fff;
@@ -1742,7 +1818,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding: 20px 9px 8px;
   color: var(--ui-text-subtle);
   font-size: 10px;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
 }
 
 .session {
@@ -1783,7 +1859,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 6px;
 }
 
-.menu, .model-menu {
+.menu,
+.model-menu {
   border-color: var(--ui-border);
   border-radius: 11px;
   box-shadow: var(--ui-shadow-md);
@@ -1828,7 +1905,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-title strong {
   font-size: 13px;
   font-weight: 650;
-  letter-spacing: -.01em;
+  letter-spacing: -0.01em;
 }
 
 .chat-title > span {
@@ -1844,7 +1921,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   box-shadow: none;
 }
 
-.model-selector:hover:not(:disabled), .model-selector.open {
+.model-selector:hover:not(:disabled),
+.model-selector.open {
   border-color: #c8c8f5;
   background: var(--ui-surface);
   box-shadow: 0 0 0 3px rgb(91 91 214 / 7%);
@@ -1874,12 +1952,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text);
   font-size: clamp(25px, 2.2vw, 32px);
   font-weight: 650;
-  letter-spacing: -.045em;
+  letter-spacing: -0.045em;
 }
 
 .welcome h2 {
   font-weight: 650;
-  letter-spacing: -.03em;
+  letter-spacing: -0.03em;
 }
 
 .welcome p {
@@ -1921,7 +1999,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border: 1px solid #fee4e2;
 }
 
-.message-content pre, .diff, .preview pre {
+.message-content pre,
+.diff,
+.preview pre {
   line-height: 1.75;
 }
 
@@ -1966,7 +2046,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .composer:focus-within {
   border-color: #a5a5ec;
-  box-shadow: 0 0 0 3px rgb(91 91 214 / 9%), 0 4px 14px rgb(16 24 40 / 5%);
+  box-shadow:
+    0 0 0 3px rgb(91 91 214 / 9%),
+    0 4px 14px rgb(16 24 40 / 5%);
 }
 
 .composer textarea {
@@ -2072,7 +2154,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: #8a8adf;
 }
 
-.tree-file:hover, .tree-folder:hover {
+.tree-file:hover,
+.tree-folder:hover {
   background: var(--ui-surface-hover);
   color: var(--ui-text);
 }
@@ -2087,7 +2170,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text-subtle);
 }
 
-.preview-head, .preview-tabs {
+.preview-head,
+.preview-tabs {
   border-color: var(--ui-border);
 }
 
@@ -2130,14 +2214,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
-    animation-duration: .01ms !important;
+    animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }
-
 
 /* Chat polish: readable message rhythm, reliable actions, and a calmer composer. */
 .chat {
@@ -2207,7 +2292,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text-muted);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: .005em;
+  letter-spacing: 0.005em;
 }
 
 .message-row.user .message-role {
@@ -2224,7 +2309,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 7px;
   color: var(--ui-text-muted);
   font-size: 10px;
-  opacity: .68;
+  opacity: 0.68;
 }
 
 .message-action:hover:not(:disabled) {
@@ -2282,14 +2367,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text);
   font-weight: 650;
   line-height: 1.35;
-  letter-spacing: -.02em;
+  letter-spacing: -0.02em;
   margin: 22px 0 10px;
 }
 
-.markdown-message h1 { font-size: 1.45em; }
-.markdown-message h2 { font-size: 1.28em; }
-.markdown-message h3 { font-size: 1.12em; }
-.markdown-message h4 { font-size: 1em; }
+.markdown-message h1 {
+  font-size: 1.45em;
+}
+.markdown-message h2 {
+  font-size: 1.28em;
+}
+.markdown-message h3 {
+  font-size: 1.12em;
+}
+.markdown-message h4 {
+  font-size: 1em;
+}
 
 .markdown-message ul,
 .markdown-message ol {
@@ -2326,7 +2419,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 5px;
   background: #f3f4f6;
   color: #344054;
-  font-size: .9em;
+  font-size: 0.9em;
 }
 
 .composer-wrap {
@@ -2399,7 +2492,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   }
 
   .message-action {
-    opacity: .85;
+    opacity: 0.85;
     padding: 5px;
   }
 
@@ -2407,7 +2500,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     font-size: 9px;
   }
 }
-
 
 /* Workspace polish: dense but legible navigation, diffs, and code previews. */
 .workspace {
@@ -2473,7 +2565,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding-top: 5px;
   padding-bottom: 5px;
   font-size: 11px;
-  transition: background-color 100ms ease, color 100ms ease;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
 }
 
 .file > span:not(.tree-status) {
@@ -2649,7 +2743,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: #24232b;
   cursor: pointer;
 }
-.preview-error button:hover { background: #f4f3f7; }
+.preview-error button:hover {
+  background: #f4f3f7;
+}
 
 .preview-notice {
   display: flex;
@@ -2798,7 +2894,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .diff-row {
   min-width: max-content;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
   font-size: 10.5px;
 }
 
@@ -2934,9 +3031,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   }
 }
 
-
 /* Consistent interaction states for menus, dialogs, and form controls. */
-:where(button, input, textarea, select, [role="tab"], [role="menuitem"]):focus-visible {
+:where(
+  button,
+  input,
+  textarea,
+  select,
+  [role="tab"],
+  [role="menuitem"]
+):focus-visible {
   outline: 2px solid #8585ed;
   outline-offset: 2px;
 }
@@ -2949,13 +3052,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 .menu,
 .model-menu {
   border-color: #e4e7ec;
-  box-shadow: 0 16px 38px #1018281c, 0 2px 6px #1018280a;
+  box-shadow:
+    0 16px 38px #1018281c,
+    0 2px 6px #1018280a;
   backdrop-filter: blur(12px);
 }
 
@@ -2964,7 +3071,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   min-height: 34px;
   border-radius: 7px;
   font-size: 12px;
-  transition: background-color 100ms ease, color 100ms ease;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
 }
 
 .model-menu button.selected {
@@ -2984,7 +3093,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text, #202123);
   border-color: #e4e7ec;
   border-radius: 16px;
-  box-shadow: 0 24px 70px rgb(16 24 40 / 24%), 0 4px 12px rgb(16 24 40 / 8%);
+  box-shadow:
+    0 24px 70px rgb(16 24 40 / 24%),
+    0 4px 12px rgb(16 24 40 / 8%);
 }
 
 .modal {
@@ -3009,7 +3120,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--ui-text, #202123);
   font-size: 16px;
   font-weight: 650;
-  letter-spacing: -.015em;
+  letter-spacing: -0.015em;
 }
 
 .modal-head p {
@@ -3045,7 +3156,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: #fff;
   color: #202123;
   font-size: 12px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .modal input:hover,
@@ -3076,7 +3189,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-card,
 .runtime-card,
 .model-option {
-  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .agent-choice:hover:not(:disabled),
@@ -3159,7 +3275,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     max-height: min(60dvh, 420px);
   }
 }
-
 
 /* DiffViewer component styles: keep selectors aligned with its rendered class names. */
 .diff-viewer {
@@ -3252,10 +3367,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-weight: 700;
 }
 
-.diff-status-added { background: #dcfce7; color: #166534; }
-.diff-status-deleted { background: #fee2e2; color: #991b1b; }
-.diff-status-renamed { background: #dbeafe; color: #1d4ed8; }
-.diff-status-binary { background: #f3e8ff; color: #6b21a8; }
+.diff-status-added {
+  background: #dcfce7;
+  color: #166534;
+}
+.diff-status-deleted {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.diff-status-renamed {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.diff-status-binary {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
 
 .diff-file-body {
   overflow-x: auto;

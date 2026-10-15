@@ -85,12 +85,32 @@ async fn main() -> Result<()> {
     });
     let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
-        .route("/scheduled-tasks", get(api::list_scheduled_tasks).post(api::create_scheduled_task))
-        .route("/scheduled-tasks/{id}", get(api::get_scheduled_task).put(api::update_scheduled_task).delete(api::delete_scheduled_task))
-        .route("/scheduled-tasks/{id}/enable", axum::routing::post(api::enable_scheduled_task))
-        .route("/scheduled-tasks/{id}/disable", axum::routing::post(api::disable_scheduled_task))
-        .route("/scheduled-tasks/{id}/run-now", axum::routing::post(api::run_scheduled_task_now))
-        .route("/scheduled-tasks/{id}/runs", get(api::scheduled_task_history))
+        .route(
+            "/scheduled-tasks",
+            get(api::list_scheduled_tasks).post(api::create_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}",
+            get(api::get_scheduled_task)
+                .put(api::update_scheduled_task)
+                .delete(api::delete_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/enable",
+            axum::routing::post(api::enable_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/disable",
+            axum::routing::post(api::disable_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/run-now",
+            axum::routing::post(api::run_scheduled_task_now),
+        )
+        .route(
+            "/scheduled-tasks/{id}/runs",
+            get(api::scheduled_task_history),
+        )
         .route("/auth/password", axum::routing::put(auth::change_password))
         .route("/auth/sessions", get(auth::list_sessions))
         .route(
@@ -138,7 +158,10 @@ async fn main() -> Result<()> {
             "/sessions/{id}/restart",
             axum::routing::post(api::restart_missing_session),
         )
-        .route("/sessions/{id}/fork", axum::routing::post(api::create_pi_fork))
+        .route(
+            "/sessions/{id}/fork",
+            axum::routing::post(api::create_pi_fork),
+        )
         .route(
             "/sessions/{id}/model",
             axum::routing::put(api::set_session_model),

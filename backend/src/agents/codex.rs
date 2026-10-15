@@ -28,10 +28,19 @@ impl AgentAdapter for CodexAdapter {
         events: &EventBus,
     ) -> Result<AgentRunResult> {
         self.process
-            .run_for_execution(ProcessKind::Codex, config, session_id, execution_id, message, events)
+            .run_for_execution(
+                ProcessKind::Codex,
+                config,
+                session_id,
+                execution_id,
+                message,
+                events,
+            )
             .await
     }
     async fn interrupt(&self, session_id: &str, execution_id: &str) -> Result<()> {
-        self.process.interrupt_execution(session_id, execution_id).await
+        self.process
+            .interrupt_execution(session_id, execution_id)
+            .await
     }
 }
