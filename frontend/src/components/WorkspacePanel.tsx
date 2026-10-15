@@ -124,6 +124,7 @@ export function WorkspacePanel({
   const [activePath, setActivePath] = useState<string>();
   const [maximized, setMaximized] = useState(false);
   const closedPathsRef = useRef(new Set<string>());
+  const previousSessionId = useRef(current?.id);
 
   useEffect(() => {
     closedPathsRef.current.clear();
@@ -133,10 +134,17 @@ export function WorkspacePanel({
   }, [current?.id]);
 
   useEffect(() => {
+    // The selected file may still belong to the previous session during the
+    // render before useWorkspace clears its state. Never add that stale file
+    // back to the tabs after the session-reset effect has run.
+    if (previousSessionId.current !== current?.id) {
+      previousSessionId.current = current?.id;
+      return;
+    }
     if (!selectedFile?.path || closedPathsRef.current.has(selectedFile.path)) return;
     setOpenTabs((tabs) => tabs.includes(selectedFile.path) ? tabs : [...tabs, selectedFile.path]);
     setActivePath(selectedFile.path);
-  }, [selectedFile?.path]);
+  }, [current?.id, selectedFile?.path]);
 
   const openFile = (path: string, line?: number) => {
     closedPathsRef.current.delete(path);
