@@ -52,9 +52,13 @@ fn default_workspace_root() -> PathBuf {
         .join("agentweb")
         .join("workspaces")
 }
-pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
+pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let row=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions WHERE id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    let mut session = session_from_row(&row);
+    Ok(session_from_row(&row))
+}
+
+pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
+    let mut session = load_session_record(db, id).await?;
 
     // Persisted workspace paths are not trusted: a stale or edited database row
     // must not cause an Agent or terminal to bind an arbitrary host directory.
@@ -116,6 +120,35 @@ pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
 }
 
 pub async fn list_sessions(State(s): State<AppState>) -> Json<Vec<Session>> {
+    let discovered = tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
+        .await.unwrap_or_default();
+    for native in discovered {
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sessions WHERE agent_id='pi' AND native_session_id=?",
+        )
+        .bind(&native.id)
+        .fetch_one(&s.db)
+        .await
+        .unwrap_or(1);
+        if exists > 0 { continue; }
+        let id = Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            "INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        )
+        .bind(id)
+        .bind("pi")
+        .bind(&native.title)
+        .bind(&native.cwd)
+        .bind("idle")
+        .bind(&native.id)
+        .bind::<Option<String>>(None)
+        .bind(0i64)
+        .bind(&native.created_at)
+        .bind(&native.updated_at)
+        .execute(&s.db)
+        .await;
+    }
+
     let rows=sqlx::query("SELECT id,agent_id,title,workspace,status,native_session_id,model,is_pinned,fork_from_native_session_id FROM sessions ORDER BY is_pinned DESC, updated_at DESC").fetch_all(&s.db).await.unwrap_or_default();
     let base_path = default_workspace_root();
     if fs::create_dir_all(&base_path).await.is_err() {
@@ -274,7 +307,18 @@ pub async fn get_session(
     Path(id): Path<String>,
     State(s): State<AppState>,
 ) -> Result<Json<Session>, StatusCode> {
-    Ok(Json(load_session(&s.db, &id).await?))
+    let mut session = load_session_record(&s.db, &id).await?;
+    let base = fs::canonicalize(default_workspace_root()).await.ok();
+    let workspace = fs::canonicalize(&session.workspace).await.ok();
+    session.workspace_available = match (base, workspace) {
+        (Some(base), Some(workspace)) => {
+            let allowed = workspace.is_dir() && workspace.starts_with(&base) && workspace != base;
+            if allowed { session.workspace = workspace.to_string_lossy().into_owned(); }
+            allowed
+        }
+        _ => false,
+    };
+    Ok(Json(session))
 }
 
 pub async fn create_pi_fork(
