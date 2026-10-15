@@ -90,7 +90,7 @@ pub async fn list_messages(
     // worker's status while it may still be writing the transcript.
     if lookup == NativeSessionFileLookup::Missing && !is_fork_preview {
         let result = sqlx::query(
-            "UPDATE sessions SET status='missing',updated_at=? WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL",
+            "UPDATE session_runtime SET status='missing',updated_at=? WHERE session_id=? AND status!='running' AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.native_session_id=? AND s.status!='running' AND s.worker_id IS NULL)",
         )
         .bind(Utc::now().to_rfc3339())
         .bind(&id)
