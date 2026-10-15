@@ -438,7 +438,7 @@ pub async fn run_session(
                 continue;
             }
             let lease_until = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
-            let renewed = sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let renewed = sqlx::query("UPDATE session_runtime SET lease_until=?,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(&lease_until)
                 .bind(&now_text)
                 .bind(&monitor_id)
