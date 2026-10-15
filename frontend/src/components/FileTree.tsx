@@ -129,29 +129,62 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const searchRequest = useRef(0);
 
   const previousSessionId = useRef(sessionId);
+  const loadedDirsRef = useRef(loadedDirs);
+  const refreshRequest = useRef(0);
+  loadedDirsRef.current = loadedDirs;
 
   useEffect(() => {
-    if (previousSessionId.current !== sessionId) {
-      previousSessionId.current = sessionId;
+    const request = ++refreshRequest.current;
+    const sessionChanged = previousSessionId.current !== sessionId;
+    previousSessionId.current = sessionId;
+
+    if (sessionChanged) {
       setAllFiles(files);
       setExpanded(new Set());
       setLoadedDirs(new Set([""]));
+      loadedDirsRef.current = new Set([""]);
       setLoadingDirs(new Set());
       setSearchFiles(undefined);
       return;
     }
 
-    // Refresh the root listing without collapsing directories or discarding
-    // children already fetched through the lazy-loading API.
-    setAllFiles((current) => {
-      const merged = new Map(files.map((item) => [item.path, item]));
-      current.forEach((item) => {
-        if (item.path.includes("/") && !merged.has(item.path)) {
-          merged.set(item.path, item);
+    // Re-fetch every directory previously loaded. This keeps expansion state
+    // while ensuring deleted/renamed children do not survive a refresh.
+    const directories = [...loadedDirsRef.current].filter(Boolean);
+    if (!sessionId || directories.length === 0) {
+      setAllFiles(files);
+      return;
+    }
+
+    let cancelled = false;
+    Promise.all(
+      directories.map(async (path) => {
+        try {
+          const children = await api<FileItem[]>(
+            `/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`,
+          );
+          return { path, children };
+        } catch {
+          return { path, children: [] as FileItem[] };
         }
+      }),
+    ).then((results) => {
+      if (cancelled || request !== refreshRequest.current) return;
+      const merged = new Map(files.map((item) => [item.path, item]));
+      results.forEach(({ path, children }) => {
+        // A directory listing contains only direct children. Replacing that
+        // slice removes stale entries while preserving other loaded branches.
+        for (const existingPath of merged.keys()) {
+          if (existingPath.startsWith(`${path}/`)) merged.delete(existingPath);
+        }
+        children.forEach((item) => merged.set(item.path, item));
       });
-      return [...merged.values()];
+      setAllFiles([...merged.values()]);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [files, sessionId]);
 
   useEffect(() => {
