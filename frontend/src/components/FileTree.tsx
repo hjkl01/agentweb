@@ -133,6 +133,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const loadedDirsRef = useRef(loadedDirs);
   const loadingDirsRef = useRef(loadingDirs);
   const refreshRequest = useRef(0);
+  const directoryRequest = useRef(new Map<string, number>());
   loadedDirsRef.current = loadedDirs;
   sessionIdRef.current = sessionId;
   loadingDirsRef.current = loadingDirs;
@@ -149,6 +150,7 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       loadedDirsRef.current = new Set([""]);
       setLoadingDirs(new Set());
       loadingDirsRef.current = new Set();
+      directoryRequest.current.clear();
       setSearchFiles(undefined);
       return;
     }
@@ -164,14 +166,18 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     let cancelled = false;
     Promise.all(
       directories.map(async (path) => {
+        const directoryToken = (directoryRequest.current.get(path) ?? 0) + 1;
+        directoryRequest.current.set(path, directoryToken);
         try {
           const children = await api<FileItem[]>(
             `/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`,
           );
+          if (directoryRequest.current.get(path) !== directoryToken) return undefined;
           return { path, children };
         } catch {
           // A failed refresh is not an empty directory. Preserve the cached
           // branch instead of deleting its contents on transient API errors.
+          if (directoryRequest.current.get(path) !== directoryToken) return undefined;
           return undefined;
         }
       }),
@@ -234,6 +240,8 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     // requests, and never let a response from an old session mutate the new tree.
     if (loadingDirsRef.current.has(path)) return;
     const requestSessionId = sessionId;
+    const directoryToken = (directoryRequest.current.get(path) ?? 0) + 1;
+    directoryRequest.current.set(path, directoryToken);
     const nextLoading = new Set(loadingDirsRef.current);
     nextLoading.add(path);
     loadingDirsRef.current = nextLoading;
@@ -243,7 +251,10 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       const children = await api<FileItem[]>(
         `/sessions/${requestSessionId}/files?path=${encodeURIComponent(path)}`,
       );
-      if (sessionIdRef.current !== requestSessionId) return;
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        directoryRequest.current.get(path) !== directoryToken
+      ) return;
 
       setAllFiles((current) => {
         const byPath = new Map(current.map((item) => [item.path, item]));
@@ -257,14 +268,20 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       });
       setLoadedDirs((current) => new Set(current).add(path));
     } catch {
-      if (sessionIdRef.current !== requestSessionId) return;
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        directoryRequest.current.get(path) !== directoryToken
+      ) return;
       setExpanded((current) => {
         const next = new Set(current);
         next.delete(path);
         return next;
       });
     } finally {
-      if (sessionIdRef.current === requestSessionId) {
+      if (
+        sessionIdRef.current === requestSessionId &&
+        directoryRequest.current.get(path) === directoryToken
+      ) {
         const next = new Set(loadingDirsRef.current);
         next.delete(path);
         loadingDirsRef.current = next;
