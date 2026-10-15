@@ -13,6 +13,7 @@ import { MentionPicker } from "./MentionPicker";
 import { ModelSelector } from "./ModelSelector";
 import { AgentSelector } from "./AgentSelector";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { SessionExportButton } from "./SessionExportButton";
 
 function CopyMessageButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
@@ -128,6 +129,11 @@ export function ChatPanel({
               loading={modelLoading}
               disabled={running}
               onChange={onModelChange}
+            />
+            <SessionExportButton
+              session={current}
+              messages={messages}
+              activity={activity}
             />
           </div>
         )}
