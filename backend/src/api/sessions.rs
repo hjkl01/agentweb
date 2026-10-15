@@ -299,6 +299,10 @@ pub async fn create_pi_fork(
         )
     }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !exists { return Err(StatusCode::CONFLICT); }
+    let source_still_available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id=? AND native_session_id=? AND status!='running' AND worker_id IS NULL")
+        .bind(&id).bind(native_id).fetch_one(&s.db).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if source_still_available != 1 { return Err(StatusCode::CONFLICT); }
 
     let new_id = Uuid::new_v4().to_string();
     let title = format!("分支：{}", source.title.chars().take(70).collect::<String>());
