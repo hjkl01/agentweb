@@ -13,6 +13,15 @@ pub enum ProcessKind {
     Generic,
 }
 
+fn parts(command: &str) -> Result<(String, Vec<String>)> {
+    let mut parts = command.split_whitespace();
+    let program = parts
+        .next()
+        .ok_or_else(|| anyhow!("empty agent command"))?
+        .to_owned();
+    Ok((program, parts.map(str::to_owned).collect()))
+}
+
 pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<Command> {
     let (program, base) = parts(&config.command)?;
     let mut args = base;
