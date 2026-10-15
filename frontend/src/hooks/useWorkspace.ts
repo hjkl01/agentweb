@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fileUrl } from "../lib/api";
 import type { FileItem, WorkspaceDiff, WorkspaceFile } from "../types";
 
@@ -11,29 +11,44 @@ export function useWorkspace(active?: string, revision = 0) {
   const [tab, setTab] = useState<WorkspaceTab>("files");
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string>();
+  const activeRef = useRef(active);
+  const filesRequest = useRef(0);
+  const diffRequest = useRef(0);
+  const selectedFileRequest = useRef(0);
+  activeRef.current = active;
 
   const refreshFiles = useCallback(async () => {
-    if (!active) {
+    const request = ++filesRequest.current;
+    const requestActive = active;
+    if (!requestActive) {
       setFiles([]);
       return;
     }
     try {
-      setFiles(await api<FileItem[]>(`/sessions/${active}/files`));
+      const result = await api<FileItem[]>(`/sessions/${requestActive}/files`);
+      if (request !== filesRequest.current || activeRef.current !== requestActive) return;
+      setFiles(result);
       setError(undefined);
     } catch (error) {
+      if (request !== filesRequest.current || activeRef.current !== requestActive) return;
       setError(error instanceof Error ? error.message : String(error));
     }
   }, [active]);
 
   const refreshDiff = useCallback(async () => {
-    if (!active) {
+    const request = ++diffRequest.current;
+    const requestActive = active;
+    if (!requestActive) {
       setDiff(undefined);
       return;
     }
     try {
-      setDiff(await api<WorkspaceDiff>(`/sessions/${active}/diff`));
+      const result = await api<WorkspaceDiff>(`/sessions/${requestActive}/diff`);
+      if (request !== diffRequest.current || activeRef.current !== requestActive) return;
+      setDiff(result);
       setError(undefined);
     } catch (error) {
+      if (request !== diffRequest.current || activeRef.current !== requestActive) return;
       const message = error instanceof Error ? error.message : String(error);
       setDiff({ diff: message });
       setError(message);
@@ -46,9 +61,16 @@ export function useWorkspace(active?: string, revision = 0) {
   }, [refreshFiles, refreshDiff, tab]);
 
   useEffect(() => {
+    // Invalidate in-flight work before a new session starts loading.
+    filesRequest.current += 1;
+    diffRequest.current += 1;
+    selectedFileRequest.current += 1;
+    setFiles([]);
     setSelectedFile(undefined);
+    setDiff(undefined);
     setFilter("");
     setTab("files");
+    setError(undefined);
     refreshFiles().catch(console.error);
   }, [active, refreshFiles]);
 
@@ -57,18 +79,21 @@ export function useWorkspace(active?: string, revision = 0) {
     refresh().catch(console.error);
     const path = selectedFile?.path;
     if (!path) return;
-    api<WorkspaceFile>(fileUrl(active, path))
-      .then(setSelectedFile)
-      .catch(() => setSelectedFile(undefined));
-  }, [active, revision, refresh, selectedFile?.path]);
+    openFile(path).catch(console.error);
+  }, [active, revision, refresh, selectedFile?.path, openFile]);
 
   const openFile = useCallback(
     async (path: string) => {
-      if (!active) return;
+      const request = ++selectedFileRequest.current;
+      const requestActive = active;
+      if (!requestActive) return;
       try {
-        setSelectedFile(await api<WorkspaceFile>(fileUrl(active, path)));
+        const result = await api<WorkspaceFile>(fileUrl(requestActive, path));
+        if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
+        setSelectedFile(result);
         setError(undefined);
       } catch (error) {
+        if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
         const message = error instanceof Error ? error.message : String(error);
         setSelectedFile({ path, content: message });
         setError(message);
