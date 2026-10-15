@@ -89,7 +89,7 @@ export function useWorkspace(active?: string, revision = 0) {
       } catch (error) {
         if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
         const message = error instanceof Error ? error.message : String(error);
-        setSelectedFile({ path, content: message });
+        setSelectedFile({ path, content: "", error: message });
         setError(message);
       }
     },
