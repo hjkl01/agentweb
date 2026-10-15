@@ -36,7 +36,7 @@ fn main() {
     let mut source = String::from("pub static EMBEDDED_ASSETS: &[(&str, &[u8])] = &[\n");
     for relative in assets {
         let absolute = root.join(&relative);
-        let name = relative.to_string_lossy().replace('\\\\', "/");
+        let name = relative.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         source.push_str(&format!(
             "    ({:?}, include_bytes!({:?}) as &[u8]),\n",
             name,
