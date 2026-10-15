@@ -65,6 +65,48 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::init;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn init_removes_legacy_session_runtime_triggers() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        init(&pool).await.unwrap();
+
+        for name in [
+            "sessions_runtime_insert",
+            "sessions_runtime_update",
+            "sessions_runtime_delete",
+            "runtime_sessions_update",
+        ] {
+            let sql = format!(
+                "CREATE TRIGGER {} AFTER INSERT ON sessions BEGIN SELECT 1; END",
+                name
+            );
+            sqlx::query(&sql).execute(&pool).await.unwrap();
+        }
+
+        // Running initialization against an existing database must remove
+        // legacy triggers as well as avoid recreating them.
+        init(&pool).await.unwrap();
+
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('sessions_runtime_insert','sessions_runtime_update','sessions_runtime_delete','runtime_sessions_update')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0, "legacy runtime synchronization triggers must be absent");
+    }
+}
+
 async fn seed_builtin_agents(pool: &SqlitePool) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let agents = [
