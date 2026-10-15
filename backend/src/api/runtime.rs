@@ -83,10 +83,6 @@ fn host_agent_search_path(extra: Option<&FsPath>) -> String {
     if let Some(path) = extra {
         dirs.push(path.to_path_buf());
     }
-    if let Some(path) = std::env::var_os("PATH") {
-        dirs.extend(std::env::split_paths(&path));
-    }
-
     let home = std::env::var_os("AGENTWEB_AGENT_HOME")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from);
@@ -119,6 +115,11 @@ fn host_agent_search_path(extra: Option<&FsPath>) -> String {
                 }
             }
         }
+    }
+
+    // Prefer the selected user's CLI installations over system-wide binaries.
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
     }
 
     let mut unique = std::collections::HashSet::new();
