@@ -358,7 +358,7 @@ async fn execute_run(state: AppState, run_id: &str) {
     }
     let lease = stamp(now + Duration::seconds(LEASE_SECONDS));
     let session_worker_id = format!("{}:{}", state.worker_id, Uuid::new_v4());
-    let claimed = sqlx::query("UPDATE session_runtime SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE session_id=? AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.status!='missing') AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
+    let claimed = sqlx::query("UPDATE session_runtime SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE session_id=? AND status!='missing' AND (status!='running' OR (lease_until IS NOT NULL AND julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&session_worker_id).bind(&lease).bind(&now_text).bind(&session.id).bind(&now_text).execute(&state.db).await;
     if !matches!(claimed, Ok(ref r) if r.rows_affected()==1) {
         finish_run(
