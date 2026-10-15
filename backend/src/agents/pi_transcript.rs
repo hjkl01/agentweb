@@ -164,13 +164,25 @@ pub fn list_native_sessions() -> NativeSessionDiscovery {
     NativeSessionDiscovery { sessions, complete }
 }
 
+/// A failed or incomplete filesystem lookup is not evidence that a session was deleted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeSessionFileLookup {
+    Found,
+    Missing,
+    Unknown,
+}
+
 /// Return whether a Pi session exists in the Agent's native session store.
-pub fn native_session_file_exists(native_session_id: &str) -> bool {
+/// Unknown means the filesystem could not be scanned reliably.
+pub fn native_session_file_exists(native_session_id: &str) -> NativeSessionFileLookup {
     let Some(root) = sessions_root() else {
-        return false;
+        return NativeSessionFileLookup::Unknown;
     };
-    let suffix = format!("_{native_session_id}.jsonl");
-    find_by_suffix(&root, &suffix, native_session_id).is_some()
+    match find_by_suffix(&root, &format!("_{native_session_id}.jsonl"), native_session_id) {
+        Ok(Some(_)) => NativeSessionFileLookup::Found,
+        Ok(None) => NativeSessionFileLookup::Missing,
+        Err(()) => NativeSessionFileLookup::Unknown,
+    }
 }
 
 /// Read the native transcript from a session-specific workspace state directory.
@@ -202,27 +214,31 @@ pub fn read_messages_from_workspace(
 pub fn native_session_file_exists_from_workspace(
     workspace: &Path,
     native_session_id: &str,
-) -> bool {
+) -> NativeSessionFileLookup {
     let Ok(workspace) = workspace.canonicalize() else {
-        return false;
+        return NativeSessionFileLookup::Unknown;
     };
     let state_dir = workspace.join(".agentweb-state");
     let session_dir = state_dir.join("pi-sessions");
     for path in [&state_dir, &session_dir] {
-        let Ok(metadata) = std::fs::symlink_metadata(path) else {
-            return false;
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => return NativeSessionFileLookup::Unknown,
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return false;
+            return NativeSessionFileLookup::Unknown;
         }
     }
-    let suffix = format!("_{native_session_id}.jsonl");
-    find_by_suffix(&session_dir, &suffix, native_session_id).is_some()
+    match find_by_suffix(&session_dir, &format!("_{native_session_id}.jsonl"), native_session_id) {
+        Ok(Some(_)) => NativeSessionFileLookup::Found,
+        Ok(None) => NativeSessionFileLookup::Missing,
+        Err(()) => NativeSessionFileLookup::Unknown,
+    }
 }
 
 fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<TranscriptMessage> {
     let suffix = format!("_{native_session_id}.jsonl");
-    let Some(path) = find_by_suffix(root, &suffix, native_session_id) else {
+    let Ok(Some(path)) = find_by_suffix(root, &suffix, native_session_id) else {
         return Vec::new();
     };
     // Keep a single transcript refresh from allocating unbounded memory.
@@ -257,77 +273,74 @@ fn read_messages_from_root(root: &Path, native_session_id: &str) -> Vec<Transcri
     parse_messages(&content, native_session_id)
 }
 
-fn find_by_suffix(dir: &Path, suffix: &str, native_session_id: &str) -> Option<PathBuf> {
-    // Bound traversal and never follow symlinks: a workspace-local session
-    // directory can be edited by Agent tools and must not redirect this reader
-    // into arbitrary host paths or create directory cycles.
+fn find_by_suffix(
+    dir: &Path,
+    suffix: &str,
+    native_session_id: &str,
+) -> Result<Option<PathBuf>, ()> {
+    // Bound traversal and never follow symlinks. A failed directory or entry
+    // read makes the result unknown; it must not be treated as a deleted session.
     const MAX_ENTRIES: usize = 20_000;
     const MAX_DEPTH: usize = 32;
+    let root_meta = std::fs::symlink_metadata(dir).map_err(|_| ())?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err(());
+    }
 
     let mut pending = vec![(dir.to_path_buf(), 0usize)];
     let mut scanned = 0usize;
     while let Some((current, depth)) = pending.pop() {
         if depth > MAX_DEPTH || scanned >= MAX_ENTRIES {
-            break;
+            return Err(());
         }
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
+        let entries = std::fs::read_dir(&current).map_err(|_| ())?;
         for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
+            let entry = entry.map_err(|_| ())?;
             scanned += 1;
             if scanned > MAX_ENTRIES {
-                return None;
+                return Err(());
             }
             let path = entry.path();
-            let metadata = match std::fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(_) => continue,
-            };
+            let metadata = std::fs::symlink_metadata(&path).map_err(|_| ())?;
             if metadata.file_type().is_symlink() {
                 continue;
             }
             if metadata.is_dir() {
                 if depth < MAX_DEPTH {
                     pending.push((path, depth + 1));
+                } else {
+                    return Err(());
                 }
-            } else if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(suffix))
+            } else if metadata.is_file()
+                && path.file_name().and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(suffix))
             {
-                // A workspace can contain nested session directories, and
-                // directory iteration order is not stable. Validate each
-                // candidate's header rather than trusting the first filename
-                // match, so a stale/forged duplicate cannot mask the real file.
-                let Ok(file) = std::fs::File::open(&path) else {
-                    continue;
+                let file = match std::fs::File::open(&path) {
+                    Ok(file) => file,
+                    Err(_) => return Err(()),
                 };
-                // A malicious candidate may have an enormous first line.
-                // Read at most 64 KiB for the header before JSON validation.
                 const MAX_HEADER_BYTES: u64 = 64 * 1024;
                 let mut reader = std::io::BufReader::new(file).take(MAX_HEADER_BYTES);
                 let mut first_line = String::new();
                 if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
                     || first_line.len() as u64 >= MAX_HEADER_BYTES
                 {
-                    continue;
+                    return Err(());
                 }
                 let Ok(header) = serde_json::from_str::<Value>(&first_line) else {
-                    continue;
+                    return Err(());
                 };
                 if header.get("type").and_then(Value::as_str) == Some("session")
                     && header.get("id").and_then(Value::as_str) == Some(native_session_id)
                 {
-                    return Some(path);
+                    return Ok(Some(path));
                 }
+                // A matching filename with a different header can be stale or
+                // corrupt; continue scanning for a valid duplicate candidate.
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Extract the visible text of a message. pi content is either a plain string
@@ -528,7 +541,7 @@ mod tests {
         )
         .unwrap();
 
-        let path = find_by_suffix(&dir, "_same-id.jsonl", "same-id").unwrap();
+        let path = find_by_suffix(&dir, "_same-id.jsonl", "same-id").unwrap().unwrap();
         let messages = parse_messages(&std::fs::read_to_string(path).unwrap(), "same-id");
         std::fs::remove_dir_all(&dir).ok();
 
@@ -550,7 +563,7 @@ mod tests {
         content.push_str(r#""}"#);
         std::fs::write(&file, content).unwrap();
 
-        assert!(find_by_suffix(&dir, "_large-id.jsonl", "large-id").is_none());
+        assert!(matches!(find_by_suffix(&dir, "_large-id.jsonl", "large-id"), Ok(None) | Err(())));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -684,15 +697,15 @@ mod tests {
         let transcript = session_dir.join("2026-01-01T00-00-00-000Z_deleted-id.jsonl");
         std::fs::write(&transcript, r#"{"type":"session","id":"deleted-id"}"#).unwrap();
 
-        assert!(native_session_file_exists_from_workspace(
+        assert_eq!(native_session_file_exists_from_workspace(
             &workspace,
             "deleted-id"
-        ));
+        ), NativeSessionFileLookup::Found);
         std::fs::remove_file(&transcript).unwrap();
-        assert!(!native_session_file_exists_from_workspace(
+        assert_eq!(native_session_file_exists_from_workspace(
             &workspace,
             "deleted-id"
-        ));
+        ), NativeSessionFileLookup::Missing);
 
         std::fs::remove_dir_all(workspace).ok();
     }
@@ -727,10 +740,10 @@ mod tests {
             )
             .unwrap();
 
-            assert!(!native_session_file_exists_from_workspace(
+            assert_eq!(native_session_file_exists_from_workspace(
                 &workspace,
                 "escape-id"
-            ));
+            ), NativeSessionFileLookup::Unknown);
 
             std::fs::remove_dir_all(workspace).ok();
             std::fs::remove_dir_all(outside).ok();
