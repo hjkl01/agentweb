@@ -56,9 +56,11 @@ export function useWorkspace(active?: string, revision = 0) {
   }, [active]);
 
   const refresh = useCallback(async () => {
+    const requestActive = active;
     await refreshFiles();
+    if (activeRef.current !== requestActive) return;
     if (tab === "diff") await refreshDiff();
-  }, [refreshFiles, refreshDiff, tab]);
+  }, [active, refreshFiles, refreshDiff, tab]);
 
   useEffect(() => {
     // Invalidate in-flight work before a new session starts loading.
