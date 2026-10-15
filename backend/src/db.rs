@@ -10,8 +10,12 @@ use uuid::Uuid;
 pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
     // Conversation transcripts are owned by Agent-native session files.
-    // Drop the legacy table after migrations so existing databases stop retaining
-    // message bodies. Keep the historical migration unchanged for checksum safety.
+    // Remove the legacy cleanup trigger before dropping its target table; otherwise
+    // deleting a session can fail when SQLite executes a trigger that references
+    // the removed messages table. Keep historical migrations unchanged for checksum safety.
+    sqlx::query("DROP TRIGGER IF EXISTS trg_sessions_delete_messages")
+        .execute(pool)
+        .await?;
     sqlx::query("DROP TABLE IF EXISTS messages").execute(pool).await?;
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
