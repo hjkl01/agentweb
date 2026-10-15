@@ -347,6 +347,49 @@ mod workspace_state_tests {
     }
 
     #[test]
+    fn pi_fresh_session_does_not_receive_a_previous_native_session_id() {
+        let workspace = temp_path("pi-fresh-session");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config = AgentConfig {
+            id: "pi".into(),
+            command: "pi".into(),
+            working_directory: Some(workspace.to_string_lossy().into_owned()),
+            native_session_id: None,
+            runtime_path: None,
+            model: None,
+        };
+        let command = build(ProcessKind::Pi, &config, "first message").unwrap();
+        let args = command.as_std().get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!args.iter().any(|arg| arg == "--session"));
+        assert!(!args.iter().any(|arg| arg == "old-native-session"));
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn pi_existing_session_passes_its_native_session_id() {
+        let workspace = temp_path("pi-resumed-session");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let config = AgentConfig {
+            id: "pi".into(),
+            command: "pi".into(),
+            working_directory: Some(workspace.to_string_lossy().into_owned()),
+            native_session_id: Some("existing-native-session".into()),
+            runtime_path: None,
+            model: None,
+        };
+        let command = build(ProcessKind::Pi, &config, "follow-up").unwrap();
+        let args = command.as_std().get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let session_arg = args.iter().position(|arg| arg == "--session")
+            .expect("existing Pi session should be resumed");
+        assert_eq!(args.get(session_arg + 1).map(String::as_str), Some("existing-native-session"));
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
     fn pi_session_state_is_created_inside_workspace() {
         let workspace = temp_path("pi-state-workspace");
         std::fs::create_dir_all(&workspace).unwrap();
