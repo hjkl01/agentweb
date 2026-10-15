@@ -60,6 +60,7 @@ pub struct AgentConfig {
     pub command: String,
     pub working_directory: Option<String>,
     pub native_session_id: Option<String>,
+    pub fork_from_native_session_id: Option<String>,
     pub runtime_path: Option<String>,
     pub model: Option<String>,
 }
