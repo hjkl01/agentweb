@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
             ticker.tick().await;
             let cutoff = Utc::now() - chrono::Duration::days(1);
             let cutoff_rfc3339 = cutoff.to_rfc3339();
-            let _=sqlx::query("DELETE FROM agent_events WHERE created_at < ? AND (session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id=agent_events.session_id AND sessions.status='running'))").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
+            let _=sqlx::query("DELETE FROM agent_events WHERE created_at < ? AND (session_id IS NULL OR NOT EXISTS (SELECT 1 FROM session_runtime WHERE session_runtime.session_id=agent_events.session_id AND session_runtime.status='running'))").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
             let _=sqlx::query("DELETE FROM login_failures WHERE updated_at < ? AND locked_until <= unixepoch('now')").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
         }
     });
