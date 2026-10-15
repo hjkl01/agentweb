@@ -7,7 +7,6 @@ IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
 BUILD_DIR ?= build
 DATA_DIR ?= data
-DEBUG_BINARY := backend/target/debug/agentweb
 RELEASE_BINARY := backend/target/release/agentweb
 
 .PHONY: help install dev dev-backend dev-frontend build release start check test fmt fmt-frontend lint clean docker-build docker-up docker-down docker-restart docker-logs docker-shell docker-pull docker-clean
@@ -43,35 +42,19 @@ dev-frontend: ## Start Vite frontend development server
 
 build: install ## Build frontend and backend into ./build for direct startup
 	cd frontend && npm run build
-	cd backend && cargo build
-	@mkdir -p $(BUILD_DIR)
-	@rm -rf $(BUILD_DIR)/frontend
-	@cp $(DEBUG_BINARY) $(BUILD_DIR)/agentweb
-	@cp -R frontend/dist $(BUILD_DIR)/frontend
-	@echo "构建完成：$(BUILD_DIR)/agentweb 和 $(BUILD_DIR)/frontend"
-
-release: ## Build optimized frontend/backend package into ./build
-	cd frontend && npm run build
 	cd backend && cargo build --release
 	@mkdir -p $(BUILD_DIR)
-	@rm -rf $(BUILD_DIR)/frontend
 	@cp $(RELEASE_BINARY) $(BUILD_DIR)/agentweb
-	@cp -R frontend/dist $(BUILD_DIR)/frontend
-	@echo "构建完成：$(BUILD_DIR)/agentweb 和 $(BUILD_DIR)/frontend"
+	@echo "构建完成：$(BUILD_DIR)/agentweb（前端已嵌入二进制）"
+
+release: build ## Build the optimized standalone binary (alias of build)
 
 start: ## Start the packaged app from ./build
 	@test -x $(BUILD_DIR)/agentweb || { echo "未找到 $(BUILD_DIR)/agentweb，请先运行 make build 或 make release" >&2; exit 1; }
-	@test -f $(BUILD_DIR)/frontend/index.html || { echo "未找到前端文件，请先运行 make build 或 make release" >&2; exit 1; }
 	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
-	AGENTWEB_AGENT_HOME="$${AGENTWEB_AGENT_HOME:-$$HOME}" \
-	HOME="$(CURDIR)/$(DATA_DIR)/home" \
-	XDG_CONFIG_HOME="$(CURDIR)/$(DATA_DIR)/home/.config" \
-	XDG_DATA_HOME="$(CURDIR)/$(DATA_DIR)/home/.local/share" \
-	XDG_CACHE_HOME="$(CURDIR)/$(DATA_DIR)/home/.cache" \
-	DATABASE_URL="sqlite://$(CURDIR)/$(DATA_DIR)/agentweb.db" \
+	AGENTWEB_AGENT_HOME="${AGENTWEB_AGENT_HOME:-$HOME}" \
 	AGENTWEB_WORKSPACE_DIR="$(CURDIR)/$(DATA_DIR)/workspaces" \
 	AGENTWEB_RUNTIME_DIR="$(CURDIR)/$(DATA_DIR)/runtimes/node" \
-	AGENTWEB_FRONTEND_DIR="$(CURDIR)/$(BUILD_DIR)/frontend" \
 	./$(BUILD_DIR)/agentweb
 
 check: ## Run Rust checks and frontend build checks
