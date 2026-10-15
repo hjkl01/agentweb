@@ -2594,6 +2594,35 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex: 0 0 auto;
 }
 
+.preview-error {
+  display: flex;
+  flex: 1;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #b42318;
+  text-align: center;
+}
+.preview-error p {
+  max-width: 100%;
+  margin: 0;
+  color: #55545e;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.preview-error button {
+  padding: 6px 12px;
+  border: 1px solid #d8d7df;
+  border-radius: 6px;
+  background: #fff;
+  color: #24232b;
+  cursor: pointer;
+}
+.preview-error button:hover { background: #f4f3f7; }
+
 .preview-notice {
   display: flex;
   align-items: flex-start;
