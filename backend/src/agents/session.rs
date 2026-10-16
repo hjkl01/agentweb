@@ -640,7 +640,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
-        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
+        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, error_message TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
         assert!(std::path::Path::new("/bin/echo").is_file());
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
