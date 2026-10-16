@@ -75,16 +75,17 @@ export function useSession(active?: string) {
       setError(error instanceof Error ? error.message : String(error));
     }
   }, []);
-  const activeStatus = sessions.find((item) => item.id === active)?.status;
+  // Poll the authoritative session detail while a chat is open. Do not make
+  // polling conditional on the locally cached "running" status: if the completion
+  // WebSocket event is lost, that stale status would otherwise disable recovery
+  // exactly when it is needed and leave the composer in Stop mode forever.
   useEffect(() => {
-    if (!active || activeStatus !== "running") return;
-    // Poll the authoritative session detail, not only the session list.
-    // This recovers even if the completion WebSocket event is missed.
+    if (!active) return;
     const timer = window.setInterval(() => {
       refreshActiveSession(active).catch(console.error);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [active, activeStatus, refreshActiveSession]);
+  }, [active, refreshActiveSession]);
   const actions = useSessionActions({ setSessions });
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
