@@ -15,22 +15,26 @@ export function useSession(active?: string) {
   const [error, setError] = useState<string>();
   const refreshRequestId = useRef(0);
   const activeRefreshRequestId = useRef(0);
-  // Keep async callbacks from a previous session from mutating the newly active
-  // session's transcript after navigation.
   const activeSessionRef = useRef(active);
   const previousRunningRef = useRef(false);
   activeSessionRef.current = active;
-  // Incremented only when an authoritative session-detail response is accepted.
-  // This prevents an older /sessions list response from overwriting that status.
-  const isStatusSnapshotNewer = (incoming: Session, current?: Session) => {
-    if (!current) return true;
-    const incomingTime = Date.parse(incoming.status_updated_at);
-    const currentTime = Date.parse(current.status_updated_at);
-    if (!Number.isNaN(incomingTime) && !Number.isNaN(currentTime)) {
-      return incomingTime >= currentTime;
-    }
-    return true;
-  };
+
+  // Runtime status is versioned by the backend's session_runtime.updated_at.
+  // Local WebSocket transitions also receive a timestamp so stale HTTP snapshots
+  // can never regress a newer terminal state.
+  const isStatusSnapshotNewer = useCallback(
+    (incoming: Session, current?: Session) => {
+      if (!current) return true;
+      const incomingTime = Date.parse(incoming.status_updated_at);
+      const currentTime = Date.parse(current.status_updated_at);
+      if (!Number.isNaN(incomingTime) && !Number.isNaN(currentTime)) {
+        return incomingTime >= currentTime;
+      }
+      return true;
+    },
+    [],
+  );
+
   const refreshSessions = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
     try {
@@ -42,47 +46,60 @@ export function useSession(active?: string) {
         );
         return latestSessions.map((latest) => {
           const current = currentById.get(latest.id);
-          return current && !isStatusSnapshotNewer(latest, current)
-            ? { ...latest, status: current.status, status_updated_at: current.status_updated_at }
-            : latest;
+          if (!current || isStatusSnapshotNewer(latest, current)) {
+            return latest;
+          }
+          return {
+            ...latest,
+            status: current.status,
+            status_updated_at: current.status_updated_at,
+          };
         });
-      });;
       });
       setError(undefined);
     } catch (error) {
       if (requestId !== refreshRequestId.current) return;
       setError(error instanceof Error ? error.message : String(error));
     }
-  }, []);
+  }, [isStatusSnapshotNewer]);
+
   useEffect(() => {
     refreshSessions().catch(console.error);
   }, [refreshSessions]);
-  const refreshActiveSession = useCallback(async (sessionId: string) => {
-    const requestId = ++activeRefreshRequestId.current;
-    try {
-      const latest = await api<Session>(`/sessions/${sessionId}`);
-      if (requestId !== activeRefreshRequestId.current) return;
-      setSessions((items) => {
-        const current = items.find((item) => item.id === sessionId);
-        if (!current) return [latest, ...items];
-        if (!isStatusSnapshotNewer(latest, current)) {
+
+  const refreshActiveSession = useCallback(
+    async (sessionId: string) => {
+      const requestId = ++activeRefreshRequestId.current;
+      try {
+        const latest = await api<Session>(`/sessions/${sessionId}`);
+        if (requestId !== activeRefreshRequestId.current) return;
+        setSessions((items) => {
+          const current = items.find((item) => item.id === sessionId);
+          if (!current || isStatusSnapshotNewer(latest, current)) {
+            return current
+              ? items.map((item) => (item.id === sessionId ? latest : item))
+              : [latest, ...items];
+          }
           return items.map((item) =>
             item.id === sessionId
-              ? { ...latest, status: item.status, status_updated_at: current.status_updated_at }
+              ? {
+                  ...latest,
+                  status: current.status,
+                  status_updated_at: current.status_updated_at,
+                }
               : item,
           );
-        }
-        return items.map((item) => (item.id === sessionId ? latest : item));
-      });;
-    } catch (error) {
-      if (requestId !== activeRefreshRequestId.current) return;
-      setError(error instanceof Error ? error.message : String(error));
-    }
-  }, []);
-  // Poll the authoritative session detail while a chat is open. Do not make
-  // polling conditional on the locally cached "running" status: if the completion
-  // WebSocket event is lost, that stale status would otherwise disable recovery
-  // exactly when it is needed and leave the composer in Stop mode forever.
+        });
+      } catch (error) {
+        if (requestId !== activeRefreshRequestId.current) return;
+        setError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [isStatusSnapshotNewer],
+  );
+
+  // Keep polling even while locally "running". If the completion WebSocket is
+  // lost, the authoritative runtime status must still recover the composer.
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => {
@@ -90,9 +107,11 @@ export function useSession(active?: string) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [active, refreshActiveSession]);
+
   const actions = useSessionActions({
     setSessions,
-      });
+  });
+
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
       const content = message.trim();
@@ -106,8 +125,6 @@ export function useSession(active?: string) {
       try {
         await actions.sendMessage(sessionId, content);
       } catch (error) {
-        // The request may fail after the user has navigated to another session.
-        // Do not append the old session's error to the new session's transcript.
         if (activeSessionRef.current === sessionId) {
           setMessages((items) => [
             ...items,
@@ -123,6 +140,7 @@ export function useSession(active?: string) {
     },
     [actions.sendMessage],
   );
+
   useSessionEvents({
     active,
     refreshSessions,
@@ -145,6 +163,7 @@ export function useSession(active?: string) {
       );
     },
   });
+
   useEffect(() => {
     if (!active) {
       setMessages([]);
@@ -155,12 +174,16 @@ export function useSession(active?: string) {
       setWorkspaceRevision(0);
     }
   }, [active]);
+
   useEffect(() => {
-    const running = active ? sessions.find((item) => item.id === active)?.status === "running" : false;
+    const running = active
+      ? sessions.find((item) => item.id === active)?.status === "running"
+      : false;
     if (running && !previousRunningRef.current) setActivityOpen(true);
     if (!running && previousRunningRef.current) setActivityOpen(false);
     previousRunningRef.current = running;
   }, [active, sessions]);
+
   return {
     sessions,
     messages,
