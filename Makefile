@@ -5,7 +5,6 @@ SHELL := /bin/sh
 APP_NAME ?= agentweb
 IMAGE ?= $(APP_NAME):latest
 COMPOSE ?= docker compose
-BUILD_DIR ?= build
 DATA_DIR ?= data
 RELEASE_BINARY := backend/target/release/agentweb
 
@@ -40,22 +39,21 @@ dev-backend: ## Start Rust backend development server
 dev-frontend: ## Start Vite frontend development server
 	cd frontend && npm run dev -- --host 127.0.0.1
 
-build: install ## Build frontend and backend into ./build for direct startup
+build: install ## Build frontend and backend into a standalone binary in the project root
 	cd frontend && npm run build
 	cd backend && cargo build --release
-	@mkdir -p $(BUILD_DIR)
-	@cp $(RELEASE_BINARY) $(BUILD_DIR)/agentweb
-	@echo "构建完成：$(BUILD_DIR)/agentweb（前端已嵌入二进制）"
+	@cp $(RELEASE_BINARY) ./agentweb
+	@echo "构建完成：./agentweb（前端已嵌入二进制）"
 
 release: build ## Build the optimized standalone binary (alias of build)
 
-start: ## Start the packaged app from ./build
-	@test -x $(BUILD_DIR)/agentweb || { echo "未找到 $(BUILD_DIR)/agentweb，请先运行 make build 或 make release" >&2; exit 1; }
+start: ## Start the packaged app from ./agentweb
+	@test -x ./agentweb || { echo "未找到 ./agentweb，请先运行 make build 或 make release" >&2; exit 1; }
 	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
 	AGENTWEB_AGENT_HOME="${AGENTWEB_AGENT_HOME:-$HOME}" \
 	AGENTWEB_WORKSPACE_DIR="$(CURDIR)/$(DATA_DIR)/workspaces" \
 	AGENTWEB_RUNTIME_DIR="$(CURDIR)/$(DATA_DIR)/runtimes/node" \
-	./$(BUILD_DIR)/agentweb
+	./agentweb
 
 check: ## Run Rust checks and frontend build checks
 	cd backend && cargo check
