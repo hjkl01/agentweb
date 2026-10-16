@@ -18,6 +18,7 @@ function requestOptions(options?: RequestInit): RequestInit {
       "Content-Type": "application/json",
       ...(options?.headers || {}),
     },
+    cache: options?.method && options.method.toUpperCase() !== "GET" ? undefined : "no-store",
     ...options,
   };
 }
