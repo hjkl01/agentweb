@@ -11,6 +11,7 @@ import {
   Settings,
   Search,
   Terminal,
+  Clock3,
   Trash2,
   UserRound,
 } from "lucide-react";
@@ -33,6 +34,7 @@ type Props = {
   onLogout: () => void;
   onHome: () => void;
   onOpenTerminal: () => void;
+  onOpenScheduledTasks: () => void;
 };
 export function Sidebar({
   agents,
@@ -50,6 +52,7 @@ export function Sidebar({
   onLogout,
   onHome,
   onOpenTerminal,
+  onOpenScheduledTasks,
 }: Props) {
   const [sessionQuery, setSessionQuery] = useState("");
   const normalizedQuery = sessionQuery.trim().toLocaleLowerCase();
