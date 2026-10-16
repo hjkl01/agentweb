@@ -37,7 +37,7 @@ async fn finalize_session_with_native_id(
     let now = Utc::now().to_rfc3339();
     let mut tx = db.begin().await?;
     let ownership = sqlx::query(
-        "UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? \
+        "UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,error_message=NULL,updated_at=? \
          WHERE session_id=? AND status='running' AND worker_id=?",
     )
     .bind(status)
@@ -554,6 +554,14 @@ pub async fn run_session(
         Err(error) => {
             tracing::error!(session_id = %session.id, worker_id = %worker_id, %error, "agent execution failed");
             monitor.abort();
+            let error_message = error.to_string();
+            let _ = sqlx::query("UPDATE session_runtime SET error_message=?,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
+                .bind(&error_message)
+                .bind(Utc::now().to_rfc3339())
+                .bind(&session.id)
+                .bind(&worker_id)
+                .execute(&db)
+                .await;
             let run_error = error.downcast_ref::<AgentRunError>();
             let interrupted = run_error.is_some_and(|run_error| run_error.interrupted);
             let native_session_missing =
