@@ -33,7 +33,6 @@ dev: ## Start backend and frontend development servers
 		cd backend && cargo run
 
 dev-backend: ## Start Rust backend development server
-	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
 	cd backend && cargo run
 
 dev-frontend: ## Start Vite frontend development server
@@ -49,10 +48,6 @@ release: build ## Build the optimized standalone binary (alias of build)
 
 start: ## Start the packaged app from ./agentweb
 	@test -x ./agentweb || { echo "未找到 ./agentweb，请先运行 make build 或 make release" >&2; exit 1; }
-	@mkdir -p $(DATA_DIR)/home $(DATA_DIR)/workspaces $(DATA_DIR)/runtimes/node $(DATA_DIR)/runtimes/agents
-	AGENTWEB_AGENT_HOME="${AGENTWEB_AGENT_HOME:-$HOME}" \
-	AGENTWEB_WORKSPACE_DIR="$(CURDIR)/$(DATA_DIR)/workspaces" \
-	AGENTWEB_RUNTIME_DIR="$(CURDIR)/$(DATA_DIR)/runtimes/node" \
 	./agentweb
 
 check: ## Run Rust checks and frontend build checks
