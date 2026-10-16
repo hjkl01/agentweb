@@ -199,11 +199,36 @@ button:disabled {
 .icon-button:hover:not(:disabled) {
   background: #e9e9e9;
 }
-.session-menu {
-  opacity: 0;
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
 }
-.session:hover .session-menu,
-.session.active .session-menu {
+.session-action,
+.session-delete,
+.session-menu {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  opacity: 0.72;
+}
+.session-action:hover:not(:disabled),
+.session-menu:hover:not(:disabled) {
+  opacity: 1;
+  background: #e9e9e9;
+}
+.session-delete {
+  color: #b42318;
+}
+.session-delete:hover:not(:disabled) {
+  background: #fef3f2;
+  color: #b42318;
+}
+.session-menu {
+  opacity: 0.5;
+}
+.session-menu:hover:not(:disabled) {
   opacity: 1;
 }
 .menu {
@@ -220,7 +245,10 @@ button:disabled {
 .menu button {
   border: 0;
   justify-content: flex-start;
-  min-width: 100px;
+  min-width: 120px;
+  color: #344054;
+}
+.menu button:last-child {
   color: #b42318;
 }
 .empty-sidebar {
