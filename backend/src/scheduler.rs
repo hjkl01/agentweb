@@ -454,19 +454,21 @@ async fn execute_run(state: AppState, run_id: &str) {
         }
     }
     heartbeat.abort();
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id=?")
+    let status_row = sqlx::query("SELECT status,error_message FROM session_runtime WHERE session_id=?")
         .bind(&session_id)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
+    let status = status_row.as_ref().map(|row| row.get::<String, _>("status"));
+    let runtime_error = status_row.as_ref().and_then(|row| row.get::<Option<String>, _>("error_message"));
     let (final_status, error) = match status.as_deref() {
         Some("idle") => ("succeeded", None),
-        Some("interrupted") => ("cancelled", Some("执行被中断")),
-        Some("error" | "missing") => ("failed", Some("Agent 执行失败")),
-        _ => ("failed", Some("执行结束后会话状态异常")),
+        Some("interrupted") => ("cancelled", Some("执行被中断".to_owned())),
+        Some("error" | "missing") => ("failed", Some(runtime_error.unwrap_or_else(|| "Agent 执行失败".to_owned()))),
+        _ => ("failed", Some("执行结束后会话状态异常".to_owned())),
     };
-    finish_run(&state.db, run_id, &state.worker_id, final_status, error).await;
+    finish_run(&state.db, run_id, &state.worker_id, final_status, error.as_deref()).await;
 }
 
 async fn finish_run(pool: &SqlitePool, id: &str, worker: &str, status: &str, error: Option<&str>) {
