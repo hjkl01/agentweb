@@ -106,7 +106,10 @@ export function useSession(active?: string) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [active, refreshActiveSession]);
-  const actions = useSessionActions({ setSessions });
+  const actions = useSessionActions({
+    setSessions,
+    markStatusChanged: bumpStatusRevision,
+  });
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
       const content = message.trim();
