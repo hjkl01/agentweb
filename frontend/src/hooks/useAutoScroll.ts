@@ -3,12 +3,12 @@ import type { RefObject } from "react";
 
 type Options = {
   contentVersion: unknown;
-  threshold?: number;
+  threshold?: number;\n  force?: boolean;
 };
 
 export function useAutoScroll<T extends HTMLElement>(
   ref: RefObject<T | null>,
-  { contentVersion, threshold = 80 }: Options,
+  { contentVersion, threshold = 80, force = false }: Options,
 ) {
   const stickToBottom = useRef(true);
 
@@ -29,9 +29,9 @@ export function useAutoScroll<T extends HTMLElement>(
 
   useEffect(() => {
     const element = ref.current;
-    if (!element || !stickToBottom.current) return;
+    if (!element || (!stickToBottom.current && !force)) return;
     requestAnimationFrame(() => {
       element.scrollTop = element.scrollHeight;
     });
-  }, [contentVersion, ref]);
+  }, [contentVersion, force, ref]);
 }
