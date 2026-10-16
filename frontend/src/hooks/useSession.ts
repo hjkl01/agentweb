@@ -33,6 +33,7 @@ export function useSession(active?: string) {
   const refreshSessions = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
     const detailRevisionsAtRequest = new Map(acceptedDetailRevision.current);
+    const statusRevisionsAtRequest = new Map(statusRevision.current);
     try {
       const latestSessions = await api<Session[]>("/sessions");
       if (requestId !== refreshRequestId.current) return;
