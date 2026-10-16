@@ -78,6 +78,7 @@ clean: ## Remove local build artifacts
 docker-build: ## Build the Docker image
 	$(COMPOSE) build
 docker-up: ## Build and start Docker services
+	@mkdir -p "${AGENTWEB_RUNTIME_DIR:-$HOME/.local/share/agentweb/runtimes}"
 	$(COMPOSE) up -d
 docker-down: ## Stop Docker services
 	$(COMPOSE) down
