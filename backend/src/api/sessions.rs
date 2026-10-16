@@ -143,20 +143,11 @@ pub async fn list_sessions(
         .fetch_all(&s.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base_path = default_workspace_root();
-    if fs::create_dir_all(&base_path).await.is_err() {
-        return Ok(Json(rows.iter().map(session_from_row).collect()));
-    }
-    let base = match fs::canonicalize(&base_path).await {
-        Ok(path) => path,
-        Err(_) => return Ok(Json(rows.iter().map(session_from_row).collect())),
-    };
     let mut sessions = Vec::with_capacity(rows.len());
     for row in &rows {
         let mut session = session_from_row(row);
         if let Ok(workspace) = fs::canonicalize(&session.workspace).await {
-            session.workspace_available =
-                workspace.is_dir() && workspace.starts_with(&base) && workspace != base;
+            session.workspace_available = workspace.is_dir();
             if session.workspace_available {
                 session.workspace = workspace.to_string_lossy().into_owned();
             }
@@ -315,16 +306,12 @@ pub async fn get_session(
     State(s): State<AppState>,
 ) -> Result<Json<Session>, StatusCode> {
     let mut session = load_session_record(&s.db, &id).await?;
-    let base = fs::canonicalize(default_workspace_root()).await.ok();
-    let workspace = fs::canonicalize(&session.workspace).await.ok();
-    session.workspace_available = match (base, workspace) {
-        (Some(base), Some(workspace)) => {
-            let allowed = workspace.is_dir() && workspace.starts_with(&base) && workspace != base;
-            if allowed { session.workspace = workspace.to_string_lossy().into_owned(); }
-            allowed
+    if let Ok(workspace) = fs::canonicalize(&session.workspace).await {
+        session.workspace_available = workspace.is_dir();
+        if session.workspace_available {
+            session.workspace = workspace.to_string_lossy().into_owned();
         }
-        _ => false,
-    };
+    }
     Ok(Json(session))
 }
 
