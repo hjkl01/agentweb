@@ -57,7 +57,8 @@ async fn run_terminal(
     } else {
         std::env::var_os("AGENTWEB_WORKSPACE_DIR")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("/workspace"))
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
     };
 
     if !workspace.is_dir() {
