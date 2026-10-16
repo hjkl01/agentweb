@@ -27,16 +27,16 @@ pub struct Session {
 }
 fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
     Session {
-        id: row.get(0),
-        agent_id: row.get(1),
-        title: row.get(2),
-        workspace: row.get(3),
-        status: row.get(4),
-        status_updated_at: row.get(5),
-        native_session_id: row.get(6),
-        model: row.get(7),
-        is_pinned: row.get::<i64, _>(8) != 0,
-        fork_from_native_session_id: row.get(9),
+        id: row.get("id"),
+        agent_id: row.get("agent_id"),
+        title: row.get("title"),
+        workspace: row.get("workspace"),
+        status: row.get("status"),
+        status_updated_at: row.get("status_updated_at"),
+        native_session_id: row.get("native_session_id"),
+        model: row.get("model"),
+        is_pinned: row.get::<i64, _>("is_pinned") != 0,
+        fork_from_native_session_id: row.get("fork_from_native_session_id"),
         workspace_available: false,
     }
 }
@@ -434,7 +434,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             // clean up its orphaned, non-running session record without ever
             // interrupting a running execution whose workspace is unavailable.
             let row = match sqlx::query(
-                "SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?",
+                "SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?",
             )
             .bind(&id)
             .fetch_optional(&s.db)
