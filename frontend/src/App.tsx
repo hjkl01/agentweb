@@ -30,6 +30,7 @@ export function App({ sessionId, navigate }: Props) {
   );
   useAutoScroll(c.chatRef, {
     contentVersion: `${c.session.messages.length}:${c.session.stream.length}:${activityVersion}:${sessionId || ""}`,
+    force: c.current?.status === "running",
   });
   const openNewChat = () => {
     // Workspace selection is mandatory even when default Agent/model settings exist.
