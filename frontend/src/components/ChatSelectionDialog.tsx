@@ -1,5 +1,5 @@
 import { Bot, ChevronLeft, Folder, Home, Settings, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Agent, AgentModel } from "../types";
 import { api } from "../lib/api";
 
@@ -39,10 +39,7 @@ export function ChatSelectionDialog({
   const [browserLoading, setBrowserLoading] = useState(false);
   const [browserError, setBrowserError] = useState("");
 
-  const currentDirectory = useMemo(
-    () => (directories.length ? directories[0] : browserPath),
-    [directories, browserPath],
-  );
+  const currentDirectory = browserPath;
 
   const loadDirectories = async (path?: string) => {
     setBrowserLoading(true);
