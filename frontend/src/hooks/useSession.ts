@@ -22,6 +22,14 @@ export function useSession(active?: string) {
   // Incremented only when an authoritative session-detail response is accepted.
   // This prevents an older /sessions list response from overwriting that status.
   const acceptedDetailRevision = useRef(new Map<string, number>());
+  // Monotonic status revisions protect optimistic/event-driven status changes from
+  // HTTP responses that started before those changes and complete afterwards.
+  const statusRevision = useRef(new Map<string, number>());
+  const bumpStatusRevision = useCallback((sessionId: string) => {
+    const next = (statusRevision.current.get(sessionId) ?? 0) + 1;
+    statusRevision.current.set(sessionId, next);
+    return next;
+  }, []);
   const refreshSessions = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
     const detailRevisionsAtRequest = new Map(acceptedDetailRevision.current);
@@ -38,9 +46,13 @@ export function useSession(active?: string) {
             detailRevisionsAtRequest.get(latest.id) ?? 0;
           const currentRevision =
             acceptedDetailRevision.current.get(latest.id) ?? 0;
-          // A detail request completed after this list request began. Keep the
-          // newer detail status rather than regressing to a stale list snapshot.
-          if (current && currentRevision > revisionAtRequest) {
+          const currentStatusRevision = statusRevision.current.get(latest.id) ?? 0;
+          const statusChangedAfterRequest =
+            currentStatusRevision > (statusRevisionsAtRequest.get(latest.id) ?? 0);
+          // A detail request or local status transition completed after this list
+          // request began. Keep the newer status rather than regressing to a stale
+          // list snapshot.
+          if (current && (currentRevision > revisionAtRequest || statusChangedAfterRequest)) {
             return { ...latest, status: current.status };
           }
           return latest;
@@ -57,6 +69,7 @@ export function useSession(active?: string) {
   }, [refreshSessions]);
   const refreshActiveSession = useCallback(async (sessionId: string) => {
     const requestId = ++activeRefreshRequestId.current;
+    const statusRevisionAtRequest = statusRevision.current.get(sessionId) ?? 0;
     try {
       const latest = await api<Session>(`/sessions/${sessionId}`);
       if (requestId !== activeRefreshRequestId.current) return;
@@ -64,11 +77,18 @@ export function useSession(active?: string) {
         sessionId,
         (acceptedDetailRevision.current.get(sessionId) ?? 0) + 1,
       );
+      const statusChangedAfterRequest =
+        (statusRevision.current.get(sessionId) ?? 0) > statusRevisionAtRequest;
       setSessions((items) => {
         const exists = items.some((item) => item.id === sessionId);
-        return exists
-          ? items.map((item) => (item.id === sessionId ? latest : item))
-          : [latest, ...items];
+        if (!exists) return [latest, ...items];
+        return items.map((item) =>
+          item.id === sessionId && statusChangedAfterRequest
+            ? { ...latest, status: item.status }
+            : item.id === sessionId
+              ? latest
+              : item,
+        );
       });
     } catch (error) {
       if (requestId !== activeRefreshRequestId.current) return;
@@ -98,6 +118,7 @@ export function useSession(active?: string) {
       setActivity([]);
       setActivityOpen(false);
       try {
+        bumpStatusRevision(sessionId);
         await actions.sendMessage(sessionId, content);
       } catch (error) {
         // The request may fail after the user has navigated to another session.
@@ -115,7 +136,7 @@ export function useSession(active?: string) {
         throw error;
       }
     },
-    [actions.sendMessage],
+    [actions.sendMessage, bumpStatusRevision],
   );
   useSessionEvents({
     active,
@@ -129,6 +150,7 @@ export function useSession(active?: string) {
     setWorkspaceRevision,
     setError,
     setSessionStatus: (sessionId, status) => {
+      bumpStatusRevision(sessionId);
       setSessions((items) =>
         items.map((item) => (item.id === sessionId ? { ...item, status } : item)),
       );
