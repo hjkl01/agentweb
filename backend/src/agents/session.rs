@@ -76,7 +76,7 @@ async fn finish_session(
     worker_id: &str,
     status: &str,
 ) -> bool {
-    let result = sqlx::query("UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
+    let result = sqlx::query("UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,error_message=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
     match result {
         Ok(result) if result.rows_affected() == 1 => true,
         Ok(result) => {
