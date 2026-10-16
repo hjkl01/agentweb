@@ -654,6 +654,7 @@ mod tests {
             title: "t".into(),
             workspace: workspace.to_string_lossy().into_owned(),
             status: "running".into(),
+            status_updated_at: now.to_rfc3339(),
             native_session_id: None,
             fork_from_native_session_id: None,
             model: None,
