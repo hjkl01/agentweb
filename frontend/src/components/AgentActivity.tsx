@@ -140,7 +140,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
         </span>
         <span className="activity-heading">
           <strong>{status.label}</strong>
-          <small>执行过程 · {items.length} 个步骤</small>
+          <small>思考与执行过程 · {items.length} 个步骤</small>
         </span>
         <ChevronDown
           size={15}
