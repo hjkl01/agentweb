@@ -53,7 +53,7 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
     // Existing installations may already have session_runtime without the transient error field.
-    sqlx::query("ALTER TABLE session_runtime ADD COLUMN error_message TEXT").execute(pool).await.or_else(|e| async { if e.to_string().contains("duplicate column name") { Ok(Default::default()) } else { Err(e) } }).await?;
+    match sqlx::query("ALTER TABLE session_runtime ADD COLUMN error_message TEXT").execute(pool).await { Ok(_) => {}, Err(error) if error.to_string().contains("duplicate column name") => {}, Err(error) => return Err(error.into()), };
     sqlx::query(
         "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
          SELECT id,status,worker_id,lease_until,updated_at FROM sessions",
