@@ -74,7 +74,7 @@ lint: ## Run Rust Clippy with warnings treated as errors
 
 clean: ## Remove local build artifacts
 	cd backend && cargo clean
-	rm -rf frontend/dist $(BUILD_DIR)
+	rm -rf frontend/dist
 
 # -----------------------------------------------------------------------------
 # Docker
