@@ -81,9 +81,12 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
     async (sessionId: string, message: string) => {
       // Mark the session as running before awaiting the request. A fast Agent may finish
       // and refresh the session to idle before this POST response arrives.
+      const statusUpdatedAt = new Date().toISOString();
       setSessions((items) =>
         items.map((item) =>
-          item.id === sessionId ? { ...item, status: "running" } : item,
+          item.id === sessionId
+            ? { ...item, status: "running", status_updated_at: statusUpdatedAt }
+            : item,
         ),
       );
       try {
