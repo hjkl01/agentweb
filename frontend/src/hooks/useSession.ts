@@ -26,6 +26,15 @@ export function useSession(active?: string) {
   // Monotonic status revisions protect optimistic/event-driven status changes from
   // HTTP responses that started before those changes and complete afterwards.
   const statusRevision = useRef(new Map<string, number>());
+  const isStatusSnapshotNewer = (incoming: Session, current?: Session) => {
+    if (!current) return true;
+    const incomingTime = Date.parse(incoming.status_updated_at);
+    const currentTime = Date.parse(current.status_updated_at);
+    if (!Number.isNaN(incomingTime) && !Number.isNaN(currentTime)) {
+      return incomingTime >= currentTime;
+    }
+    return true;
+  };
   const bumpStatusRevision = useCallback((sessionId: string) => {
     const next = (statusRevision.current.get(sessionId) ?? 0) + 1;
     statusRevision.current.set(sessionId, next);
@@ -54,8 +63,8 @@ export function useSession(active?: string) {
           // A detail request or local status transition completed after this list
           // request began. Keep the newer status rather than regressing to a stale
           // list snapshot.
-          if (current && (currentRevision > revisionAtRequest || statusChangedAfterRequest)) {
-            return { ...latest, status: current.status };
+          if (current && (currentRevision > revisionAtRequest || statusChangedAfterRequest || !isStatusSnapshotNewer(latest, current))) {
+            return { ...latest, status: current.status, status_updated_at: current.status_updated_at };
           }
           return latest;
         });
@@ -82,16 +91,17 @@ export function useSession(active?: string) {
       const statusChangedAfterRequest =
         (statusRevision.current.get(sessionId) ?? 0) > statusRevisionAtRequest;
       setSessions((items) => {
-        const exists = items.some((item) => item.id === sessionId);
-        if (!exists) return [latest, ...items];
-        return items.map((item) =>
-          item.id === sessionId && statusChangedAfterRequest
-            ? { ...latest, status: item.status }
-            : item.id === sessionId
-              ? latest
+        const current = items.find((item) => item.id === sessionId);
+        if (!current) return [latest, ...items];
+        if (statusChangedAfterRequest || !isStatusSnapshotNewer(latest, current)) {
+          return items.map((item) =>
+            item.id === sessionId
+              ? { ...latest, status: item.status, status_updated_at: item.status_updated_at }
               : item,
-        );
-      });
+          );
+        }
+        return items.map((item) => (item.id === sessionId ? latest : item));
+      });;
     } catch (error) {
       if (requestId !== activeRefreshRequestId.current) return;
       setError(error instanceof Error ? error.message : String(error));
