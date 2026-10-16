@@ -49,7 +49,7 @@ async fn canonical_home() -> Result<PathBuf, StatusCode> {
     fs::canonicalize(default_workspace_root()).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
-    let row=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let row=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at AS status_updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(session_from_row(&row))
 }
 
