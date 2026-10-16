@@ -108,12 +108,9 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
           );
         return result;
       } catch (error) {
-        // Reconcile optimistic state if the request failed or the session was already running.
-        try {
-          setSessions(await api<Session[]>("/sessions"));
-        } catch {
-          /* preserve the original error */
-        }
+        // Do not replace the session list with an unversioned HTTP snapshot here.
+        // The central session hook reconciles authoritative status using
+        // status_updated_at; this catch must never reintroduce a stale "running".
         throw error;
       }
     },
@@ -160,10 +157,12 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
         { method: "POST" },
       );
       markStatusChanged?.(sessionId);
+      const status = result.status || "interrupted";
+      const statusUpdatedAt = new Date().toISOString();
       setSessions((items) =>
         items.map((item) =>
           item.id === sessionId
-            ? { ...item, status: result.status || "interrupted" }
+            ? { ...item, status, status_updated_at: statusUpdatedAt }
             : item,
         ),
       );
