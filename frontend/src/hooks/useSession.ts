@@ -166,8 +166,13 @@ export function useSession(active?: string) {
     setError,
     setSessionStatus: (sessionId, status) => {
       bumpStatusRevision(sessionId);
+      const statusUpdatedAt = new Date().toISOString();
       setSessions((items) =>
-        items.map((item) => (item.id === sessionId ? { ...item, status } : item)),
+        items.map((item) =>
+          item.id === sessionId
+            ? { ...item, status, status_updated_at: statusUpdatedAt }
+            : item,
+        ),
       );
     },
   });
