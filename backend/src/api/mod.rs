@@ -21,7 +21,7 @@ pub use runtime::{get_runtime_settings, install_agent, update_runtime_settings};
 pub use scheduled_tasks::{
     create as create_scheduled_task, delete as delete_scheduled_task,
     disable as disable_scheduled_task, enable as enable_scheduled_task, get as get_scheduled_task,
-    history as scheduled_task_history, list as list_scheduled_tasks,
+    history as scheduled_task_history, delete_run as delete_scheduled_task_run, list as list_scheduled_tasks,
     run_now as run_scheduled_task_now, update as update_scheduled_task,
 };
 pub use session_events::list_session_activity;
