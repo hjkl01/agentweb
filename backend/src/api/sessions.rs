@@ -434,7 +434,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             // clean up its orphaned, non-running session record without ever
             // interrupting a running execution whose workspace is unavailable.
             let row = match sqlx::query(
-                "SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?",
+                "SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at AS status_updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?",
             )
             .bind(&id)
             .fetch_optional(&s.db)
