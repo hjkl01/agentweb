@@ -190,6 +190,7 @@ async fn main() -> Result<()> {
             "/scheduled-tasks/{id}/runs",
             get(api::scheduled_task_history),
         )
+        .route("/scheduled-tasks/{id}/runs/{run_id}", axum::routing::delete(api::delete_scheduled_task_run))
         .route("/auth/password", axum::routing::put(auth::change_password))
         .route("/auth/sessions", get(auth::list_sessions))
         .route(
