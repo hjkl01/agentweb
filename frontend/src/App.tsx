@@ -9,6 +9,7 @@ import { AgentCatalog } from "./components/AgentCatalog";
 import { AgentConfigDialog } from "./components/AgentConfigDialog";
 import { ChatSelectionDialog } from "./components/ChatSelectionDialog";
 import { UserPage } from "./components/UserPage";
+import { ScheduledTasksPanel } from "./components/ScheduledTasksPanel";
 import type { Agent } from "./types";
 import "./styles/account.css";
 type Props = {
@@ -18,7 +19,7 @@ type Props = {
 export function App({ sessionId, navigate }: Props) {
   const c = useAppController(sessionId, navigate);
   const [configAgent, setConfigAgent] = useState<Agent>();
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);\n  const [scheduledTasksOpen, setScheduledTasksOpen] = useState(false);
   const activityVersion = useMemo(
     () =>
       c.session.activity
@@ -70,7 +71,7 @@ export function App({ sessionId, navigate }: Props) {
         onOpenAccount={() => c.setAccountOpen(true)}
         onLogout={c.logout}
         onHome={() => navigate("/")}
-        onOpenTerminal={() => setTerminalOpen(true)}
+        onOpenTerminal={() => setTerminalOpen(true)}\n        onOpenScheduledTasks={() => setScheduledTasksOpen(true)}
       />
       {terminalOpen ? (
         <TerminalPanel
