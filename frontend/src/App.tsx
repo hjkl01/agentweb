@@ -72,7 +72,8 @@ export function App({ sessionId, navigate }: Props) {
         onOpenAccount={() => c.setAccountOpen(true)}
         onLogout={c.logout}
         onHome={() => navigate("/")}
-        onOpenTerminal={() => setTerminalOpen(true)}\n        onOpenScheduledTasks={() => setScheduledTasksOpen(true)}
+        onOpenTerminal={() => setTerminalOpen(true)}
+        onOpenScheduledTasks={() => setScheduledTasksOpen(true)}
       />
       {terminalOpen ? (
         <TerminalPanel
