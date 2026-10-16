@@ -18,6 +18,7 @@ export function useSession(active?: string) {
   // Keep async callbacks from a previous session from mutating the newly active
   // session's transcript after navigation.
   const activeSessionRef = useRef(active);
+  const previousRunningRef = useRef(false);
   activeSessionRef.current = active;
   // Incremented only when an authoritative session-detail response is accepted.
   // This prevents an older /sessions list response from overwriting that status.
@@ -170,6 +171,12 @@ export function useSession(active?: string) {
       setWorkspaceRevision(0);
     }
   }, [active]);
+  useEffect(() => {
+    const running = active ? sessions.find((item) => item.id === active)?.status === "running" : false;
+    if (running && !previousRunningRef.current) setActivityOpen(true);
+    if (!running && previousRunningRef.current) setActivityOpen(false);
+    previousRunningRef.current = running;
+  }, [active, sessions]);
   return {
     sessions,
     messages,
