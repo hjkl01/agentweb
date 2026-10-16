@@ -147,35 +147,14 @@ export function Sidebar({
             </div>
             <div className="session-actions">
               <button
-                className="icon-button session-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTogglePin(session.id);
-                }}
-                title={session.is_pinned ? "取消置顶" : "置顶"}
-                aria-label={session.is_pinned ? "取消置顶" : "置顶"}
-              >
-                {session.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}
-              </button>
-              <button
-                className="icon-button session-action session-delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteSession(session.id);
-                }}
-                title="删除会话"
-                aria-label="删除会话"
-              >
-                <Trash2 size={14} />
-              </button>
-              <button
                 className="icon-button session-menu"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSessionMenu(session.id);
                 }}
-                title="更多操作"
-                aria-label="更多操作"
+                title="对话操作"
+                aria-label="打开对话操作"
+                aria-expanded={sessionMenu === session.id}
               >
                 <MoreHorizontal size={15} />
               </button>
@@ -193,12 +172,12 @@ export function Sidebar({
                       {session.is_pinned ? "取消置顶" : "置顶"}
                     </button>
                     <button onClick={() => onRenameSession(session.id)}>
-                      <Edit3 size={14} /> Rename
+                      <Edit3 size={14} /> 重命名
                     </button>
                   </>
                 )}
                 <button onClick={() => onDeleteSession(session.id)}>
-                  <Trash2 size={14} /> Delete
+                  <Trash2 size={14} /> 删除会话
                 </button>
               </div>
             )}
