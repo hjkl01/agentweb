@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Migrate the previous default database location without losing committed WAL data.
+# SQLite's .backup API includes live WAL content and leaves the source untouched.
+mkdir -p /home/agent/.config/agentweb /agent-runtimes
+if [[ ! -e /home/agent/.config/agentweb/agentweb.db && -f /data/agentweb.db ]]; then
+  echo "Migrating SQLite database to /home/agent/.config/agentweb/agentweb.db"
+  sqlite3 /data/agentweb.db ".backup '/home/agent/.config/agentweb/agentweb.db'"
+fi
+
 workers="${AGENTWEB_WORKERS:-1}"
 if ! [[ "$workers" =~ ^[1-4]$ ]]; then
   echo "AGENTWEB_WORKERS must be between 1 and 4" >&2

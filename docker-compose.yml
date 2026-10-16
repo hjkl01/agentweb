@@ -7,26 +7,22 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 10s
-    # Bubblewrap creates nested Linux namespaces for workspace isolation.
-    # Docker's default seccomp profile blocks the namespace syscalls it needs.
-    # Keep the app unprivileged; do not use privileged: true or add SYS_ADMIN.
-    security_opt:
-      - seccomp=unconfined
     ports:
       - "8080:8080"
     volumes:
       - ./data:/data
       - ${HOME:?Set HOME to your host home directory}:/workspaces
+      - ${AGENTWEB_RUNTIME_DIR:-${HOME}/.local/share/agentweb/runtimes}:/agent-runtimes
     environment:
       - TZ=Asia/Shanghai
-      - HOME=/data/home/
-      - XDG_CONFIG_HOME=/data/home/.config
-      - XDG_DATA_HOME=/data/home/.local/share
-      - XDG_CACHE_HOME=/data/home/.cache
-      - DATABASE_URL=sqlite:///data/agentweb.db
+      - HOME=/home/agent
+      - AGENTWEB_AGENT_HOME=/home/agent
+      - XDG_CONFIG_HOME=/home/agent/.config
+      - XDG_DATA_HOME=/home/agent/.local/share
+      - XDG_CACHE_HOME=/home/agent/.cache
+      - DATABASE_URL=sqlite:///home/agent/.config/agentweb/agentweb.db
       - AGENTWEB_WORKSPACE_DIR=/workspaces
-      - AGENTWEB_RUNTIME_DIR=/data/runtimes/node
-      - AGENTWEB_FRONTEND_DIR=/app/frontend
+      - AGENTWEB_RUNTIME_DIR=/agent-runtimes
       - AGENTWEB_WORKERS=${AGENTWEB_WORKERS:-1}
       - RUST_LOG=${RUST_LOG:-info}
       # npm 安装 Agent 时使用的 registry，子进程会继承该环境变量

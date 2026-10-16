@@ -3,13 +3,36 @@ import type { Dispatch, SetStateAction } from "react";
 import { api } from "../lib/api";
 import type { Session } from "../types";
 
-type Options = { setSessions: Dispatch<SetStateAction<Session[]>> };
-export function useSessionActions({ setSessions }: Options) {
+type Options = {
+  setSessions: Dispatch<SetStateAction<Session[]>>;
+  markStatusChanged?: (sessionId: string) => void;
+};
+
+export function useSessionActions({ setSessions, markStatusChanged }: Options) {
   const createSession = useCallback(
-    async (agentId: string | undefined, model: string | undefined, workspace: string) => {
+    async (
+      agentId: string | undefined,
+      model: string | undefined,
+      workspace: string,
+    ) => {
       const session = await api<Session>("/sessions", {
         method: "POST",
-        body: JSON.stringify({ agent_id: agentId, title: "New Chat", model, workspace }),
+        body: JSON.stringify({
+          agent_id: agentId,
+          title: "New Chat",
+          model,
+          workspace,
+        }),
+      });
+      setSessions((items) => [session, ...items]);
+      return session;
+    },
+    [setSessions],
+  );
+  const createPiFork = useCallback(
+    async (sessionId: string) => {
+      const session = await api<Session>(`/sessions/${sessionId}/fork`, {
+        method: "POST",
       });
       setSessions((items) => [session, ...items]);
       return session;
@@ -133,6 +156,7 @@ export function useSessionActions({ setSessions }: Options) {
         `/sessions/${sessionId}/interrupt`,
         { method: "POST" },
       );
+      markStatusChanged?.(sessionId);
       setSessions((items) =>
         items.map((item) =>
           item.id === sessionId
@@ -141,10 +165,11 @@ export function useSessionActions({ setSessions }: Options) {
         ),
       );
     },
-    [setSessions],
+    [setSessions, markStatusChanged],
   );
   return {
     createSession,
+    createPiFork,
     restartMissingSession,
     setModel,
     setAgent,

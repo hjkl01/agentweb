@@ -9,6 +9,7 @@ import { AgentCatalog } from "./components/AgentCatalog";
 import { AgentConfigDialog } from "./components/AgentConfigDialog";
 import { ChatSelectionDialog } from "./components/ChatSelectionDialog";
 import { UserPage } from "./components/UserPage";
+import { ScheduledTasksPanel } from "./components/ScheduledTasksPanel";
 import type { Agent } from "./types";
 import "./styles/account.css";
 type Props = {
@@ -19,6 +20,7 @@ export function App({ sessionId, navigate }: Props) {
   const c = useAppController(sessionId, navigate);
   const [configAgent, setConfigAgent] = useState<Agent>();
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [scheduledTasksOpen, setScheduledTasksOpen] = useState(false);
   const activityVersion = useMemo(
     () =>
       c.session.activity
@@ -28,6 +30,7 @@ export function App({ sessionId, navigate }: Props) {
   );
   useAutoScroll(c.chatRef, {
     contentVersion: `${c.session.messages.length}:${c.session.stream.length}:${activityVersion}:${sessionId || ""}`,
+    force: c.current?.status === "running",
   });
   const openNewChat = () => {
     // Workspace selection is mandatory even when default Agent/model settings exist.
@@ -71,6 +74,7 @@ export function App({ sessionId, navigate }: Props) {
         onLogout={c.logout}
         onHome={() => navigate("/")}
         onOpenTerminal={() => setTerminalOpen(true)}
+        onOpenScheduledTasks={() => setScheduledTasksOpen(true)}
       />
       {terminalOpen ? (
         <TerminalPanel
@@ -100,10 +104,16 @@ export function App({ sessionId, navigate }: Props) {
           onToggleActivity={() => c.session.setActivityOpen((v) => !v)}
           onStop={c.stop}
           onRestartMissingSession={c.restartMissingSession}
+          onForkSession={c.forkSession}
           onNewChat={openNewChat}
           onAutoResize={c.autoResize}
         />
       )}
+      <ScheduledTasksPanel
+        open={scheduledTasksOpen}
+        agents={c.runtime.agents}
+        onClose={() => setScheduledTasksOpen(false)}
+      />
       <WorkspacePanel
         current={c.current}
         files={c.workspace.files}

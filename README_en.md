@@ -112,18 +112,20 @@ The normal deployment is:
 |           Codex        Claude Code       OpenCode    |
 |           installed       optional        optional   |
 |                                                      |
-|  /data/agentweb.db                                   |
+|  /data/home/.config/agentweb/agentweb.db             |
 |  /workspaces/                                        |
 +------------------------------------------------------+
 ```
 
-The container should mount persistent directories, for example:
+The container should mount persistent directories, and the host home directory is mounted as the container workspace root:
 
 ```yaml
 volumes:
   - ./data:/data
-  - ./workspaces:/workspaces
+  - ${HOME}:/workspaces
 ```
+
+SQLite is stored at `$HOME/.config/agentweb/agentweb.db` by default (inside Docker, `/data/home/.config/agentweb/agentweb.db`). The `DATABASE_URL` environment variable overrides this path. The previous Docker database at `/data/agentweb.db` is backed up into the new location on startup if the new database does not exist.
 
 ### Why one container?
 

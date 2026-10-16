@@ -9,14 +9,106 @@ use uuid::Uuid;
 
 pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::migrate!("./migrations").run(pool).await?;
-    // Remove legacy chat transcripts/activity payloads from earlier versions.
-    // New conversation content is owned exclusively by each Agent's native session.
-    sqlx::query("DELETE FROM messages").execute(pool).await?;
+    // Conversation transcripts are owned by Agent-native session files.
+    // Remove the legacy cleanup trigger before dropping its target table; otherwise
+    // deleting a session can fail when SQLite executes a trigger that references
+    // the removed messages table. Keep historical migrations unchanged for checksum safety.
+    sqlx::query("DROP TRIGGER IF EXISTS trg_sessions_delete_messages")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS messages").execute(pool).await?;
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
         .await?;
+
+    // Remove legacy bidirectional synchronization. Runtime state is now
+    // written explicitly by session lifecycle operations; keeping these
+    // triggers would reintroduce the old sessions/runtime coupling.
+    sqlx::query("DROP TRIGGER IF EXISTS sessions_runtime_insert")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TRIGGER IF EXISTS sessions_runtime_update")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TRIGGER IF EXISTS sessions_runtime_delete")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TRIGGER IF EXISTS runtime_sessions_update")
+        .execute(pool)
+        .await?;
+
+    // Separate ephemeral execution coordination from durable conversation
+    // metadata. This compatibility layer is intentionally metadata-free: it
+    // stores only ownership/lease state, never transcript text or titles.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS session_runtime (
+            session_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'idle',
+            worker_id TEXT,
+            lease_until TEXT,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
+         SELECT id,status,worker_id,lease_until,updated_at FROM sessions",
+    )
+    .execute(pool)
+    .await?;
+    // Remove stale coordination rows left by sessions deleted before the
+    // compatibility trigger existed. Runtime records never define history.
+    sqlx::query(
+        "DELETE FROM session_runtime WHERE NOT EXISTS
+         (SELECT 1 FROM sessions WHERE sessions.id=session_runtime.session_id)",
+    )
+    .execute(pool)
+    .await?;
     seed_builtin_agents(pool).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::init;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn init_removes_legacy_session_runtime_triggers() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        init(&pool).await.unwrap();
+
+        for name in [
+            "sessions_runtime_insert",
+            "sessions_runtime_update",
+            "sessions_runtime_delete",
+            "runtime_sessions_update",
+        ] {
+            let sql = format!(
+                "CREATE TRIGGER {} AFTER INSERT ON sessions BEGIN SELECT 1; END",
+                name
+            );
+            sqlx::query(&sql).execute(&pool).await.unwrap();
+        }
+
+        // Running initialization against an existing database must remove
+        // legacy triggers as well as avoid recreating them.
+        init(&pool).await.unwrap();
+
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('sessions_runtime_insert','sessions_runtime_update','sessions_runtime_delete','runtime_sessions_update','trg_sessions_delete_messages')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0, "legacy runtime synchronization triggers must be absent");
+    }
 }
 
 async fn seed_builtin_agents(pool: &SqlitePool) -> Result<()> {

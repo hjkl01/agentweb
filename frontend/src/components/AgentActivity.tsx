@@ -44,10 +44,7 @@ function isComplete(type: string) {
 function currentStatus(items: ActivityItem[]) {
   const latest = [...items]
     .reverse()
-    .find(
-      (item) =>
-        item.type !== "message.started",
-    );
+    .find((item) => item.type !== "message.started");
   if (!latest) return { label: "正在处理请求", state: "running" };
   if (latest.type === "session.completed")
     return { label: "已完成", state: "complete" };
@@ -71,7 +68,13 @@ function currentStatus(items: ActivityItem[]) {
   return { label: latest.label || "正在处理请求", state: "running" };
 }
 
-function ActivityRow({ item, expanded }: { item: ActivityItem; expanded: boolean }) {
+function ActivityRow({
+  item,
+  expanded,
+}: {
+  item: ActivityItem;
+  expanded: boolean;
+}) {
   const thinking = item.type.startsWith("thinking.");
   const output =
     item.type.startsWith("tool.") || item.type.startsWith("command.");
@@ -91,7 +94,10 @@ function ActivityRow({ item, expanded }: { item: ActivityItem; expanded: boolean
           )}
         </div>
         {detail && thinking && (
-          <details className="activity-detail activity-thinking" open={expanded}>
+          <details
+            className="activity-detail activity-thinking"
+            open={expanded}
+          >
             <summary>查看思考记录</summary>
             <pre>{detail}</pre>
           </details>
@@ -144,7 +150,20 @@ export function AgentActivity({ items, open, onToggle }: Props) {
       {open && (
         <div className="activity-list">
           {items.map((item) => (
-            <ActivityRow key={item.id} item={item} expanded={open && status.state === "running" && !items.some((item) => item.type === "session.completed" || item.type === "agent.error" || item.type === "error")} />
+            <ActivityRow
+              key={item.id}
+              item={item}
+              expanded={
+                open &&
+                status.state === "running" &&
+                !items.some(
+                  (item) =>
+                    item.type === "session.completed" ||
+                    item.type === "agent.error" ||
+                    item.type === "error",
+                )
+              }
+            />
           ))}
         </div>
       )}

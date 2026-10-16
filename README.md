@@ -16,7 +16,7 @@ Agent Web 是一个面向 Codex、Claude Code、OpenCode、Pi 等 Agent 的统�
 - **Node.js 多版本 Runtime**：Node.js 不作为 Agent Web 后端依赖，可按需安装
 - **WebSocket 实时输出**：实时显示 Agent 执行事件
 - **Workspace**：文件树、文件预览、Git Diff
-- **持久化**：SQLite、用户配置、工作区和 Runtime 均统一保存到 `data/`
+- **持久化**：SQLite 默认位于 `$HOME/.config/agentweb/agentweb.db`；工作区和 Node.js Runtime 可独立配置
 - **国内镜像优先**：Docker 构建依赖使用国内镜像
 
 ## 快速开始
@@ -47,7 +47,7 @@ volumes:
   - ./data:/data
 ```
 
-`data/` 内部包含数据库、Agent 配置、Workspace、Node.js Runtime 和按需安装的 Agent。
+Docker 的 `data/` 持久化数据库、Agent HOME/配置和 Docker 专用 Runtime；Workspace 直接映射到宿主机 `$HOME`。宿主机直接运行二进制时，Agent 使用用户自己的 HOME 和已安装/配置的 Agent，不使用 Agent Web Runtime。
 
 ## 本地构建并直接启动
 
@@ -59,18 +59,17 @@ make build
 make start
 ```
 
-`make build` 会把可运行的后端程序和前端静态文件统一输出到项目根目录的 `build/`，不需要进入 `backend/` 或 `frontend/` 启动：
+`make build` 会先构建前端，再把前端静态资源嵌入经过优化的 Rust 二进制文件。构建产物只有一个可执行文件，不需要额外携带 `frontend/` 目录：
 
 ```text
 agentweb/
-├── build/
-│   ├── agentweb          # Rust 后端可执行文件
-│   └── frontend/         # 前端静态文件，可直接由后端提供服务
-│       └── index.html
-└── data/                 # 数据库、用户配置、工作区和 Runtime
+├── agentweb              # 独立运行的二进制，内含前端
+├── backend/
+├── frontend/
+└── ...
 ```
 
-构建完成后，运行 `make start` 即可启动服务，默认访问 http://localhost:8080。数据会保存在项目根目录的 `data/` 中。需要优化体积和运行性能时，可使用 `make release` 生成 Release 版本；启动方式仍然是 `make start`。
+构建完成后，运行 `make start` 即可启动服务，默认访问 http://localhost:8080。SQLite 默认保存在 `$HOME/.config/agentweb/agentweb.db`；也可以通过 `DATABASE_URL` 指定其他位置。旧版 `data/agentweb.db` 在首次启动且新数据库不存在时会自动迁移。 `make release` 是 `make build` 的别名。
 
 `make start` 会以前台方式运行，按 `Ctrl+C` 停止。首次启动时，请留意终端输出的默认管理员密码并妥善保存。
 
@@ -83,9 +82,9 @@ agentweb/
 - Rust stable / Cargo
 - Node.js 22+
 - npm
-- Linux 工作区隔离依赖：`bubblewrap`（命令 `bwrap`）
+- Linux：宿主机 Agent/终端直接使用当前用户权限运行；Docker 内按容器权限运行
 
-Agent 和终端命令会通过 Linux namespace 沙箱启动：系统文件系统只读，当前会话工作区可写，`/tmp` 使用隔离的临时文件系统。 Pi 的原生会话状态会写入工作区内的 `.agentweb-state/pi-sessions/`，不会因此开放宿主 HOME 的写权限；其他 Agent 的原生状态目录兼容性仍需逐一验证。若系统没有可用的 `bwrap` 或 namespace 权限，启动会失败，不会自动退回到不受限制的执行方式。当前工作区沙箱仅支持 Linux；macOS/Windows 上的 Agent 与终端执行会被拒绝，直到提供对应平台的沙箱实现。
+宿主机直接运行二进制时，Agent 使用用户自己的 `HOME`、`~/.config`、`~/.local` 等原生配置目录，并以用户权限直接操作 `$HOME` 下的工作目录。Agent Web 不提供额外的文件系统沙箱。Docker 模式则使用容器内的 `/data/home` 作为 Agent HOME，并将宿主机 `$HOME` 挂载到 `/workspaces`。
 
 Arch Linux 可安装依赖：
 
@@ -93,7 +92,7 @@ Arch Linux 可安装依赖：
 sudo pacman -S bubblewrap
 ```
 
-本地开发默认将持久化数据统一放在项目根目录的 `data/` 下，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
+本地开发的 SQLite 默认位于 `$HOME/.config/agentweb/agentweb.db`；宿主机 Workspace 默认就是 `$HOME`。宿主机 Agent 不使用 Agent Web Runtime，直接使用用户 PATH 和用户自己的 Agent 配置。
 
 ### 1. 启动后端
 
@@ -113,10 +112,10 @@ http://localhost:8080
 默认数据库：
 
 ```text
-./data/agentweb.db
+$HOME/.config/agentweb/agentweb.db
 ```
 
-如果需要指定其他位置，可以通过 `DATABASE_URL` 覆盖。
+如果需要指定其他位置，可以通过 `DATABASE_URL` 覆盖。首次启动时会自动创建目录；从旧版 `./data/agentweb.db` 升级且新数据库不存在时，会先检查点 WAL，再迁移数据库。
 
 ### 2. 构建前端
 
@@ -148,27 +147,27 @@ make fmt-frontend
 
 ```text
 agentweb/
-├── data/
-│   ├── agentweb.db
-│   ├── home/                 # Agent 的 HOME、配置、缓存和数据
-│   ├── workspaces/           # Session 工作区
-│   └── runtimes/             # Node.js Runtime 和用户安装的 Agent
+├── agentweb                 # make build 生成的独立二进制
 ├── backend/
 ├── frontend/
 └── docker/
+
+# 宿主机数据
+$HOME/.config/agentweb/agentweb.db
+$HOME/                           # Session 默认 Workspace
 ```
 
 Docker 中对应：
 
 | 容器目录 | 用途 |
 |---|---|
-| `/data/agentweb.db` | SQLite 数据库 |
-| `/data/home` | Agent HOME、配置、缓存和数据 |
-| `/data/workspaces` | Agent 工作区 |
-| `/data/runtimes/node` | Node.js Runtime |
-| `/data/runtimes/agents` | 用户安装的 Agent 运行时数据 |
+| `/data/home/.config/agentweb/agentweb.db` | SQLite 数据库 |
+| `/data/home` | Docker 中 Agent HOME、配置和缓存 |
+| `/workspaces` | 宿主机 `$HOME` 映射后的 Docker Workspace |
+| `/data/runtimes/node` | Docker 专用 Node.js Runtime |
+| `/data/runtimes/agents` | Docker 中用户安装的 Agent 运行时数据 |
 
-因此重新创建容器后，只要保留宿主机 `./data`，数据库、Agent 配置、Workspace 和 Runtime 都可以继续使用。
+因此重新创建容器后，保留宿主机 `./data` 可以继续使用数据库、Docker 内 Agent 配置和 Runtime；Workspace 则来自宿主机 `$HOME`，不随容器复制。
 
 ## 使用方法
 

@@ -10,7 +10,6 @@ dependencies = [
  "argon2",
  "async-trait",
  "axum",
- "base64",
  "chrono",
  "futures",
  "portable-pty",
@@ -2395,6 +2394,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]

@@ -5,7 +5,10 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use std::{path::{Component, Path as FsPath, PathBuf}, process::Stdio};
+use std::{
+    path::{Component, Path as FsPath, PathBuf},
+    process::Stdio,
+};
 use tokio::{fs, io::AsyncReadExt, process::Command};
 
 const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
@@ -169,7 +172,11 @@ async fn run_git_limited(
     if truncated {
         bytes.truncate(max_bytes);
     }
-    Ok(LimitedGitOutput { status, stdout: bytes, truncated })
+    Ok(LimitedGitOutput {
+        status,
+        stdout: bytes,
+        truncated,
+    })
 }
 
 async fn git_status(
@@ -179,7 +186,8 @@ async fn git_status(
         root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         MAX_DIFF_TOTAL_BYTES,
-    ).await?;
+    )
+    .await?;
     if !output.status.success() || output.truncated {
         // A partial porcelain stream may end halfway through a path; don't
         // expose misleading status entries when the safety cap is reached.
@@ -247,7 +255,9 @@ pub async fn workspace_files(
             workspace_file_path(&session.workspace, relative).await?
         }
     };
-    let current_metadata = fs::metadata(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let current_metadata = fs::metadata(&current)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     if !current_metadata.is_dir() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -257,10 +267,16 @@ pub async fn workspace_files(
         .strip_prefix(&root)
         .map_err(|_| StatusCode::FORBIDDEN)?
         .to_string_lossy()
-        .replace('\\\\', "/");
+        .replace('\\', "/");
     let mut out = Vec::new();
-    let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::NOT_FOUND)?;
-    while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+    let mut entries = fs::read_dir(&current)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
         if out.len() >= 2000 {
             break;
         }
@@ -269,16 +285,22 @@ pub async fn workspace_files(
         if IGNORED_DIRS.contains(&name.as_str()) {
             continue;
         }
-        let file_type = entry.file_type().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if file_type.is_symlink() {
             continue;
         }
-        let metadata = entry.metadata().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let relative = path
             .strip_prefix(&root)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .to_string_lossy()
-            .replace('\\\\', "/");
+            .replace('\\', "/");
         out.push(serde_json::json!({
             "name": name,
             "path": relative,
@@ -294,7 +316,10 @@ pub async fn workspace_files(
         if out.len() >= 2000 {
             break;
         }
-        let parent = path.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("");
+        let parent = path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
         if status == "deleted"
             && parent == current_relative
             && !out.iter().any(|item| item["path"].as_str() == Some(path))
@@ -311,7 +336,13 @@ pub async fn workspace_files(
     out.sort_by(|a, b| {
         (a["kind"].as_str() != Some("directory"))
             .cmp(&(b["kind"].as_str() != Some("directory")))
-            .then_with(|| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()))
+            .then_with(|| {
+                a["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+            })
     });
     Ok(Json(out))
 }
@@ -421,7 +452,8 @@ pub async fn workspace_diff(
         &root,
         &["diff", "HEAD", "--no-ext-diff", "--binary"],
         MAX_DIFF_TOTAL_BYTES,
-    ).await?;
+    )
+    .await?;
     if output.truncated {
         let diff = String::from_utf8_lossy(&output.stdout).into_owned();
         return Ok(Json(serde_json::json!({
@@ -462,7 +494,8 @@ pub async fn workspace_diff(
             &root,
             &["diff", "--cached", "--no-ext-diff", "--binary"],
             MAX_DIFF_TOTAL_BYTES,
-        ).await?;
+        )
+        .await?;
         if cached.truncated {
             return Ok(Json(serde_json::json!({
                 "status": "ok",
@@ -474,7 +507,8 @@ pub async fn workspace_diff(
             &root,
             &["diff", "--no-ext-diff", "--binary"],
             MAX_DIFF_TOTAL_BYTES.saturating_sub(cached.stdout.len()),
-        ).await?;
+        )
+        .await?;
         if !cached.status.success() || !unstaged.status.success() {
             tracing::warn!(
                 workspace = %root.display(),
@@ -496,10 +530,7 @@ pub async fn workspace_diff(
         while end > 0 && !diff.is_char_boundary(end) {
             end -= 1;
         }
-        let cut = diff[..end]
-            .rfind('\n')
-            .map(|n| n + 1)
-            .unwrap_or(0);
+        let cut = diff[..end].rfind('\n').map(|n| n + 1).unwrap_or(0);
         diff.truncate(cut);
         truncated = true;
     }
@@ -508,7 +539,8 @@ pub async fn workspace_diff(
             &root,
             &["ls-files", "--others", "--exclude-standard", "-z"],
             MAX_DIFF_TOTAL_BYTES,
-        ).await?;
+        )
+        .await?;
         if untracked.truncated {
             return Ok(Json(serde_json::json!({
                 "status": "ok",
@@ -570,7 +602,9 @@ mod workspace_file_safety_tests {
         std::fs::write(outside.join("secret.txt"), "must-not-leak").unwrap();
         symlink(outside.join("secret.txt"), root.join("secret-link.txt")).unwrap();
 
-        assert!(read_untracked_file(&root, "secret-link.txt").await.is_none());
+        assert!(read_untracked_file(&root, "secret-link.txt")
+            .await
+            .is_none());
 
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
@@ -628,7 +662,11 @@ mod workspace_file_safety_tests {
     async fn untracked_diff_skips_files_that_grow_past_the_limit() {
         let root = temp_root("diff-large-file");
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("large.txt"), vec![b'x'; MAX_DIFF_FILE_BYTES as usize + 1]).unwrap();
+        std::fs::write(
+            root.join("large.txt"),
+            vec![b'x'; MAX_DIFF_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
 
         assert!(read_untracked_file(&root, "large.txt").await.is_none());
 

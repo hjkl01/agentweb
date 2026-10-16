@@ -57,7 +57,8 @@ async fn run_terminal(
     } else {
         std::env::var_os("AGENTWEB_WORKSPACE_DIR")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("/workspace"))
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
     };
 
     if !workspace.is_dir() {
@@ -89,132 +90,32 @@ async fn run_terminal(
         }
     };
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut socket = socket;
-        let _ = socket
-            .send(Message::Text(
-                "Workspace terminal sandbox is currently supported only on Linux.".into(),
-            ))
-            .await;
-        return;
-    }
-
     let shell = std::env::var("AGENTWEB_TERMINAL_SHELL")
-        .unwrap_or_else(|_| "/bin/bash".into());
-
-    #[cfg(not(target_os = "linux"))]
-    let mut command = CommandBuilder::new("/bin/false");
-
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let workspace = match std::fs::canonicalize(&workspace) {
-            Ok(path) if path.is_dir() => path,
-            _ => {
-                let mut socket = socket;
-                let _ = socket
-                    .send(Message::Text("Invalid terminal workspace.".into()))
-                    .await;
-                return;
-            }
-        };
-        if workspace == std::path::Path::new("/workspaces") {
+        .unwrap_or_else(|_| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()));
+    let workspace = match std::fs::canonicalize(&workspace) {
+        Ok(path) if path.is_dir() => path,
+        _ => {
             let mut socket = socket;
             let _ = socket
-                .send(Message::Text(
-                    "Terminal workspace must be a project directory, not the shared /workspaces root.".into(),
-                ))
+                .send(Message::Text("Invalid terminal workspace.".into()))
                 .await;
             return;
         }
-        let mut command = CommandBuilder::new("bwrap");
-        command.arg("--die-with-parent");
-        command.arg("--new-session");
-        command.arg("--unshare-pid");
-        command.arg("--unshare-ipc");
-        command.arg("--unshare-uts");
-        command.arg("--ro-bind");
-        command.arg("/");
-        command.arg("/");
-        // Expose bubblewrap's minimal device directory rather than the
-        // host's full /dev tree.
-        command.arg("--dev");
-        command.arg("/dev");
-        command.arg("--proc");
-        command.arg("/proc");
-        command.arg("--tmpfs");
-        command.arg("/tmp");
-        // Preserve only required read-only directories under temporary aliases
-        // before masking /data and hiding the SQLite database from the shell.
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts");
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/home");
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/runtimes");
-        command.arg("--dir");
-        command.arg("/tmp/agentweb-mounts/workspace");
-        command.arg("--ro-bind");
-        command.arg("/data/home");
-        command.arg("/tmp/agentweb-mounts/home");
-        command.arg("--ro-bind");
-        command.arg("/data/runtimes");
-        command.arg("/tmp/agentweb-mounts/runtimes");
-        command.arg("--tmpfs");
-        command.arg("/data");
-        command.arg("--dir");
-        command.arg("/data/home");
-        command.arg("--dir");
-        command.arg("/data/runtimes");
-        command.arg("--ro-bind");
-        command.arg("/tmp/agentweb-mounts/home");
-        command.arg("/data/home");
-        command.arg("--ro-bind");
-        command.arg("/tmp/agentweb-mounts/runtimes");
-        command.arg("/data/runtimes");
-        if workspace.starts_with("/workspaces") && workspace != std::path::Path::new("/workspaces") {
-            // Keep the selected project reachable via a temporary alias before
-            // hiding /workspaces, so sibling projects are not visible in shell.
-            command.arg("--bind");
-            command.arg(&workspace);
-            command.arg("/tmp/agentweb-mounts/workspace");
-            command.arg("--tmpfs");
-            command.arg("/workspaces");
-            let relative = match workspace.strip_prefix("/workspaces") {
-                Ok(path) => path,
-                Err(_) => {
-                    let mut socket = socket;
-                    let _ = socket.send(Message::Text("Invalid terminal workspace path.".into())).await;
-                    return;
-                }
-            };
-            let mut target = std::path::PathBuf::from("/workspaces");
-            for component in relative.components() {
-                target.push(component.as_os_str());
-                command.arg("--dir");
-                command.arg(&target);
-            }
-            command.arg("--bind");
-            command.arg("/tmp/agentweb-mounts/workspace");
-            command.arg(&workspace);
-        } else {
-            command.arg("--bind");
-            command.arg(&workspace);
-            command.arg(&workspace);
-        }
-        command.arg("--chdir");
-        command.arg(&workspace);
-        command.arg("--");
-        command.arg(&shell);
-        command.cwd(&workspace);
-        command
     };
+    let mut command = CommandBuilder::new(&shell);
+    command.cwd(&workspace);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env(
-        "HOME",
-        std::env::var("HOME").unwrap_or_else(|_| "/data/home".into()),
-    );
+    let agent_home = std::env::var_os("AGENTWEB_AGENT_HOME")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .and_then(|path| path.canonicalize().ok());
+    if let Some(agent_home) = agent_home.filter(|path| path.is_dir()) {
+        command.env("HOME", agent_home.as_os_str());
+        command.env("XDG_CONFIG_HOME", agent_home.join(".config").as_os_str());
+        command.env("XDG_DATA_HOME", agent_home.join(".local/share").as_os_str());
+        command.env("XDG_CACHE_HOME", agent_home.join(".cache").as_os_str());
+    }
     command.env("PATH", std::env::var("PATH").unwrap_or_default());
     command.env("SHELL", &shell);
 

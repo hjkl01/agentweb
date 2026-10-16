@@ -49,7 +49,11 @@ export function useAppController(
       window.location.href = "/";
     }
   };
-  const createChat = async (agentId: string | undefined, model: string | undefined, workspace: string) => {
+  const createChat = async (
+    agentId: string | undefined,
+    model: string | undefined,
+    workspace: string,
+  ) => {
     try {
       const created = await session.createSession(agentId, model, workspace);
       navigate(sessionPath(created.id));
@@ -84,13 +88,18 @@ export function useAppController(
       current?.status === "running" ||
       queuedMessages.length === 0 ||
       queueSendingRef.current === sessionId
-    ) return;
+    )
+      return;
     const [nextMessage, ...remaining] = queuedMessages;
     queueSendingRef.current = sessionId;
     setQueuedMessages(remaining);
-    session.sendChat(sessionId, nextMessage)
+    session
+      .sendChat(sessionId, nextMessage)
       .catch(() => {})
-      .finally(() => { if (queueSendingRef.current === sessionId) queueSendingRef.current = undefined; });
+      .finally(() => {
+        if (queueSendingRef.current === sessionId)
+          queueSendingRef.current = undefined;
+      });
   }, [sessionId, current?.status, queuedMessages, session.sendChat]);
   const renameSession = async (id: string) => {
     const target = session.sessions.find((item) => item.id === id);
@@ -120,6 +129,16 @@ export function useAppController(
       if (sessionId === id) next ? navigate(sessionPath(next)) : navigate("/");
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const forkSession = async () => {
+    if (!sessionId) return;
+    try {
+      const fork = await session.createPiFork(sessionId);
+      navigate(sessionPath(fork.id));
+      setSessionMenu(undefined);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
     }
   };
   const restartMissingSession = async () => {
@@ -194,6 +213,7 @@ export function useAppController(
     deleteSession,
     stop,
     restartMissingSession,
+    forkSession,
     changeAgent,
     changeModel,
     autoResize,

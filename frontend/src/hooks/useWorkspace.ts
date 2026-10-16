@@ -29,11 +29,19 @@ export function useWorkspace(active?: string, revision = 0) {
     }
     try {
       const result = await api<FileItem[]>(`/sessions/${requestActive}/files`);
-      if (request !== filesRequest.current || activeRef.current !== requestActive) return;
+      if (
+        request !== filesRequest.current ||
+        activeRef.current !== requestActive
+      )
+        return;
       setFiles(result);
       setError(undefined);
     } catch (error) {
-      if (request !== filesRequest.current || activeRef.current !== requestActive) return;
+      if (
+        request !== filesRequest.current ||
+        activeRef.current !== requestActive
+      )
+        return;
       setError(error instanceof Error ? error.message : String(error));
     }
   }, [active]);
@@ -46,12 +54,22 @@ export function useWorkspace(active?: string, revision = 0) {
       return;
     }
     try {
-      const result = await api<WorkspaceDiff>(`/sessions/${requestActive}/diff`);
-      if (request !== diffRequest.current || activeRef.current !== requestActive) return;
+      const result = await api<WorkspaceDiff>(
+        `/sessions/${requestActive}/diff`,
+      );
+      if (
+        request !== diffRequest.current ||
+        activeRef.current !== requestActive
+      )
+        return;
       setDiff(result);
       setError(undefined);
     } catch (error) {
-      if (request !== diffRequest.current || activeRef.current !== requestActive) return;
+      if (
+        request !== diffRequest.current ||
+        activeRef.current !== requestActive
+      )
+        return;
       const message = error instanceof Error ? error.message : String(error);
       setDiff({ diff: message });
       setError(message);
@@ -87,12 +105,20 @@ export function useWorkspace(active?: string, revision = 0) {
       if (!requestActive) return;
       try {
         const result = await api<WorkspaceFile>(fileUrl(requestActive, path));
-        if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
+        if (
+          request !== selectedFileRequest.current ||
+          activeRef.current !== requestActive
+        )
+          return;
         selectedFileSessionRef.current = requestActive;
         setSelectedFile(result);
         setError(undefined);
       } catch (error) {
-        if (request !== selectedFileRequest.current || activeRef.current !== requestActive) return;
+        if (
+          request !== selectedFileRequest.current ||
+          activeRef.current !== requestActive
+        )
+          return;
         const message = error instanceof Error ? error.message : String(error);
         selectedFileSessionRef.current = requestActive;
         setSelectedFile({ path, content: "", error: message });

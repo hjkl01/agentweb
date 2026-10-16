@@ -1,5 +1,7 @@
-use super::sessions::load_session;
-use crate::agents::pi_transcript::{read_messages_from_workspace, TranscriptMessage};
+use super::sessions::{load_session, load_session_record};
+use crate::agents::pi_transcript::{
+    native_session_file_exists, read_messages, NativeSessionFileLookup, TranscriptMessage,
+};
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -29,7 +31,7 @@ pub async fn list_messages(
     State(s): State<AppState>,
 ) -> Result<Json<Vec<TranscriptMessage>>, StatusCode> {
     // Conversation content belongs to the Agent's native session, not SQLite.
-    let session = load_session(&s.db, &id).await?;
+    let session = load_session_record(&s.db, &id).await?;
     // sessions.agent_id is a database row ID, not the adapter kind. Resolve
     // the kind before deciding whether this session uses Pi's JSONL transcript.
     let is_pi = is_pi_agent(&s.db, &session.agent_id)
@@ -41,32 +43,68 @@ pub async fn list_messages(
     if !is_pi {
         return Ok(Json(Vec::new()));
     }
-    let Some(native_session_id) = session.native_session_id.as_deref() else {
+    let is_fork_preview =
+        session.native_session_id.is_none() && session.fork_from_native_session_id.is_some();
+    let Some(native_session_id) = session
+        .native_session_id
+        .as_deref()
+        .or(session.fork_from_native_session_id.as_deref())
+    else {
         return Ok(Json(Vec::new()));
     };
     // Reading Pi JSONL is synchronous filesystem traversal plus JSON parsing.
     // Keep that work off Tokio's async executor so frequent transcript polling
     // cannot stall unrelated API requests.
-    let permit = TRANSCRIPT_READ_LIMIT
-        .acquire()
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "Pi transcript read limiter is unavailable");
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
-    let workspace = session.workspace.clone();
+    let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+        tracing::error!(%error, "Pi transcript read limiter is unavailable");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let native_session_id = native_session_id.to_owned();
-    let messages = tokio::task::spawn_blocking(move || {
+    let (lookup, messages) = tokio::task::spawn_blocking(move || {
         // Keep the permit for the entire blocking read, including if the HTTP
         // request is cancelled after the worker has started.
         let _permit = permit;
-        read_messages_from_workspace(std::path::Path::new(&workspace), &native_session_id)
+        let lookup = native_session_file_exists(&native_session_id);
+        let messages = if lookup == NativeSessionFileLookup::Found {
+            read_messages(&native_session_id)
+        } else {
+            Vec::new()
+        };
+        (lookup, messages)
     })
     .await
     .map_err(|error| {
         tracing::error!(%error, "Pi transcript reader task failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    // A failed/incomplete scan is not evidence of deletion. Return a retryable
+    // response and never mutate session metadata in that case.
+    if lookup == NativeSessionFileLookup::Unknown {
+        tracing::warn!(session_id = %id, "Pi transcript lookup was inconclusive; preserving session metadata");
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // Pi owns the transcript file. If a user removes it outside Agent Web,
+    // mark only an idle, unclaimed session as missing; never overwrite a live
+    // worker's status while it may still be writing the transcript.
+    if lookup == NativeSessionFileLookup::Missing && !is_fork_preview {
+        let result = sqlx::query(
+            "UPDATE session_runtime SET status='missing',updated_at=? WHERE session_id=? AND status!='running' AND worker_id IS NULL AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=session_runtime.session_id AND s.native_session_id=?)",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(&id)
+        .bind(session.native_session_id.as_deref().unwrap_or_default())
+        .execute(&s.db)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to mark unavailable Pi transcript as missing");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        if result.rows_affected() > 0 {
+            tracing::warn!(session_id = %id, native_session_id = %session.native_session_id.as_deref().unwrap_or_default(), "Pi transcript file is missing; session marked for recovery");
+        }
+    }
     Ok(Json(messages))
 }
 
@@ -74,7 +112,6 @@ pub async fn list_messages(
 pub struct SendMessage {
     pub message: String,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -118,7 +155,7 @@ pub async fn send_message(
     let now_text = now.to_rfc3339();
     let lease_until = (now + Duration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
     let worker_id = format!("{}:{}", s.worker_id, uuid::Uuid::new_v4());
-    let claimed=sqlx::query("UPDATE sessions SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
+    let claimed=sqlx::query("UPDATE session_runtime SET status='running',worker_id=?,lease_until=?,updated_at=? WHERE session_id=? AND status!='missing' AND (status!='running' OR lease_until IS NULL OR (julianday(lease_until) IS NOT NULL AND julianday(lease_until)<julianday(?)))")
         .bind(&worker_id).bind(&lease_until).bind(&now_text).bind(&id).bind(&now_text).execute(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if claimed.rows_affected() == 0 {
         load_session(&s.db, &id).await?;
@@ -130,7 +167,7 @@ pub async fn send_message(
             // The claim above already marked this session as running. If loading
             // it fails, release that claim so the session is not stuck until the
             // lease expires. The ownership predicate protects a newer worker.
-            if let Err(error) = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            if let Err(error) = sqlx::query("UPDATE session_runtime SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
                 .bind(&worker_id)
@@ -158,7 +195,7 @@ pub async fn send_message(
             .await
             .is_err()
         {
-            let _ = sqlx::query("UPDATE sessions SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let _ = sqlx::query("UPDATE session_runtime SET status='error',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(Utc::now().to_rfc3339())
                 .bind(&id)
                 .bind(&worker_id)
@@ -197,14 +234,13 @@ pub async fn interrupt(
         .unwrap_or(session.agent_id);
     // Capture the current execution token first. The conditional update below
     // prevents a concurrent lease takeover from being interrupted by this request.
-    let execution_id: Option<String> = sqlx::query_scalar(
-        "SELECT worker_id FROM sessions WHERE id=? AND status='running'",
-    )
-    .bind(&id)
-    .fetch_optional(&s.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .flatten();
+    let execution_id: Option<String> =
+        sqlx::query_scalar("SELECT worker_id FROM session_runtime WHERE session_id=? AND status='running'")
+            .bind(&id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .flatten();
     let Some(execution_id) = execution_id else {
         return Ok(Json(
             serde_json::json!({"status":load_session(&s.db,&id).await?.status}),
@@ -223,7 +259,7 @@ pub async fn interrupt(
 
     let now = Utc::now().to_rfc3339();
     let changed = sqlx::query(
-        "UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?",
+        "UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?",
     )
     .bind(&now)
     .bind(&id)

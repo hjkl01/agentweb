@@ -26,8 +26,57 @@ fn lease_is_expired(lease: &str, now: chrono::DateTime<Utc>) -> bool {
         .unwrap_or(true)
 }
 
-async fn finish_session(db: &sqlx::SqlitePool, session_id: &str, worker_id: &str, status: &str) -> bool {
-    let result = sqlx::query("UPDATE sessions SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
+
+async fn finalize_session_with_native_id(
+    db: &sqlx::SqlitePool,
+    session_id: &str,
+    worker_id: &str,
+    status: &str,
+    native_session_id: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = db.begin().await?;
+    let ownership = sqlx::query(
+        "UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? \
+         WHERE session_id=? AND status='running' AND worker_id=?",
+    )
+    .bind(status)
+    .bind(&now)
+    .bind(session_id)
+    .bind(worker_id)
+    .execute(&mut *tx)
+    .await?;
+    if ownership.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    let metadata = sqlx::query(
+        "UPDATE sessions SET native_session_id=COALESCE(?,native_session_id), \
+         fork_from_native_session_id=CASE WHEN ? IS NOT NULL THEN NULL ELSE fork_from_native_session_id END, \
+         updated_at=? WHERE id=?",
+    )
+    .bind(native_session_id)
+    .bind(native_session_id)
+    .bind(&now)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+    if metadata.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+async fn finish_session(
+    db: &sqlx::SqlitePool,
+    session_id: &str,
+    worker_id: &str,
+    status: &str,
+) -> bool {
+    let result = sqlx::query("UPDATE session_runtime SET status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?").bind(status).bind(Utc::now().to_rfc3339()).bind(session_id).bind(worker_id).execute(db).await;
     match result {
         Ok(result) if result.rows_affected() == 1 => true,
         Ok(result) => {
@@ -347,6 +396,7 @@ pub async fn run_session(
     };
     config.working_directory = Some(session.workspace.clone());
     config.native_session_id = session.native_session_id.clone();
+    config.fork_from_native_session_id = session.fork_from_native_session_id.clone();
     config.model = session.model.clone();
     let kind = config.id.clone();
     let message = expand_mentions(&message, &session.workspace).await;
@@ -355,7 +405,7 @@ pub async fn run_session(
     // being prepared, before the Agent process has registered itself. Recheck
     // ownership immediately before starting the adapter so that such a request
     // does not launch a fresh child process after the session was interrupted.
-    let ownership = sqlx::query("SELECT status,worker_id FROM sessions WHERE id=?")
+    let ownership = sqlx::query("SELECT status,worker_id FROM session_runtime WHERE session_id=?")
         .bind(&session.id)
         .fetch_optional(&db)
         .await;
@@ -387,24 +437,27 @@ pub async fn run_session(
             ticker.tick().await;
             let now = Utc::now();
             let now_text = now.to_rfc3339();
-            let row = match sqlx::query("SELECT status,worker_id,lease_until FROM sessions WHERE id=?")
-                .bind(&monitor_id)
-                .fetch_optional(&monitor_db)
-                .await
-            {
-                Ok(row) => row,
-                Err(error) => {
-                    tracing::warn!(
-                        session_id = %monitor_id,
-                        worker_id = %monitor_worker,
-                        %error,
-                        "failed to check session ownership; retrying interruption check"
-                    );
-                    continue;
-                }
-            };
+            let row =
+                match sqlx::query("SELECT status,worker_id,lease_until FROM session_runtime WHERE session_id=?")
+                    .bind(&monitor_id)
+                    .fetch_optional(&monitor_db)
+                    .await
+                {
+                    Ok(row) => row,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id = %monitor_id,
+                            worker_id = %monitor_worker,
+                            %error,
+                            "failed to check session ownership; retrying interruption check"
+                        );
+                        continue;
+                    }
+                };
             let Some(row) = row else {
-                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                let _ = monitor_adapter
+                    .interrupt(&monitor_id, &monitor_worker)
+                    .await;
                 continue;
             };
             let status: String = sqlx::Row::get(&row, 0);
@@ -419,7 +472,9 @@ pub async fn run_session(
             {
                 // Do not exit: the child may not have registered yet. Repeated
                 // attempts stop it if registration completes after this check.
-                let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                let _ = monitor_adapter
+                    .interrupt(&monitor_id, &monitor_worker)
+                    .await;
                 continue;
             }
 
@@ -427,7 +482,7 @@ pub async fn run_session(
                 continue;
             }
             let lease_until = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
-            let renewed = sqlx::query("UPDATE sessions SET lease_until=?,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            let renewed = sqlx::query("UPDATE session_runtime SET lease_until=?,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(&lease_until)
                 .bind(&now_text)
                 .bind(&monitor_id)
@@ -439,7 +494,9 @@ pub async fn run_session(
                     last_renewal = time::Instant::now();
                 }
                 Ok(_) => {
-                    let _ = monitor_adapter.interrupt(&monitor_id, &monitor_worker).await;
+                    let _ = monitor_adapter
+                        .interrupt(&monitor_id, &monitor_worker)
+                        .await;
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -458,10 +515,16 @@ pub async fn run_session(
     {
         Ok(result) => {
             monitor.abort();
-            let now = Utc::now().to_rfc3339();
-            let updated=sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?").bind(&result.native_session_id).bind(&now).bind(&session.id).bind(&worker_id).execute(&db).await;
-            match updated {
-                Ok(update_result) if update_result.rows_affected() == 1 => {
+            match finalize_session_with_native_id(
+                &db,
+                &session.id,
+                &worker_id,
+                "idle",
+                result.native_session_id.as_deref(),
+            )
+            .await
+            {
+                Ok(true) => {
                     // Publish completion only after the database confirms the session
                     // transitioned from running to idle. Otherwise clients may refresh
                     // and still observe a stale running state.
@@ -471,18 +534,19 @@ pub async fn run_session(
                         })
                         .await;
                 }
-                Ok(update_result) => {
+                Ok(false) => {
                     tracing::warn!(
                         session_id = %session.id,
-                        rows_affected = update_result.rows_affected(),
-                        "session completion did not update the running session; skipping completion event"
+                        worker_id = %worker_id,
+                        "session completion no longer owns the runtime lease or metadata row; skipping completion event"
                     );
                 }
                 Err(error) => {
                     tracing::error!(
                         session_id = %session.id,
+                        worker_id = %worker_id,
                         %error,
-                        "failed to finalize session state; skipping completion event"
+                        "failed to finalize session state transactionally; skipping completion event"
                     );
                 }
             }
@@ -496,7 +560,6 @@ pub async fn run_session(
                 run_error.is_some_and(|run_error| run_error.native_session_missing);
             let native_session_id =
                 run_error.and_then(|run_error| run_error.native_session_id.as_deref());
-            let now = Utc::now().to_rfc3339();
             let status = if interrupted {
                 "interrupted"
             } else if native_session_missing {
@@ -504,31 +567,22 @@ pub async fn run_session(
             } else {
                 "error"
             };
-            let finalized = match sqlx::query("UPDATE sessions SET native_session_id=COALESCE(?,native_session_id),status=?,worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
-                .bind(native_session_id)
-                .bind(status)
-                .bind(&now)
-                .bind(&session.id)
-                .bind(&worker_id)
-                .execute(&db)
-                .await
+            let finalized = match finalize_session_with_native_id(
+                &db,
+                &session.id,
+                &worker_id,
+                status,
+                native_session_id,
+            )
+            .await
             {
-                Ok(result) if result.rows_affected() == 1 => true,
-                Ok(result) => {
-                    tracing::warn!(
-                        session_id = %session.id,
-                        worker_id = %worker_id,
-                        rows_affected = result.rows_affected(),
-                        "failed agent run no longer owns the session; skipping stale finalization event"
-                    );
-                    false
-                }
+                Ok(finalized) => finalized,
                 Err(update_error) => {
                     tracing::error!(
                         session_id = %session.id,
                         worker_id = %worker_id,
                         %update_error,
-                        "failed to save native session ID while finalizing failed agent run"
+                        "failed to finalize failed agent run transactionally"
                     );
                     false
                 }
@@ -564,10 +618,10 @@ mod tests {
     }
     use sqlx::SqlitePool;
 
-    // Session lifecycle remains in the metadata table; chat transcripts and session events
-    // must not be written to SQLite.
+    // Session metadata remains in sessions; execution lifecycle belongs in
+    // session_runtime. Chat transcripts and session events stay out of SQLite.
     #[tokio::test]
-    async fn session_completion_updates_metadata_without_persisting_chat_content() {
+    async fn session_completion_updates_runtime_without_persisting_chat_content() {
         let workspace =
             std::env::temp_dir().join(format!("agentweb-race-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -578,12 +632,14 @@ mod tests {
         .await
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
         assert!(std::path::Path::new("/bin/echo").is_file());
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
         sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)").bind(now.to_rfc3339()).bind(now.to_rfc3339()).execute(&db).await.unwrap();
         sqlx::query("INSERT INTO runtime_settings(key,value) VALUES('agent_paths','{\"echo\":\"/bin/echo\"}')").execute(&db).await.unwrap();
         sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,created_at,updated_at,worker_id,lease_until) VALUES('s1','echo','t',?,'running',?,?,'w1',?)").bind(workspace.to_string_lossy().into_owned()).bind(now.to_rfc3339()).bind(now.to_rfc3339()).bind(&lease).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES('s1','running','w1',?,?)").bind(&lease).bind(now.to_rfc3339()).execute(&db).await.unwrap();
         let session = Session {
             id: "s1".into(),
             agent_id: "echo".into(),
@@ -591,6 +647,7 @@ mod tests {
             workspace: workspace.to_string_lossy().into_owned(),
             status: "running".into(),
             native_session_id: None,
+            fork_from_native_session_id: None,
             model: None,
             is_pinned: false,
             workspace_available: true,
@@ -605,7 +662,7 @@ mod tests {
             "w1".into(),
         )
         .await;
-        let status: String = sqlx::query_scalar("SELECT status FROM sessions WHERE id='s1'")
+        let runtime_status: String = sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id='s1'")
             .fetch_one(&db)
             .await
             .unwrap();
@@ -620,9 +677,12 @@ mod tests {
                 .await
                 .unwrap();
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert_eq!(status, "idle", "session status should be finalized");
+        assert_eq!(runtime_status, "idle", "runtime state is authoritative and must be finalized");
         assert_eq!(message_count, 0, "chat content must not be persisted");
-        assert_eq!(persisted_event_count, 0, "session events must remain transient");
+        assert_eq!(
+            persisted_event_count, 0,
+            "session events must remain transient"
+        );
     }
 
     #[tokio::test]
@@ -637,6 +697,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::migrate!().run(&db).await.unwrap();
+        sqlx::query("CREATE TABLE session_runtime (session_id TEXT PRIMARY KEY, status TEXT NOT NULL, worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL)").execute(&db).await.unwrap();
         let now = Utc::now();
         let lease = (now + ChronoDuration::seconds(SESSION_LEASE_SECONDS)).to_rfc3339();
         sqlx::query("INSERT INTO agents(id,name,kind,command,enabled,installed,created_at,updated_at) VALUES('echo','Echo','generic','echo',1,1,?,?)")
@@ -654,17 +715,23 @@ mod tests {
             .await
             .unwrap();
 
+        sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES('s1','running','worker-new',?,?)")
+            .bind(&lease).bind(now.to_rfc3339()).execute(&db).await.unwrap();
+
         let finalized = finish_session(&db, "s1", "worker-old", "idle").await;
-        let (status, owner): (String, Option<String>) =
-            sqlx::query_as("SELECT status,worker_id FROM sessions WHERE id='s1'")
+        let (runtime_status, runtime_owner): (String, Option<String>) =
+            sqlx::query_as("SELECT status,worker_id FROM session_runtime WHERE session_id='s1'")
                 .fetch_one(&db)
                 .await
                 .unwrap();
 
         db.close().await;
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert!(!finalized, "a stale worker must not finalize a newer worker's session");
-        assert_eq!(status, "running");
-        assert_eq!(owner.as_deref(), Some("worker-new"));
+        assert!(
+            !finalized,
+            "a stale worker must not finalize a newer worker's session"
+        );
+        assert_eq!(runtime_status, "running");
+        assert_eq!(runtime_owner.as_deref(), Some("worker-new"));
     }
 }

@@ -14,11 +14,16 @@ export class ApiError extends Error {
 export type Agent = {
   id: string;
   name: string;
+  kind?: string;
   description?: string;
   installed: boolean;
   requirements: string[];
   install_command?: string;
 };
+export type ScheduledTask = {
+  id: string; name: string; prompt: string; agent_id: string; working_directory: string; model?: string; schedule_type: "once" | "interval" | "cron"; schedule_config: Record<string, unknown>; timezone: string; session_strategy: "new" | "reuse"; reuse_session_id?: string; enabled: boolean; next_run_at?: string; last_run_at?: string; created_at: string; updated_at: string;
+};
+export type ScheduledTaskRun = { id: string; task_id: string; task_name: string; status: string; scheduled_at: string; started_at?: string; finished_at?: string; agent_session_id?: string; summary?: string; error_message?: string; created_at: string; updated_at: string; };
 export type AgentModel = {
   id: string;
   name: string;
@@ -32,6 +37,7 @@ export type Session = {
   workspace: string;
   status: string;
   native_session_id?: string;
+  fork_from_native_session_id?: string;
   model?: string;
   is_pinned: boolean;
   workspace_available?: boolean;

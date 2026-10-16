@@ -53,7 +53,9 @@ function buildTree(files: FileItem[]) {
 function sortNodes(nodes: TreeNode[]) {
   nodes.sort((a, b) =>
     a.kind !== b.kind
-      ? a.kind === "directory" ? -1 : 1
+      ? a.kind === "directory"
+        ? -1
+        : 1
       : a.name.localeCompare(b.name),
   );
   nodes.forEach((node) => sortNodes(node.children));
@@ -82,12 +84,26 @@ function collectDirectories(nodes: TreeNode[], result = new Set<string>()) {
 
 function statusLabel(status?: TreeNode["status"]) {
   if (!status) return null;
-  const labels = { added: "A", modified: "M", deleted: "D", renamed: "R", untracked: "U" };
-  return <span className={`tree-status tree-status-${status}`}>{labels[status]}</span>;
+  const labels = {
+    added: "A",
+    modified: "M",
+    deleted: "D",
+    renamed: "R",
+    untracked: "U",
+  };
+  return (
+    <span className={`tree-status tree-status-${status}`}>
+      {labels[status]}
+    </span>
+  );
 }
 
 function TreeNodeView({
-  node, depth, expanded, toggle, onOpenFile,
+  node,
+  depth,
+  expanded,
+  toggle,
+  onOpenFile,
 }: {
   node: TreeNode;
   depth: number;
@@ -98,7 +114,11 @@ function TreeNodeView({
   const isOpen = expanded.has(node.path);
   if (node.kind === "file") {
     return (
-      <button className="file tree-file" style={{ paddingLeft: 7 + depth * 14 }} onClick={() => onOpenFile(node.path)}>
+      <button
+        className="file tree-file"
+        style={{ paddingLeft: 7 + depth * 14 }}
+        onClick={() => onOpenFile(node.path)}
+      >
         <File size={14} />
         <span>{node.name}</span>
         {statusLabel(node.status)}
@@ -107,15 +127,27 @@ function TreeNodeView({
   }
   return (
     <div className="tree-node">
-      <button className="file tree-folder" style={{ paddingLeft: 5 + depth * 14 }} onClick={() => toggle(node.path)}>
+      <button
+        className="file tree-folder"
+        style={{ paddingLeft: 5 + depth * 14 }}
+        onClick={() => toggle(node.path)}
+      >
         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <Folder size={14} />
         <span>{node.name}</span>
         {statusLabel(node.status)}
       </button>
-      {isOpen && node.children.map((child) => (
-        <TreeNodeView key={child.path} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} onOpenFile={onOpenFile} />
-      ))}
+      {isOpen &&
+        node.children.map((child) => (
+          <TreeNodeView
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            expanded={expanded}
+            toggle={toggle}
+            onOpenFile={onOpenFile}
+          />
+        ))}
     </div>
   );
 }
@@ -125,7 +157,12 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadedDirs, setLoadedDirs] = useState<Set<string>>(new Set([""]));
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
-  const [searchResult, setSearchResult] = useState<{ query: string; sessionId: string; items?: FileItem[]; error?: string }>();
+  const [searchResult, setSearchResult] = useState<{
+    query: string;
+    sessionId: string;
+    items?: FileItem[];
+    error?: string;
+  }>();
   const [searchAttempt, setSearchAttempt] = useState(0);
   const searchRequest = useRef(0);
 
@@ -158,7 +195,9 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
 
     // Re-fetch every directory previously loaded. This keeps expansion state
     // while ensuring deleted/renamed children do not survive a refresh.
-    const directories = [...loadedDirsRef.current].filter(Boolean).sort((a, b) => a.split("/").length - b.split("/").length);
+    const directories = [...loadedDirsRef.current]
+      .filter(Boolean)
+      .sort((a, b) => a.split("/").length - b.split("/").length);
     if (directories.length > 0) {
       // Refresh requests supersede any in-flight lazy loads for the same
       // directories, so release their loading indicators immediately.
@@ -182,12 +221,14 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
           const children = await api<FileItem[]>(
             `/sessions/${sessionId}/files?path=${encodeURIComponent(path)}`,
           );
-          if (directoryRequest.current.get(path) !== directoryToken) return undefined;
+          if (directoryRequest.current.get(path) !== directoryToken)
+            return undefined;
           return { path, children };
         } catch {
           // A failed refresh is not an empty directory. Preserve the cached
           // branch instead of deleting its contents on transient API errors.
-          if (directoryRequest.current.get(path) !== directoryToken) return undefined;
+          if (directoryRequest.current.get(path) !== directoryToken)
+            return undefined;
           return undefined;
         }
       }),
@@ -219,26 +260,46 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       setSearchResult(undefined);
       return;
     }
-    api<FileItem[]>(`/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query)}`)
+    api<FileItem[]>(
+      `/sessions/${sessionId}/filesystem/tree?search=${encodeURIComponent(query)}`,
+    )
       .then((items) => {
-        if (request === searchRequest.current) setSearchResult({ query, sessionId, items });
+        if (request === searchRequest.current)
+          setSearchResult({ query, sessionId, items });
       })
       .catch((error: unknown) => {
         if (request !== searchRequest.current) return;
         const message = error instanceof Error ? error.message : String(error);
-        setSearchResult({ query, sessionId, error: message || "Search request failed" });
+        setSearchResult({
+          query,
+          sessionId,
+          error: message || "Search request failed",
+        });
       });
-    return () => { searchRequest.current += 1; };
+    return () => {
+      searchRequest.current += 1;
+    };
   }, [filter, sessionId, searchAttempt]);
 
   const query = filter.trim();
-  const currentSearch = query && sessionId && searchResult?.query === query && searchResult.sessionId === sessionId ? searchResult : undefined;
+  const currentSearch =
+    query &&
+    sessionId &&
+    searchResult?.query === query &&
+    searchResult.sessionId === sessionId
+      ? searchResult
+      : undefined;
   const searchFiles = currentSearch?.items;
   const searching = Boolean(query && sessionId && !currentSearch);
   const sourceFiles = searchFiles ?? allFiles;
   const fullTree = useMemo(() => buildTree(sourceFiles), [sourceFiles]);
-  const tree = useMemo(() => filterTree(fullTree, currentSearch ? "" : filter), [fullTree, filter, currentSearch]);
-  const visibleExpanded = currentSearch?.items ? collectDirectories(tree) : expanded;
+  const tree = useMemo(
+    () => filterTree(fullTree, currentSearch ? "" : filter),
+    [fullTree, filter, currentSearch],
+  );
+  const visibleExpanded = currentSearch?.items
+    ? collectDirectories(tree)
+    : expanded;
 
   const toggle = async (path: string) => {
     if (expanded.has(path)) {
@@ -270,7 +331,8 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       if (
         sessionIdRef.current !== requestSessionId ||
         directoryRequest.current.get(path) !== directoryToken
-      ) return;
+      )
+        return;
 
       setAllFiles((current) => {
         const byPath = new Map(current.map((item) => [item.path, item]));
@@ -287,7 +349,8 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
       if (
         sessionIdRef.current !== requestSessionId ||
         directoryRequest.current.get(path) !== directoryToken
-      ) return;
+      )
+        return;
       setExpanded((current) => {
         const next = new Set(current);
         next.delete(path);
@@ -310,18 +373,42 @@ export function FileTree({ sessionId, files, filter, onOpenFile }: Props) {
     return (
       <div className="workspace-empty" role="alert">
         <div>Search failed: {currentSearch.error}</div>
-        <button className="file" onClick={() => setSearchAttempt((attempt) => attempt + 1)}>Retry search</button>
+        <button
+          className="file"
+          onClick={() => setSearchAttempt((attempt) => attempt + 1)}
+        >
+          Retry search
+        </button>
       </div>
     );
   }
-  if (searching) return <div className="workspace-empty" role="status">Searching…</div>;
-  if (!tree.length) return <div className="workspace-empty">{query ? "No matching files" : "No files"}</div>;
+  if (searching)
+    return (
+      <div className="workspace-empty" role="status">
+        Searching…
+      </div>
+    );
+  if (!tree.length)
+    return (
+      <div className="workspace-empty">
+        {query ? "No matching files" : "No files"}
+      </div>
+    );
   return (
     <div className="filetree">
       {tree.map((node) => (
-        <TreeNodeView key={node.path} node={node} depth={0} expanded={visibleExpanded} toggle={toggle} onOpenFile={onOpenFile} />
+        <TreeNodeView
+          key={node.path}
+          node={node}
+          depth={0}
+          expanded={visibleExpanded}
+          toggle={toggle}
+          onOpenFile={onOpenFile}
+        />
       ))}
-      {loadingDirs.size > 0 && <div className="workspace-empty">Loading folder…</div>}
+      {loadingDirs.size > 0 && (
+        <div className="workspace-empty">Loading folder…</div>
+      )}
     </div>
   );
 }

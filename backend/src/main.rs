@@ -12,27 +12,113 @@ mod state;
 mod terminal;
 
 use anyhow::Result;
-use axum::{middleware, routing::get, Router};
+use axum::{
+    body::Body,
+    http::{header, Uri},
+    middleware, response::Response, routing::get, Router,
+};
 use chrono::Utc;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
 };
-use std::{net::SocketAddr, path::Path, str::FromStr};
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
-};
+use std::{net::SocketAddr, path::{Path, PathBuf}, str::FromStr};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
+
+async fn serve_embedded_frontend(uri: Uri) -> Response<Body> {
+    let requested = uri.path().trim_start_matches('/');
+    let requested = if requested.is_empty() { "index.html" } else { requested };
+    let asset = EMBEDDED_ASSETS
+        .iter()
+        .find(|(name, _)| *name == requested)
+        .or_else(|| EMBEDDED_ASSETS.iter().find(|(name, _)| *name == "index.html"));
+
+    match asset {
+        Some((name, bytes)) => Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header(header::CONTENT_TYPE, embedded_content_type(name))
+            .body(Body::from(bytes.to_vec()))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+        None => Response::builder()
+            .status(axum::http::StatusCode::NOT_FOUND)
+            .body(Body::from("Frontend assets are missing; rebuild Agent Web."))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
+}
+
+fn embedded_content_type(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
-    let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://./data/agentweb.db".into());
+    let configured_db_url = std::env::var("DATABASE_URL").ok();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let default_db_path = home.join(".config/agentweb/agentweb.db");
+
+    // Migrate the old make-start default once, preserving SQLite WAL contents.
+    // Explicit DATABASE_URL always wins and is never migrated or overwritten.
+    let legacy_db_path = PathBuf::from("./data/agentweb.db");
+    if configured_db_url.is_none() && !default_db_path.exists() && legacy_db_path.is_file() {
+        if let Some(parent) = default_db_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let legacy_options = SqliteConnectOptions::new()
+            .filename(&legacy_db_path)
+            .create_if_missing(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let legacy_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(legacy_options)
+            .await?;
+        let checkpoint = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&legacy_pool)
+            .await?;
+        let checkpoint_busy: i64 = sqlx::Row::try_get(&checkpoint, 0)?;
+        if checkpoint_busy != 0 {
+            anyhow::bail!(
+                "cannot migrate {} because its SQLite WAL is busy; stop other Agent Web processes and retry",
+                legacy_db_path.display()
+            );
+        }
+        legacy_pool.close().await;
+        tokio::fs::copy(&legacy_db_path, &default_db_path).await?;
+        tracing::info!(
+            source = %legacy_db_path.display(),
+            destination = %default_db_path.display(),
+            "Migrated SQLite database to the user config directory"
+        );
+    }
+
+    let db_url = configured_db_url.unwrap_or_else(|| {
+        format!("sqlite://{}", default_db_path.display())
+    });
     if let Some(path) = db_url.strip_prefix("sqlite://") {
         let path = path.split('?').next().unwrap_or(path);
         if let Some(parent) = Path::new(path).parent() {
@@ -53,7 +139,9 @@ async fn main() -> Result<()> {
         .await?;
     db::init(&pool).await?;
     let now = Utc::now().to_rfc3339();
-    let _=sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)").bind(&now).bind(&now).execute(&pool).await;
+    // Recover expired execution leases from the dedicated runtime table.
+    // Runtime status is authoritative; legacy columns on sessions are not mirrored.
+    let _=sqlx::query("UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR lease_until<?)").bind(&now).bind(&now).execute(&pool).await;
     if let Some(password) = db::ensure_default_admin(&pool).await? {
         eprintln!("\n============================================================");
         eprintln!(" Agent Web首次启动，已创建默认管理员账号");
@@ -69,28 +157,39 @@ async fn main() -> Result<()> {
             ticker.tick().await;
             let cutoff = Utc::now() - chrono::Duration::days(1);
             let cutoff_rfc3339 = cutoff.to_rfc3339();
-            let _=sqlx::query("DELETE FROM agent_events WHERE created_at < ? AND (session_id IS NULL OR NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id=agent_events.session_id AND sessions.status='running'))").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
+            let _=sqlx::query("DELETE FROM agent_events WHERE created_at < ? AND (session_id IS NULL OR NOT EXISTS (SELECT 1 FROM session_runtime WHERE session_runtime.session_id=agent_events.session_id AND session_runtime.status='running'))").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
             let _=sqlx::query("DELETE FROM login_failures WHERE updated_at < ? AND locked_until <= unixepoch('now')").bind(&cutoff_rfc3339).execute(&cleanup_db).await;
         }
     });
     let state = state::AppState::new(pool);
     state.start_scheduler();
-    let frontend_dir = std::env::var("AGENTWEB_FRONTEND_DIR").unwrap_or_else(|_| {
-        // `make build` copies index.html straight into ./frontend, vite's dev output lives in ./frontend/dist
-        if Path::new("./frontend/index.html").is_file() {
-            "./frontend".into()
-        } else {
-            "./frontend/dist".into()
-        }
-    });
-    let index_file = Path::new(&frontend_dir).join("index.html");
     let protected_api = Router::new()
-        .route("/scheduled-tasks", get(api::list_scheduled_tasks).post(api::create_scheduled_task))
-        .route("/scheduled-tasks/{id}", get(api::get_scheduled_task).put(api::update_scheduled_task).delete(api::delete_scheduled_task))
-        .route("/scheduled-tasks/{id}/enable", axum::routing::post(api::enable_scheduled_task))
-        .route("/scheduled-tasks/{id}/disable", axum::routing::post(api::disable_scheduled_task))
-        .route("/scheduled-tasks/{id}/run-now", axum::routing::post(api::run_scheduled_task_now))
-        .route("/scheduled-tasks/{id}/runs", get(api::scheduled_task_history))
+        .route(
+            "/scheduled-tasks",
+            get(api::list_scheduled_tasks).post(api::create_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}",
+            get(api::get_scheduled_task)
+                .put(api::update_scheduled_task)
+                .delete(api::delete_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/enable",
+            axum::routing::post(api::enable_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/disable",
+            axum::routing::post(api::disable_scheduled_task),
+        )
+        .route(
+            "/scheduled-tasks/{id}/run-now",
+            axum::routing::post(api::run_scheduled_task_now),
+        )
+        .route(
+            "/scheduled-tasks/{id}/runs",
+            get(api::scheduled_task_history),
+        )
         .route("/auth/password", axum::routing::put(auth::change_password))
         .route("/auth/sessions", get(auth::list_sessions))
         .route(
@@ -139,6 +238,10 @@ async fn main() -> Result<()> {
             axum::routing::post(api::restart_missing_session),
         )
         .route(
+            "/sessions/{id}/fork",
+            axum::routing::post(api::create_pi_fork),
+        )
+        .route(
             "/sessions/{id}/model",
             axum::routing::put(api::set_session_model),
         )
@@ -175,9 +278,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .nest("/api", api_routes)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", openapi::ApiDoc::openapi()))
-        .fallback_service(
-            ServeDir::new(&frontend_dir).not_found_service(ServeFile::new(index_file)),
-        )
+        .fallback(serve_embedded_frontend)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
@@ -217,7 +318,7 @@ async fn main() -> Result<()> {
         // Match an exact worker prefix instead of LIKE, where '_' and '%' in a
         // worker ID would otherwise be interpreted as wildcard characters.
         let owner_prefix = format!("{}:", shutdown_worker);
-        let rows = sqlx::query("SELECT id,agent_id,worker_id FROM sessions WHERE status='running' AND substr(worker_id,1,length(?))=?")
+        let rows = sqlx::query("SELECT s.id,s.agent_id,r.worker_id FROM session_runtime r JOIN sessions s ON s.id=r.session_id WHERE r.status='running' AND substr(r.worker_id,1,length(?))=?")
             .bind(&owner_prefix)
             .bind(&owner_prefix)
             .fetch_all(&shutdown_db)
@@ -245,7 +346,7 @@ async fn main() -> Result<()> {
             }
 
             let now = Utc::now().to_rfc3339();
-            match sqlx::query("UPDATE sessions SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=?")
+            match sqlx::query("UPDATE session_runtime SET status='interrupted',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='running' AND worker_id=?")
                 .bind(&now)
                 .bind(&id)
                 .bind(&execution_id)

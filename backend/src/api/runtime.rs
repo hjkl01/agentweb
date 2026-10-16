@@ -71,8 +71,62 @@ pub(crate) fn agent_executable(id: &str) -> &str {
     }
 }
 fn runtime_path(node_bin: &FsPath) -> String {
-    let existing = std::env::var("PATH").unwrap_or_default();
+    let existing = host_agent_search_path(Some(node_bin));
     format!("{}:{}", node_bin.display(), existing)
+}
+
+/// Build a PATH that works for both interactive-shell launches and services
+/// that do not source the user's shell startup files (for example systemd).
+/// Keep this home-relative: the host's home directory must never be hardcoded.
+fn host_agent_search_path(extra: Option<&FsPath>) -> String {
+    let mut dirs = Vec::<PathBuf>::new();
+    if let Some(path) = extra {
+        dirs.push(path.to_path_buf());
+    }
+    let home = std::env::var_os("AGENTWEB_AGENT_HOME")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    if let Some(home) = home {
+        // Common user-level CLI installation locations, including asdf/mise
+        // shims and package-manager global bin directories.
+        for relative in [
+            ".asdf/shims",
+            ".local/share/mise/shims",
+            ".local/bin",
+            ".npm-global/bin",
+            ".volta/bin",
+            ".bun/bin",
+            ".local/share/pnpm",
+            ".nvm/current/bin",
+        ] {
+            dirs.push(home.join(relative));
+        }
+        // Also search Node installations directly. This covers service launches
+        // where the shims are not on PATH and avoids relying on shell init files.
+        for relative in [
+            ".asdf/installs/nodejs",
+            ".local/share/mise/installs/node",
+            ".nvm/versions/node",
+        ] {
+            let root = home.join(relative);
+            if let Ok(entries) = std::fs::read_dir(root) {
+                for entry in entries.flatten() {
+                    dirs.push(entry.path().join("bin"));
+                }
+            }
+        }
+    }
+
+    // Prefer the selected user's CLI installations over system-wide binaries.
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+
+    let mut unique = std::collections::HashSet::new();
+    dirs.retain(|path| unique.insert(path.clone()));
+    std::env::join_paths(dirs)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| std::env::var("PATH").unwrap_or_default())
 }
 pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Option<PathBuf> {
     if let Some(p) = configured_agent_path(db, id).await {
@@ -91,7 +145,7 @@ pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Opt
         }
         let out = Command::new("which")
             .arg(agent_executable(id))
-            .env("PATH", runtime_path(&node_bin))
+            .env("PATH", host_agent_search_path(Some(&node_bin)))
             .output()
             .await
             .ok()?;
@@ -104,6 +158,7 @@ pub(crate) async fn resolve_agent_binary(db: &sqlx::SqlitePool, id: &str) -> Opt
     }
     let out = Command::new("which")
         .arg(agent_executable(id))
+        .env("PATH", host_agent_search_path(None))
         .output()
         .await
         .ok()?;
@@ -430,14 +485,16 @@ pub(crate) async fn build_agent_config(
     let binary = resolve_agent_binary(db, id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
-    let runtime_path = node_bin_dir(db)
-        .await
-        .map(|p| p.to_string_lossy().into_owned());
+    let managed_node_bin = node_bin_dir(db).await;
+    // Preserve host-installed Agent and Node locations even when AgentWeb is
+    // started outside an interactive shell with a minimal PATH.
+    let runtime_path = Some(host_agent_search_path(managed_node_bin.as_deref()));
     Ok(AgentConfig {
         id: kind,
         command: binary.to_string_lossy().into_owned(),
         working_directory,
         native_session_id: None,
+        fork_from_native_session_id: None,
         runtime_path,
         model: None,
     })
