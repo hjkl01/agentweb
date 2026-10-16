@@ -3,8 +3,12 @@ import type { Dispatch, SetStateAction } from "react";
 import { api } from "../lib/api";
 import type { Session } from "../types";
 
-type Options = { setSessions: Dispatch<SetStateAction<Session[]>> };
-export function useSessionActions({ setSessions }: Options) {
+type Options = {
+  setSessions: Dispatch<SetStateAction<Session[]>>;
+  markStatusChanged?: (sessionId: string) => void;
+};
+
+export function useSessionActions({ setSessions, markStatusChanged }: Options) {
   const createSession = useCallback(
     async (
       agentId: string | undefined,
@@ -152,6 +156,7 @@ export function useSessionActions({ setSessions }: Options) {
         `/sessions/${sessionId}/interrupt`,
         { method: "POST" },
       );
+      markStatusChanged?.(sessionId);
       setSessions((items) =>
         items.map((item) =>
           item.id === sessionId
@@ -160,7 +165,7 @@ export function useSessionActions({ setSessions }: Options) {
         ),
       );
     },
-    [setSessions],
+    [setSessions, markStatusChanged],
   );
   return {
     createSession,
