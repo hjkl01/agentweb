@@ -173,11 +173,15 @@ fn row_json(row: &sqlx::sqlite::SqliteRow) -> Value {
         "enabled": row.get::<i64,_>("enabled") != 0,
         "next_run_at": row.get::<Option<String>,_>("next_run_at"),
         "last_run_at": row.get::<Option<String>,_>("last_run_at"),
+        "last_run_status": row.get::<Option<String>,_>("last_run_status"),
+        "last_run_summary": row.get::<Option<String>,_>("last_run_summary"),
+        "last_run_error": row.get::<Option<String>,_>("last_run_error"),
+        "run_count": row.get::<i64,_>("run_count"),
         "created_at": row.get::<String,_>("created_at"),
         "updated_at": row.get::<String,_>("updated_at")
     })
 }
-const SELECT_TASK: &str = "SELECT id,name,prompt,agent_id,working_directory,model,schedule_type,schedule_config,timezone,session_strategy,reuse_session_id,enabled,next_run_at,last_run_at,created_at,updated_at FROM scheduled_tasks";
+const SELECT_TASK: &str = "SELECT id,name,prompt,agent_id,working_directory,model,schedule_type,schedule_config,timezone,session_strategy,reuse_session_id,enabled,next_run_at,last_run_at,created_at,updated_at,(SELECT status FROM scheduled_task_runs r WHERE r.task_id=scheduled_tasks.id ORDER BY r.created_at DESC LIMIT 1) AS last_run_status,(SELECT summary FROM scheduled_task_runs r WHERE r.task_id=scheduled_tasks.id ORDER BY r.created_at DESC LIMIT 1) AS last_run_summary,(SELECT error_message FROM scheduled_task_runs r WHERE r.task_id=scheduled_tasks.id ORDER BY r.created_at DESC LIMIT 1) AS last_run_error,(SELECT COUNT(*) FROM scheduled_task_runs r WHERE r.task_id=scheduled_tasks.id) AS run_count FROM scheduled_tasks";
 
 fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
     let now = Utc::now();
