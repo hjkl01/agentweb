@@ -128,6 +128,11 @@ export function useSession(active?: string) {
     setActivityOpen,
     setWorkspaceRevision,
     setError,
+    setSessionStatus: (sessionId, status) => {
+      setSessions((items) =>
+        items.map((item) => (item.id === sessionId ? { ...item, status } : item)),
+      );
+    },
   });
   useEffect(() => {
     if (!active) {
