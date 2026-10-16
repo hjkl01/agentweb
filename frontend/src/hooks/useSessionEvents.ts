@@ -21,6 +21,7 @@ type Options = {
   setActivityOpen: Dispatch<SetStateAction<boolean>>;
   setWorkspaceRevision: Dispatch<SetStateAction<number>>;
   setError: (message?: string) => void;
+  setSessionStatus: (sessionId: string, status: Session["status"]) => void;
 };
 
 export function useSessionEvents(options: Options) {
@@ -279,6 +280,13 @@ function handleEvent(raw: string, active: string, options: Options) {
     event.type === "agent.error" ||
     event.type === "error"
   ) {
+    // The completion/error event is emitted only after the backend has finalized
+    // the runtime lease. Reflect it immediately so the composer switches from
+    // Stop to Send without waiting for the HTTP reconciliation request.
+    options.setSessionStatus(
+      active,
+      event.type === "session.completed" ? "idle" : "error",
+    );
     options.setActivityOpen(false);
     options.setWorkspaceRevision((value) => value + 1);
     options.refreshActiveSession(active).catch(console.error);
