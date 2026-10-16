@@ -12,7 +12,8 @@ services:
     volumes:
       - ./data:/data
       - ${HOME:?Set HOME to your host home directory}:/home/agent
-      - ${AGENTWEB_RUNTIME_DIR:-$HOME/.local/share/agentweb/runtimes}:/agent-runtimes
+      - ${HOME:?Set HOME to your host home directory}:/workspaces
+      - ${AGENTWEB_RUNTIME_DIR:-${HOME}/.local/share/agentweb/runtimes}:/agent-runtimes
     environment:
       - TZ=Asia/Shanghai
       - HOME=/home/agent
