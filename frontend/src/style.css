@@ -211,11 +211,23 @@ button:disabled {
   width: 28px;
   height: 28px;
   padding: 5px;
-  opacity: 0.72;
+  opacity: 0;
+  pointer-events: none;
+}
+.session:hover .session-action,
+.session:hover .session-delete,
+.session:hover .session-menu,
+.session.active .session-action,
+.session.active .session-delete,
+.session.active .session-menu,
+.session-actions:focus-within .session-action,
+.session-actions:focus-within .session-delete,
+.session-actions:focus-within .session-menu {
+  opacity: 1;
+  pointer-events: auto;
 }
 .session-action:hover:not(:disabled),
 .session-menu:hover:not(:disabled) {
-  opacity: 1;
   background: #e9e9e9;
 }
 .session-delete {
@@ -224,9 +236,6 @@ button:disabled {
 .session-delete:hover:not(:disabled) {
   background: #fef3f2;
   color: #b42318;
-}
-.session-menu {
-  opacity: 0.5;
 }
 .session-menu:hover:not(:disabled) {
   opacity: 1;
