@@ -19,7 +19,8 @@ type Props = {
 export function App({ sessionId, navigate }: Props) {
   const c = useAppController(sessionId, navigate);
   const [configAgent, setConfigAgent] = useState<Agent>();
-  const [terminalOpen, setTerminalOpen] = useState(false);\n  const [scheduledTasksOpen, setScheduledTasksOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [scheduledTasksOpen, setScheduledTasksOpen] = useState(false);
   const activityVersion = useMemo(
     () =>
       c.session.activity
