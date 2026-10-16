@@ -36,6 +36,7 @@ export type Session = {
   title: string;
   workspace: string;
   status: string;
+  status_updated_at: string;
   native_session_id?: string;
   fork_from_native_session_id?: string;
   model?: string;
