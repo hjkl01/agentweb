@@ -20,7 +20,11 @@ export type Agent = {
   requirements: string[];
   install_command?: string;
 };
-export type ScheduledTask = {\n  id: string; name: string; prompt: string; agent_id: string; working_directory: string; model?: string; schedule_type: "once" | "interval" | "cron"; schedule_config: Record<string, unknown>; timezone: string; session_strategy: "new" | "reuse"; reuse_session_id?: string; enabled: boolean; next_run_at?: string; last_run_at?: string; created_at: string; updated_at: string;\n};\nexport type ScheduledTaskRun = { id: string; task_id: string; task_name: string; status: string; scheduled_at: string; started_at?: string; finished_at?: string; agent_session_id?: string; summary?: string; error_message?: string; created_at: string; updated_at: string; };\nexport type AgentModel = {
+export type ScheduledTask = {
+  id: string; name: string; prompt: string; agent_id: string; working_directory: string; model?: string; schedule_type: "once" | "interval" | "cron"; schedule_config: Record<string, unknown>; timezone: string; session_strategy: "new" | "reuse"; reuse_session_id?: string; enabled: boolean; next_run_at?: string; last_run_at?: string; created_at: string; updated_at: string;
+};
+export type ScheduledTaskRun = { id: string; task_id: string; task_name: string; status: string; scheduled_at: string; started_at?: string; finished_at?: string; agent_session_id?: string; summary?: string; error_message?: string; created_at: string; updated_at: string; };
+export type AgentModel = {
   id: string;
   name: string;
   provider?: string;
