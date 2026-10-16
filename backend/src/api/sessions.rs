@@ -264,6 +264,7 @@ pub async fn create_session(
         title,
         workspace,
         status: "idle".into(),
+        status_updated_at: now.clone(),
         native_session_id: None,
         fork_from_native_session_id: None,
         model,
