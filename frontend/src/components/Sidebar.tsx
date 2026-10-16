@@ -53,19 +53,21 @@ export function Sidebar({
 }: Props) {
   const [sessionQuery, setSessionQuery] = useState("");
   const normalizedQuery = sessionQuery.trim().toLocaleLowerCase();
-  const filteredSessions = sessions.filter((session) => {
-    if (!normalizedQuery) return true;
-    const agentName =
-      agents.find((agent) => agent.id === session.agent_id)?.name ||
-      session.agent_id;
-    return [
-      session.title,
-      session.workspace,
-      session.agent_id,
-      agentName,
-      session.status,
-    ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
-  });
+  const filteredSessions = sessions
+    .filter((session) => {
+      if (!normalizedQuery) return true;
+      const agentName =
+        agents.find((agent) => agent.id === session.agent_id)?.name ||
+        session.agent_id;
+      return [
+        session.title,
+        session.workspace,
+        session.agent_id,
+        agentName,
+        session.status,
+      ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+    })
+    .sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned));
   return (
     <aside className="sidebar">
       <button className="brand" onClick={onHome} aria-label="返回首页">
