@@ -7,7 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::path::{Path as FsPath, PathBuf};
+use std::path::{Path as FsPath, PathBuf, Component};
 use tokio::fs;
 use uuid::Uuid;
 
