@@ -109,6 +109,11 @@ export function App({ sessionId, navigate }: Props) {
           onAutoResize={c.autoResize}
         />
       )}
+      <ScheduledTasksPanel
+        open={scheduledTasksOpen}
+        agents={c.runtime.agents}
+        onClose={() => setScheduledTasksOpen(false)}
+      />
       <WorkspacePanel
         current={c.current}
         files={c.workspace.files}
