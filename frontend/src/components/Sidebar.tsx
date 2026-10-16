@@ -85,12 +85,20 @@ export function Sidebar({
       <button className="new-chat" onClick={onNewChat}>
         <Plus size={16} /> New chat
       </button>
-      <button
-        className="settings-button terminal-nav-button"
-        onClick={onOpenTerminal}
-      >
-        <Terminal size={16} /> Terminal
-      </button>
+      <div className="sidebar-tools">
+        <button
+          className="settings-button terminal-nav-button"
+          onClick={onOpenTerminal}
+        >
+          <Terminal size={16} /> Terminal
+        </button>
+        <button
+          className="settings-button terminal-nav-button"
+          onClick={onOpenScheduledTasks}
+        >
+          <Clock3 size={16} /> 定时任务
+        </button>
+      </div>
       <div className="section-label">
         Chats{" "}
         <span>
