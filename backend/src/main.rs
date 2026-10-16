@@ -15,14 +15,21 @@ use anyhow::Result;
 use axum::{
     body::Body,
     http::{header, Uri},
-    middleware, response::Response, routing::get, Router,
+    middleware,
+    response::Response,
+    routing::get,
+    Router,
 };
 use chrono::Utc;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
 };
-use std::{net::SocketAddr, path::{Path, PathBuf}, str::FromStr};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
@@ -32,11 +39,19 @@ include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
 
 async fn serve_embedded_frontend(uri: Uri) -> Response<Body> {
     let requested = uri.path().trim_start_matches('/');
-    let requested = if requested.is_empty() { "index.html" } else { requested };
+    let requested = if requested.is_empty() {
+        "index.html"
+    } else {
+        requested
+    };
     let asset = EMBEDDED_ASSETS
         .iter()
         .find(|(name, _)| *name == requested)
-        .or_else(|| EMBEDDED_ASSETS.iter().find(|(name, _)| *name == "index.html"));
+        .or_else(|| {
+            EMBEDDED_ASSETS
+                .iter()
+                .find(|(name, _)| *name == "index.html")
+        });
 
     match asset {
         Some((name, bytes)) => Response::builder()
@@ -46,13 +61,19 @@ async fn serve_embedded_frontend(uri: Uri) -> Response<Body> {
             .unwrap_or_else(|_| Response::new(Body::empty())),
         None => Response::builder()
             .status(axum::http::StatusCode::NOT_FOUND)
-            .body(Body::from("Frontend assets are missing; rebuild Agent Web."))
+            .body(Body::from(
+                "Frontend assets are missing; rebuild Agent Web.",
+            ))
             .unwrap_or_else(|_| Response::new(Body::empty())),
     }
 }
 
 fn embedded_content_type(path: &str) -> &'static str {
-    match Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("") {
+    match Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+    {
         "html" => "text/html; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
@@ -69,7 +90,6 @@ fn embedded_content_type(path: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -116,9 +136,8 @@ async fn main() -> Result<()> {
         );
     }
 
-    let db_url = configured_db_url.unwrap_or_else(|| {
-        format!("sqlite://{}", default_db_path.display())
-    });
+    let db_url =
+        configured_db_url.unwrap_or_else(|| format!("sqlite://{}", default_db_path.display()));
     if let Some(path) = db_url.strip_prefix("sqlite://") {
         let path = path.split('?').next().unwrap_or(path);
         if let Some(parent) = Path::new(path).parent() {
@@ -190,7 +209,10 @@ async fn main() -> Result<()> {
             "/scheduled-tasks/{id}/runs",
             get(api::scheduled_task_history),
         )
-        .route("/scheduled-tasks/{id}/runs/{run_id}", axum::routing::delete(api::delete_scheduled_task_run))
+        .route(
+            "/scheduled-tasks/{id}/runs/{run_id}",
+            axum::routing::delete(api::delete_scheduled_task_run),
+        )
         .route("/auth/password", axum::routing::put(auth::change_password))
         .route("/auth/sessions", get(auth::list_sessions))
         .route(

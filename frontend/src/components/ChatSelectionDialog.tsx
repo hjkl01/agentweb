@@ -45,9 +45,7 @@ export function ChatSelectionDialog({
     setBrowserLoading(true);
     setBrowserError("");
     try {
-      const query = path
-        ? `?path=${encodeURIComponent(path)}`
-        : "";
+      const query = path ? `?path=${encodeURIComponent(path)}` : "";
       const items = await api<string[]>(`/workspaces${query}`);
       const [current, ...children] = items;
       if (current) {
@@ -176,7 +174,9 @@ export function ChatSelectionDialog({
 
               <div className="workspace-picker-current">
                 <Folder size={14} />
-                <span title={currentDirectory}>{currentDirectory || "正在读取…"}</span>
+                <span title={currentDirectory}>
+                  {currentDirectory || "正在读取…"}
+                </span>
               </div>
 
               <div className="workspace-picker-list">
@@ -194,7 +194,8 @@ export function ChatSelectionDialog({
                 {!browserLoading &&
                   !browserError &&
                   directories.map((path) => {
-                    const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+                    const name =
+                      path.split(/[\\/]/).filter(Boolean).pop() || path;
                     const selected = workspace === path;
                     return (
                       <button
@@ -205,7 +206,9 @@ export function ChatSelectionDialog({
                       >
                         <Folder size={15} />
                         <span title={path}>{name}</span>
-                        {selected && <span className="workspace-picker-check">✓</span>}
+                        {selected && (
+                          <span className="workspace-picker-check">✓</span>
+                        )}
                       </button>
                     );
                   })}
@@ -222,7 +225,10 @@ export function ChatSelectionDialog({
 
           <section className="new-chat-field">
             <label className="model-picker-label">Agent</label>
-            <select value={agentId} onChange={(e) => chooseAgent(e.target.value)}>
+            <select
+              value={agentId}
+              onChange={(e) => chooseAgent(e.target.value)}
+            >
               <option value="">请选择已安装 Agent</option>
               {installed.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -264,7 +270,9 @@ export function ChatSelectionDialog({
           <button
             className="primary-button create-chat-button"
             disabled={!canCreate}
-            onClick={() => onCreate(agentId, model || undefined, workspace.trim())}
+            onClick={() =>
+              onCreate(agentId, model || undefined, workspace.trim())
+            }
           >
             <Bot size={15} /> 开始对话
           </button>

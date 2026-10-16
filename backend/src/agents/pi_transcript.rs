@@ -53,11 +53,19 @@ pub struct NativeSessionDiscovery {
 /// Discover native Pi sessions without persisting transcript contents in SQLite.
 pub fn list_native_sessions() -> NativeSessionDiscovery {
     let Some(root) = sessions_root() else {
-        return NativeSessionDiscovery { sessions: Vec::new(), complete: false };
+        return NativeSessionDiscovery {
+            sessions: Vec::new(),
+            complete: false,
+        };
     };
     let root_meta = match std::fs::symlink_metadata(&root) {
         Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => metadata,
-        _ => return NativeSessionDiscovery { sessions: Vec::new(), complete: false },
+        _ => {
+            return NativeSessionDiscovery {
+                sessions: Vec::new(),
+                complete: false,
+            }
+        }
     };
     let _ = root_meta;
 
@@ -76,7 +84,10 @@ pub fn list_native_sessions() -> NativeSessionDiscovery {
         }
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
-            Err(_) => { complete = false; continue; }
+            Err(_) => {
+                complete = false;
+                continue;
+            }
         };
         for entry in entries {
             scanned += 1;
@@ -86,36 +97,63 @@ pub fn list_native_sessions() -> NativeSessionDiscovery {
             }
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(_) => { complete = false; continue; }
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
             let path = entry.path();
             let metadata = match std::fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
-                Err(_) => { complete = false; continue; }
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
-            if metadata.file_type().is_symlink() { continue; }
-            if metadata.is_dir() {
-                if depth < MAX_DEPTH { pending.push((path, depth + 1)); }
-                else { complete = false; }
+            if metadata.file_type().is_symlink() {
                 continue;
             }
-            if !metadata.is_file()
-                || path.extension().and_then(|v| v.to_str()) != Some("jsonl")
-            { continue; }
+            if metadata.is_dir() {
+                if depth < MAX_DEPTH {
+                    pending.push((path, depth + 1));
+                } else {
+                    complete = false;
+                }
+                continue;
+            }
+            if !metadata.is_file() || path.extension().and_then(|v| v.to_str()) != Some("jsonl") {
+                continue;
+            }
             let file = match std::fs::File::open(&path) {
                 Ok(file) => file,
-                Err(_) => { complete = false; continue; }
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
             let mut reader = std::io::BufReader::new(file);
             let mut first_line = String::new();
             if std::io::BufRead::read_line(&mut reader, &mut first_line).is_err()
                 || first_line.len() > MAX_HEADER_BYTES
-            { complete = false; continue; }
-            let Ok(header) = serde_json::from_str::<Value>(&first_line) else { continue };
-            if header.get("type").and_then(Value::as_str) != Some("session") { continue; }
-            let Some(id) = header.get("id").and_then(Value::as_str) else { continue };
-            let Some(cwd) = header.get("cwd").and_then(Value::as_str) else { continue };
-            if id.is_empty() || cwd.is_empty() { continue; }
+            {
+                complete = false;
+                continue;
+            }
+            let Ok(header) = serde_json::from_str::<Value>(&first_line) else {
+                continue;
+            };
+            if header.get("type").and_then(Value::as_str) != Some("session") {
+                continue;
+            }
+            let Some(id) = header.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(cwd) = header.get("cwd").and_then(Value::as_str) else {
+                continue;
+            };
+            if id.is_empty() || cwd.is_empty() {
+                continue;
+            }
 
             let mut title = String::new();
             let mut scanned_bytes = first_line.len();
@@ -123,42 +161,80 @@ pub fn list_native_sessions() -> NativeSessionDiscovery {
                 let mut line = String::new();
                 let read = match std::io::BufRead::read_line(&mut reader, &mut line) {
                     Ok(read) => read,
-                    Err(_) => { complete = false; break; }
+                    Err(_) => {
+                        complete = false;
+                        break;
+                    }
                 };
-                if read == 0 { break; }
+                if read == 0 {
+                    break;
+                }
                 scanned_bytes += read;
-                let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
-                if entry.get("type").and_then(Value::as_str) != Some("message") { continue; }
-                let Some(message) = entry.get("message") else { continue };
-                if message.get("role").and_then(Value::as_str) != Some("user") { continue };
+                let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if entry.get("type").and_then(Value::as_str) != Some("message") {
+                    continue;
+                }
+                let Some(message) = entry.get("message") else {
+                    continue;
+                };
+                if message.get("role").and_then(Value::as_str) != Some("user") {
+                    continue;
+                };
                 if let Some(text) = message.get("content").and_then(text_content) {
                     title = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                    if !title.is_empty() { break; }
+                    if !title.is_empty() {
+                        break;
+                    }
                 }
             }
             if scanned_bytes >= MAX_TITLE_SCAN_BYTES {
                 complete = false;
             }
-            if title.is_empty() { title = format!("Pi session {}", &id.chars().take(8).collect::<String>()); }
+            if title.is_empty() {
+                title = format!("Pi session {}", &id.chars().take(8).collect::<String>());
+            }
             title = title.chars().take(80).collect();
-            let timestamp = header.get("timestamp").and_then(Value::as_str)
+            let timestamp = header
+                .get("timestamp")
+                .and_then(Value::as_str)
                 .map(str::to_owned)
-                .unwrap_or_else(|| metadata.modified().ok()
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|duration| chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
-                        .map(|value| value.to_rfc3339()).unwrap_or_default())
-                    .unwrap_or_default());
-            let updated_at = metadata.modified().ok()
+                .unwrap_or_else(|| {
+                    metadata
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| {
+                            chrono::DateTime::<chrono::Utc>::from_timestamp(
+                                duration.as_secs() as i64,
+                                0,
+                            )
+                            .map(|value| value.to_rfc3339())
+                            .unwrap_or_default()
+                        })
+                        .unwrap_or_default()
+                });
+            let updated_at = metadata
+                .modified()
+                .ok()
                 .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .and_then(|duration| chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0))
+                .and_then(|duration| {
+                    chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
+                })
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_else(|| timestamp.clone());
             sessions.push(NativeSessionSummary {
-                id: id.to_owned(), cwd: cwd.to_owned(), title,
-                created_at: timestamp, updated_at,
+                id: id.to_owned(),
+                cwd: cwd.to_owned(),
+                title,
+                created_at: timestamp,
+                updated_at,
             });
         }
-        if scanned > MAX_ENTRIES { break; }
+        if scanned > MAX_ENTRIES {
+            break;
+        }
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     NativeSessionDiscovery { sessions, complete }
@@ -178,7 +254,11 @@ pub fn native_session_file_exists(native_session_id: &str) -> NativeSessionFileL
     let Some(root) = sessions_root() else {
         return NativeSessionFileLookup::Unknown;
     };
-    match find_by_suffix(&root, &format!("_{native_session_id}.jsonl"), native_session_id) {
+    match find_by_suffix(
+        &root,
+        &format!("_{native_session_id}.jsonl"),
+        native_session_id,
+    ) {
         Ok(Some(_)) => NativeSessionFileLookup::Found,
         Ok(None) => NativeSessionFileLookup::Missing,
         Err(()) => NativeSessionFileLookup::Unknown,
@@ -229,7 +309,11 @@ pub fn native_session_file_exists_from_workspace(
             return NativeSessionFileLookup::Unknown;
         }
     }
-    match find_by_suffix(&session_dir, &format!("_{native_session_id}.jsonl"), native_session_id) {
+    match find_by_suffix(
+        &session_dir,
+        &format!("_{native_session_id}.jsonl"),
+        native_session_id,
+    ) {
         Ok(Some(_)) => NativeSessionFileLookup::Found,
         Ok(None) => NativeSessionFileLookup::Missing,
         Err(()) => NativeSessionFileLookup::Unknown,
@@ -312,7 +396,9 @@ fn find_by_suffix(
                     return Err(());
                 }
             } else if metadata.is_file()
-                && path.file_name().and_then(|name| name.to_str())
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
                     .is_some_and(|name| name.ends_with(suffix))
             {
                 let file = match std::fs::File::open(&path) {
@@ -545,7 +631,9 @@ mod tests {
         )
         .unwrap();
 
-        let path = find_by_suffix(&dir, "_same-id.jsonl", "same-id").unwrap().unwrap();
+        let path = find_by_suffix(&dir, "_same-id.jsonl", "same-id")
+            .unwrap()
+            .unwrap();
         let messages = parse_messages(&std::fs::read_to_string(path).unwrap(), "same-id");
         std::fs::remove_dir_all(&dir).ok();
 
@@ -567,7 +655,10 @@ mod tests {
         content.push_str(r#""}"#);
         std::fs::write(&file, content).unwrap();
 
-        assert!(matches!(find_by_suffix(&dir, "_large-id.jsonl", "large-id"), Ok(None) | Err(())));
+        assert!(matches!(
+            find_by_suffix(&dir, "_large-id.jsonl", "large-id"),
+            Ok(None) | Err(())
+        ));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -701,15 +792,15 @@ mod tests {
         let transcript = session_dir.join("2026-01-01T00-00-00-000Z_deleted-id.jsonl");
         std::fs::write(&transcript, r#"{"type":"session","id":"deleted-id"}"#).unwrap();
 
-        assert_eq!(native_session_file_exists_from_workspace(
-            &workspace,
-            "deleted-id"
-        ), NativeSessionFileLookup::Found);
+        assert_eq!(
+            native_session_file_exists_from_workspace(&workspace, "deleted-id"),
+            NativeSessionFileLookup::Found
+        );
         std::fs::remove_file(&transcript).unwrap();
-        assert_eq!(native_session_file_exists_from_workspace(
-            &workspace,
-            "deleted-id"
-        ), NativeSessionFileLookup::Missing);
+        assert_eq!(
+            native_session_file_exists_from_workspace(&workspace, "deleted-id"),
+            NativeSessionFileLookup::Missing
+        );
 
         std::fs::remove_dir_all(workspace).ok();
     }
@@ -744,10 +835,10 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(native_session_file_exists_from_workspace(
-                &workspace,
-                "escape-id"
-            ), NativeSessionFileLookup::Unknown);
+            assert_eq!(
+                native_session_file_exists_from_workspace(&workspace, "escape-id"),
+                NativeSessionFileLookup::Unknown
+            );
 
             std::fs::remove_dir_all(workspace).ok();
             std::fs::remove_dir_all(outside).ok();

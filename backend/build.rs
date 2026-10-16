@@ -1,8 +1,14 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn collect_assets(root: &Path, dir: &Path, assets: &mut Vec<PathBuf>) {
     let entries = fs::read_dir(dir).unwrap_or_else(|error| {
-        panic!("Cannot read frontend build directory {}: {error}. Run npm run build first.", dir.display())
+        panic!(
+            "Cannot read frontend build directory {}: {error}. Run npm run build first.",
+            dir.display()
+        )
     });
     for entry in entries {
         let entry = entry.expect("failed to read frontend build entry");
@@ -11,7 +17,11 @@ fn collect_assets(root: &Path, dir: &Path, assets: &mut Vec<PathBuf>) {
             collect_assets(root, &path, assets);
         } else if path.is_file() {
             println!("cargo:rerun-if-changed={}", path.display());
-            assets.push(path.strip_prefix(root).expect("asset outside root").to_path_buf());
+            assets.push(
+                path.strip_prefix(root)
+                    .expect("asset outside root")
+                    .to_path_buf(),
+            );
         }
     }
 }
@@ -39,7 +49,9 @@ fn main() {
     let mut source = String::from("pub static EMBEDDED_ASSETS: &[(&str, &[u8])] = &[\n");
     for relative in assets {
         let absolute = root.join(&relative);
-        let name = relative.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        let name = relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
         source.push_str(&format!(
             "    ({:?}, include_bytes!({:?}) as &[u8]),\n",
             name,

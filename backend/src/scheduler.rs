@@ -306,7 +306,15 @@ async fn execute_run(state: AppState, run_id: &str) {
                 tx.commit().await
             }.await;
             if created.is_err() {
-                finish_run(&state.db, run_id, &state.worker_id, "failed", Some("创建执行会话失败")).await; return;
+                finish_run(
+                    &state.db,
+                    run_id,
+                    &state.worker_id,
+                    "failed",
+                    Some("创建执行会话失败"),
+                )
+                .await;
+                return;
             }
             Session {
                 id: session_id.clone(),
@@ -456,21 +464,36 @@ async fn execute_run(state: AppState, run_id: &str) {
         }
     }
     heartbeat.abort();
-    let status_row = sqlx::query("SELECT status,error_message FROM session_runtime WHERE session_id=?")
-        .bind(&session_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let status = status_row.as_ref().map(|row| row.get::<String, _>("status"));
-    let runtime_error = status_row.as_ref().and_then(|row| row.get::<Option<String>, _>("error_message"));
+    let status_row =
+        sqlx::query("SELECT status,error_message FROM session_runtime WHERE session_id=?")
+            .bind(&session_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let status = status_row
+        .as_ref()
+        .map(|row| row.get::<String, _>("status"));
+    let runtime_error = status_row
+        .as_ref()
+        .and_then(|row| row.get::<Option<String>, _>("error_message"));
     let (final_status, error) = match status.as_deref() {
         Some("idle") => ("succeeded", None),
         Some("interrupted") => ("cancelled", Some("执行被中断".to_owned())),
-        Some("error" | "missing") => ("failed", Some(runtime_error.unwrap_or_else(|| "Agent 执行失败".to_owned()))),
+        Some("error" | "missing") => (
+            "failed",
+            Some(runtime_error.unwrap_or_else(|| "Agent 执行失败".to_owned())),
+        ),
         _ => ("failed", Some("执行结束后会话状态异常".to_owned())),
     };
-    finish_run(&state.db, run_id, &state.worker_id, final_status, error.as_deref()).await;
+    finish_run(
+        &state.db,
+        run_id,
+        &state.worker_id,
+        final_status,
+        error.as_deref(),
+    )
+    .await;
 }
 
 async fn finish_run(pool: &SqlitePool, id: &str, worker: &str, status: &str, error: Option<&str>) {
@@ -631,7 +654,11 @@ mod tests {
         );
 
         sqlx::query("UPDATE session_runtime SET lease_until=?,updated_at=? WHERE session_id='s1'")
-            .bind(&expired).bind(&expired).execute(&pool).await.unwrap();
+            .bind(&expired)
+            .bind(&expired)
+            .execute(&pool)
+            .await
+            .unwrap();
         recover_expired(&pool).await.unwrap();
         let status: String =
             sqlx::query_scalar("SELECT status FROM scheduled_task_runs WHERE id='r1'")
@@ -718,10 +745,11 @@ mod tests {
         assert!(renew_session_lease_once(&pool, "s1", "worker-a").await);
         assert!(!renew_session_lease_once(&pool, "s1", "worker-b").await);
 
-        let lease: String = sqlx::query_scalar("SELECT lease_until FROM session_runtime WHERE session_id='s1'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let lease: String =
+            sqlx::query_scalar("SELECT lease_until FROM session_runtime WHERE session_id='s1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert!(
             DateTime::parse_from_rfc3339(&lease)
                 .unwrap()

@@ -64,7 +64,7 @@ export function App({ sessionId, navigate }: Props) {
         onNewChat={openNewChat}
         onSelectSession={(id) => navigate(`/sessions/${id}`)}
         onSessionMenu={(id) =>
-          c.setSessionMenu((v) => (v === id ? undefined : v))
+          c.setSessionMenu((v) => (v === id ? undefined : id))
         }
         onRenameSession={c.renameSession}
         onTogglePin={c.togglePin}

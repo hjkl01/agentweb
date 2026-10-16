@@ -16,7 +16,9 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     sqlx::query("DROP TRIGGER IF EXISTS trg_sessions_delete_messages")
         .execute(pool)
         .await?;
-    sqlx::query("DROP TABLE IF EXISTS messages").execute(pool).await?;
+    sqlx::query("DROP TABLE IF EXISTS messages")
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM agent_events WHERE session_id IS NOT NULL")
         .execute(pool)
         .await?;
@@ -53,7 +55,14 @@ pub async fn init(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
     // Existing installations may already have session_runtime without the transient error field.
-    match sqlx::query("ALTER TABLE session_runtime ADD COLUMN error_message TEXT").execute(pool).await { Ok(_) => {}, Err(error) if error.to_string().contains("duplicate column name") => {}, Err(error) => return Err(error.into()), };
+    match sqlx::query("ALTER TABLE session_runtime ADD COLUMN error_message TEXT")
+        .execute(pool)
+        .await
+    {
+        Ok(_) => {}
+        Err(error) if error.to_string().contains("duplicate column name") => {}
+        Err(error) => return Err(error.into()),
+    };
     sqlx::query(
         "INSERT OR IGNORE INTO session_runtime(session_id,status,worker_id,lease_until,updated_at)
          SELECT id,status,worker_id,lease_until,updated_at FROM sessions",
@@ -110,7 +119,10 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(remaining, 0, "legacy runtime synchronization triggers must be absent");
+        assert_eq!(
+            remaining, 0,
+            "legacy runtime synchronization triggers must be absent"
+        );
     }
 }
 

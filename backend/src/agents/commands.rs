@@ -104,7 +104,9 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     let agent_home = std::env::var_os("AGENTWEB_AGENT_HOME")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| anyhow!("AGENTWEB_AGENT_HOME or HOME must point to the Agent home directory"))?
+        .ok_or_else(|| {
+            anyhow!("AGENTWEB_AGENT_HOME or HOME must point to the Agent home directory")
+        })?
         .canonicalize()
         .map_err(|error| anyhow!("cannot resolve Agent home directory: {error}"))?;
     if !agent_home.is_dir() {
@@ -179,14 +181,21 @@ mod workspace_state_tests {
         let workspace = temp_path("pi-native-home");
         std::fs::create_dir_all(&workspace).unwrap();
         let command = build(ProcessKind::Pi, &config(&workspace), "hello").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(!args.iter().any(|arg| arg == "bwrap"));
-        assert!(!command.as_std().get_envs()
+        assert!(!command
+            .as_std()
+            .get_envs()
             .any(|(key, _)| key == std::ffi::OsStr::new("PI_CODING_AGENT_SESSION_DIR")));
         let canonical_workspace = workspace.canonicalize().unwrap();
-        assert_eq!(command.as_std().get_current_dir(), Some(canonical_workspace.as_path()));
+        assert_eq!(
+            command.as_std().get_current_dir(),
+            Some(canonical_workspace.as_path())
+        );
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -195,7 +204,9 @@ mod workspace_state_tests {
         let workspace = temp_path("pi-fresh-session");
         std::fs::create_dir_all(&workspace).unwrap();
         let command = build(ProcessKind::Pi, &config(&workspace), "first message").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(!args.iter().any(|arg| arg == "--session"));
@@ -210,12 +221,19 @@ mod workspace_state_tests {
         let mut config = config(&workspace);
         config.native_session_id = Some("existing-native-session".into());
         let command = build(ProcessKind::Pi, &config, "follow-up").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let session_arg = args.iter().position(|arg| arg == "--session")
+        let session_arg = args
+            .iter()
+            .position(|arg| arg == "--session")
             .expect("existing Pi session should be resumed");
-        assert_eq!(args.get(session_arg + 1).map(String::as_str), Some("existing-native-session"));
+        assert_eq!(
+            args.get(session_arg + 1).map(String::as_str),
+            Some("existing-native-session")
+        );
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -226,12 +244,19 @@ mod workspace_state_tests {
         let mut config = config(&workspace);
         config.fork_from_native_session_id = Some("source-native-session".into());
         let command = build(ProcessKind::Pi, &config, "continue from this point").unwrap();
-        let args = command.as_std().get_args()
+        let args = command
+            .as_std()
+            .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let fork_arg = args.iter().position(|arg| arg == "--fork")
+        let fork_arg = args
+            .iter()
+            .position(|arg| arg == "--fork")
             .expect("Pi fork should use the native --fork flag");
-        assert_eq!(args.get(fork_arg + 1).map(String::as_str), Some("source-native-session"));
+        assert_eq!(
+            args.get(fork_arg + 1).map(String::as_str),
+            Some("source-native-session")
+        );
         assert!(!args.iter().any(|arg| arg == "--session"));
         std::fs::remove_dir_all(workspace).unwrap();
     }

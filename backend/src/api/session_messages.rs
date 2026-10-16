@@ -234,13 +234,14 @@ pub async fn interrupt(
         .unwrap_or(session.agent_id);
     // Capture the current execution token first. The conditional update below
     // prevents a concurrent lease takeover from being interrupted by this request.
-    let execution_id: Option<String> =
-        sqlx::query_scalar("SELECT worker_id FROM session_runtime WHERE session_id=? AND status='running'")
-            .bind(&id)
-            .fetch_optional(&s.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .flatten();
+    let execution_id: Option<String> = sqlx::query_scalar(
+        "SELECT worker_id FROM session_runtime WHERE session_id=? AND status='running'",
+    )
+    .bind(&id)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .flatten();
     let Some(execution_id) = execution_id else {
         return Ok(Json(
             serde_json::json!({"status":load_session(&s.db,&id).await?.status}),

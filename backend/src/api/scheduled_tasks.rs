@@ -535,8 +535,16 @@ pub async fn delete_run(
         .bind(&run_id).bind(&task_id).execute(&s.db).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() == 0 {
-        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE id=? AND task_id=?").bind(&run_id).bind(&task_id).fetch_one(&s.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if exists == 0 { return Err(StatusCode::NOT_FOUND); }
+        let exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scheduled_task_runs WHERE id=? AND task_id=?")
+                .bind(&run_id)
+                .bind(&task_id)
+                .fetch_one(&s.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if exists == 0 {
+            return Err(StatusCode::NOT_FOUND);
+        }
         return Err(StatusCode::CONFLICT);
     }
     Ok(StatusCode::NO_CONTENT)

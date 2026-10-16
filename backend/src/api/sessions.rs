@@ -7,7 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::path::{Path as FsPath, PathBuf, Component};
+use std::path::{Component, Path as FsPath, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -41,14 +41,23 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
     }
 }
 fn default_workspace_root() -> PathBuf {
-    if let Ok(path) = std::env::var("AGENTWEB_WORKSPACE_DIR") { return PathBuf::from(path); }
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    if let Ok(path) = std::env::var("AGENTWEB_WORKSPACE_DIR") {
+        return PathBuf::from(path);
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 async fn canonical_home() -> Result<PathBuf, StatusCode> {
-    fs::canonicalize(default_workspace_root()).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    fs::canonicalize(default_workspace_root())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
-pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
+pub(crate) async fn load_session_record(
+    db: &sqlx::SqlitePool,
+    id: &str,
+) -> Result<Session, StatusCode> {
     let row=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,r.updated_at AS status_updated_at,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(session_from_row(&row))
 }
@@ -56,16 +65,26 @@ pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Resu
 pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let mut session = load_session_record(db, id).await?;
 
-    let workspace = fs::canonicalize(&session.workspace).await.map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound { StatusCode::NOT_FOUND } else { StatusCode::FORBIDDEN }
-    })?;
-    if !workspace.is_dir() { return Err(StatusCode::FORBIDDEN); }
+    let workspace = fs::canonicalize(&session.workspace)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::FORBIDDEN
+            }
+        })?;
+    if !workspace.is_dir() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     session.workspace = workspace.to_string_lossy().into_owned();
     session.workspace_available = true;
     Ok(session)
 }
 #[derive(Deserialize, Default)]
-pub struct WorkspaceBrowserQuery { pub path: Option<String> }
+pub struct WorkspaceBrowserQuery {
+    pub path: Option<String>,
+}
 
 pub async fn list_workspaces(
     Query(query): Query<WorkspaceBrowserQuery>,
@@ -74,35 +93,51 @@ pub async fn list_workspaces(
     let current = match query.path.as_deref().map(str::trim) {
         None | Some("") | Some(".") => home.clone(),
         Some(path) => {
-            let candidate = fs::canonicalize(path).await.map_err(|_| StatusCode::NOT_FOUND)?;
-            if !candidate.is_dir() || !candidate.starts_with(&home) { return Err(StatusCode::FORBIDDEN); }
+            let candidate = fs::canonicalize(path)
+                .await
+                .map_err(|_| StatusCode::NOT_FOUND)?;
+            if !candidate.is_dir() || !candidate.starts_with(&home) {
+                return Err(StatusCode::FORBIDDEN);
+            }
             candidate
         }
     };
-    let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut entries = fs::read_dir(&current)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut dirs = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
-        let kind = match entry.file_type().await { Ok(v) => v, Err(_) => continue };
-        if !kind.is_dir() || kind.is_symlink() { continue; }
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        let kind = match entry.file_type().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !kind.is_dir() || kind.is_symlink() {
+            continue;
+        }
         if let Ok(path) = fs::canonicalize(entry.path()).await {
-            if path.starts_with(&home) { dirs.push(path.to_string_lossy().into_owned()); }
+            if path.starts_with(&home) {
+                dirs.push(path.to_string_lossy().into_owned());
+            }
         }
     }
     dirs.sort_by_key(|p| p.to_lowercase());
-    let mut result = Vec::with_capacity(dirs.len()+1);
+    let mut result = Vec::with_capacity(dirs.len() + 1);
     result.push(current.to_string_lossy().into_owned());
     result.extend(dirs);
     Ok(Json(result))
 }
 
-pub async fn list_sessions(
-    State(s): State<AppState>,
-) -> Result<Json<Vec<Session>>, StatusCode> {
+pub async fn list_sessions(State(s): State<AppState>) -> Result<Json<Vec<Session>>, StatusCode> {
     // A failed discovery task is an internal error, not an empty session list:
     // silently treating a worker panic as "no native sessions" hides history.
-    let discovered = tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let discovered =
+        tokio::task::spawn_blocking(crate::agents::pi_transcript::list_native_sessions)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     // Incomplete discovery may still contribute found sessions, but must never be
     // interpreted as proof that any previously imported native session was deleted.
     // Emit a diagnostic so operators can distinguish an empty store from a failed
@@ -168,14 +203,28 @@ pub struct CreateSession {
 async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode> {
     let value = requested.unwrap_or("").trim();
     let home = canonical_home().await?;
-    if value.is_empty() || value == "." || value == "~" { return Ok(home.to_string_lossy().into_owned()); }
+    if value.is_empty() || value == "." || value == "~" {
+        return Ok(home.to_string_lossy().into_owned());
+    }
     let raw = FsPath::new(value);
-    let candidate = if raw.is_absolute() { raw.to_path_buf() } else { home.join(raw) };
+    let candidate = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        home.join(raw)
+    };
     let path = fs::canonicalize(&candidate).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound { StatusCode::NOT_FOUND } else { StatusCode::BAD_REQUEST }
+        if e.kind() == std::io::ErrorKind::NotFound {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        }
     })?;
-    if !path.is_dir() { return Err(StatusCode::BAD_REQUEST); }
-    if !path.starts_with(&home) { return Err(StatusCode::FORBIDDEN); }
+    if !path.is_dir() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if !path.starts_with(&home) {
+        return Err(StatusCode::FORBIDDEN);
+    }
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -252,12 +301,17 @@ pub async fn create_session(
         .title
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| "New Chat".into());
-    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut tx =
+        s.db.begin()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&id).bind(&agent_id).bind(&title).bind(&workspace).bind("idle").bind::<Option<String>>(None).bind(&model).bind(0i64).bind(&now).bind(&now).execute(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(?,'idle',NULL,NULL,?)")
         .bind(&id).bind(&now).execute(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(Session {
         id,
         agent_id,
@@ -377,7 +431,10 @@ pub async fn create_pi_fork(
         source.title.chars().take(70).collect::<String>()
     );
     let now = Utc::now().to_rfc3339();
-    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut tx =
+        s.db.begin()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("INSERT INTO sessions(id,agent_id,title,workspace,status,native_session_id,model,is_pinned,created_at,updated_at,fork_from_native_session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&new_id).bind(&source.agent_id).bind(&title).bind(&source.workspace)
         .bind("idle").bind::<Option<String>>(None).bind(&source.model).bind(0i64)
@@ -386,7 +443,9 @@ pub async fn create_pi_fork(
     sqlx::query("INSERT INTO session_runtime(session_id,status,worker_id,lease_until,updated_at) VALUES(?,'idle',NULL,NULL,?)")
         .bind(&new_id).bind(&now).execute(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(load_session(&s.db, &new_id).await?))
 }
 
@@ -395,7 +454,10 @@ pub async fn restart_missing_session(
     State(s): State<AppState>,
 ) -> Result<Json<Session>, StatusCode> {
     let now = Utc::now().to_rfc3339();
-    let mut tx = s.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut tx =
+        s.db.begin()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let runtime = sqlx::query(
         "UPDATE session_runtime SET status='idle',worker_id=NULL,lease_until=NULL,updated_at=? WHERE session_id=? AND status='missing' AND worker_id IS NULL",
     )
@@ -405,7 +467,9 @@ pub async fn restart_missing_session(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if runtime.rows_affected() != 1 {
-        tx.rollback().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        tx.rollback()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         load_session(&s.db, &id).await?;
         return Err(StatusCode::CONFLICT);
     }
@@ -419,10 +483,14 @@ pub async fn restart_missing_session(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if metadata.rows_affected() != 1 {
-        tx.rollback().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        tx.rollback()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         return Err(StatusCode::NOT_FOUND);
     }
-    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(load_session(&s.db, &id).await?))
 }
 pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -> StatusCode {
@@ -470,7 +538,11 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
             match result {
                 Ok(result) if result.rows_affected() == 1 => {
                     if sqlx::query("DELETE FROM session_runtime WHERE session_id=?")
-                        .bind(&id).execute(&mut *tx).await.is_err() {
+                        .bind(&id)
+                        .execute(&mut *tx)
+                        .await
+                        .is_err()
+                    {
                         let _ = tx.rollback().await;
                         return StatusCode::INTERNAL_SERVER_ERROR;
                     }
@@ -553,7 +625,11 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
     match deleted {
         Ok(r) if r.rows_affected() == 1 => {
             if sqlx::query("DELETE FROM session_runtime WHERE session_id=?")
-                .bind(&id).execute(&mut *tx).await.is_err() {
+                .bind(&id)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+            {
                 let _ = tx.rollback().await;
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }

@@ -18,6 +18,9 @@ import {
 import { useState } from "react";
 import type { Agent, Session } from "../types";
 
+// Menu is three rows tall; flip it above the row when it would be clipped.
+const MENU_HEIGHT = 120;
+
 type Props = {
   agents: Agent[];
   sessions: Session[];
@@ -55,6 +58,7 @@ export function Sidebar({
   onOpenScheduledTasks,
 }: Props) {
   const [sessionQuery, setSessionQuery] = useState("");
+  const [menuUp, setMenuUp] = useState(false);
   const normalizedQuery = sessionQuery.trim().toLocaleLowerCase();
   const filteredSessions = sessions
     .filter((session) => {
@@ -150,6 +154,11 @@ export function Sidebar({
                 className="icon-button session-menu"
                 onClick={(e) => {
                   e.stopPropagation();
+                  const list = e.currentTarget
+                    .closest(".session-list")!
+                    .getBoundingClientRect();
+                  const row = e.currentTarget.getBoundingClientRect();
+                  setMenuUp(row.bottom + MENU_HEIGHT > list.bottom);
                   onSessionMenu(session.id);
                 }}
                 title="对话操作"
@@ -160,7 +169,10 @@ export function Sidebar({
               </button>
             </div>
             {sessionMenu === session.id && (
-              <div className="menu" onClick={(e) => e.stopPropagation()}>
+              <div
+                className={`menu${menuUp ? " up" : ""}`}
+                onClick={(e) => e.stopPropagation()}
+              >
                 {session.workspace_available !== false && (
                   <>
                     <button onClick={() => onTogglePin(session.id)}>

@@ -26,7 +26,6 @@ fn lease_is_expired(lease: &str, now: chrono::DateTime<Utc>) -> bool {
         .unwrap_or(true)
 }
 
-
 async fn finalize_session_with_native_id(
     db: &sqlx::SqlitePool,
     session_id: &str,
@@ -437,23 +436,24 @@ pub async fn run_session(
             ticker.tick().await;
             let now = Utc::now();
             let now_text = now.to_rfc3339();
-            let row =
-                match sqlx::query("SELECT status,worker_id,lease_until FROM session_runtime WHERE session_id=?")
-                    .bind(&monitor_id)
-                    .fetch_optional(&monitor_db)
-                    .await
-                {
-                    Ok(row) => row,
-                    Err(error) => {
-                        tracing::warn!(
-                            session_id = %monitor_id,
-                            worker_id = %monitor_worker,
-                            %error,
-                            "failed to check session ownership; retrying interruption check"
-                        );
-                        continue;
-                    }
-                };
+            let row = match sqlx::query(
+                "SELECT status,worker_id,lease_until FROM session_runtime WHERE session_id=?",
+            )
+            .bind(&monitor_id)
+            .fetch_optional(&monitor_db)
+            .await
+            {
+                Ok(row) => row,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %monitor_id,
+                        worker_id = %monitor_worker,
+                        %error,
+                        "failed to check session ownership; retrying interruption check"
+                    );
+                    continue;
+                }
+            };
             let Some(row) = row else {
                 let _ = monitor_adapter
                     .interrupt(&monitor_id, &monitor_worker)
@@ -671,10 +671,11 @@ mod tests {
             "w1".into(),
         )
         .await;
-        let runtime_status: String = sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id='s1'")
-            .fetch_one(&db)
-            .await
-            .unwrap();
+        let runtime_status: String =
+            sqlx::query_scalar("SELECT status FROM session_runtime WHERE session_id='s1'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
         let message_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id='s1'")
                 .fetch_one(&db)
@@ -686,7 +687,10 @@ mod tests {
                 .await
                 .unwrap();
         std::fs::remove_dir_all(&workspace).unwrap();
-        assert_eq!(runtime_status, "idle", "runtime state is authoritative and must be finalized");
+        assert_eq!(
+            runtime_status, "idle",
+            "runtime state is authoritative and must be finalized"
+        );
         assert_eq!(message_count, 0, "chat content must not be persisted");
         assert_eq!(
             persisted_event_count, 0,
