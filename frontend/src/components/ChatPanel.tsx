@@ -221,6 +221,12 @@ export function ChatPanel({
             </p>
           </div>
         )}
+        <AgentActivity
+          items={activity}
+          open={activityOpen}
+          onToggle={onToggleActivity}
+        />
+        {messages.length > 0 && <div className="chat-content-divider" />}
         {messages.map((message) => (
           <div key={message.id} className={`message-row ${message.role}`}>
             <div className="avatar">
@@ -262,11 +268,6 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        <AgentActivity
-          items={activity}
-          open={activityOpen}
-          onToggle={onToggleActivity}
-        />
       </section>
       <div className="composer-wrap">
         <div className="composer-container">
