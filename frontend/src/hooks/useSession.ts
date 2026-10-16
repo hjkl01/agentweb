@@ -96,7 +96,7 @@ export function useSession(active?: string) {
         if (statusChangedAfterRequest || !isStatusSnapshotNewer(latest, current)) {
           return items.map((item) =>
             item.id === sessionId
-              ? { ...latest, status: item.status, status_updated_at: item.status_updated_at }
+              ? { ...latest, status: item.status, status_updated_at: current.status_updated_at }
               : item,
           );
         }
