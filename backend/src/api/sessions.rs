@@ -1,13 +1,13 @@
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::path::{Component, Path as FsPath, PathBuf};
+use std::path::{Path as FsPath, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -39,18 +39,12 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Session {
     }
 }
 fn default_workspace_root() -> PathBuf {
-    if let Ok(path) = std::env::var("AGENTWEB_WORKSPACE_DIR") {
-        return PathBuf::from(path);
-    }
-    if let Ok(path) = std::env::var("XDG_DATA_HOME") {
-        return PathBuf::from(path).join("agentweb").join("workspaces");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("agentweb")
-        .join("workspaces")
+    if let Ok(path) = std::env::var("AGENTWEB_WORKSPACE_DIR") { return PathBuf::from(path); }
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+}
+
+async fn canonical_home() -> Result<PathBuf, StatusCode> {
+    fs::canonicalize(default_workspace_root()).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let row=sqlx::query("SELECT s.id,s.agent_id,s.title,s.workspace,r.status,s.native_session_id,s.model,s.is_pinned,s.fork_from_native_session_id FROM sessions s JOIN session_runtime r ON r.session_id=s.id WHERE s.id=?").bind(id).fetch_optional(db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
@@ -60,63 +54,43 @@ pub(crate) async fn load_session_record(db: &sqlx::SqlitePool, id: &str) -> Resu
 pub(crate) async fn load_session(db: &sqlx::SqlitePool, id: &str) -> Result<Session, StatusCode> {
     let mut session = load_session_record(db, id).await?;
 
-    // Persisted workspace paths are not trusted: a stale or edited database row
-    // must not cause an Agent or terminal to bind an arbitrary host directory.
-    let base_path = default_workspace_root();
-    fs::create_dir_all(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base = fs::canonicalize(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let workspace = fs::canonicalize(&session.workspace)
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::FORBIDDEN
-            }
-        })?;
-    if !workspace.is_dir() || !workspace.starts_with(&base) || workspace == base {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    let workspace = fs::canonicalize(&session.workspace).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound { StatusCode::NOT_FOUND } else { StatusCode::FORBIDDEN }
+    })?;
+    if !workspace.is_dir() { return Err(StatusCode::FORBIDDEN); }
     session.workspace = workspace.to_string_lossy().into_owned();
     session.workspace_available = true;
     Ok(session)
 }
-pub async fn list_workspaces() -> Result<Json<Vec<String>>, StatusCode> {
-    let base_path = default_workspace_root();
-    fs::create_dir_all(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base = fs::canonicalize(&base_path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut entries = fs::read_dir(&base)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut workspaces = Vec::new();
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        let path = entry.path();
-        match fs::metadata(&path).await {
-            Ok(metadata) if metadata.is_dir() => {}
-            _ => continue,
+#[derive(Deserialize, Default)]
+pub struct WorkspaceBrowserQuery { pub path: Option<String> }
+
+pub async fn list_workspaces(
+    Query(query): Query<WorkspaceBrowserQuery>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let home = canonical_home().await?;
+    let current = match query.path.as_deref().map(str::trim) {
+        None | Some("") | Some(".") => home.clone(),
+        Some(path) => {
+            let candidate = fs::canonicalize(path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+            if !candidate.is_dir() || !candidate.starts_with(&home) { return Err(StatusCode::FORBIDDEN); }
+            candidate
         }
-        let canonical = match fs::canonicalize(&path).await {
-            Ok(path) if path.starts_with(&base) => path,
-            _ => continue,
-        };
-        if let Ok(relative) = canonical.strip_prefix(&base) {
-            workspaces.push(relative.to_string_lossy().replace('\\', "/"));
+    };
+    let mut entries = fs::read_dir(&current).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut dirs = Vec::new();
+    while let Some(entry) = entries.next_entry().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+        let kind = match entry.file_type().await { Ok(v) => v, Err(_) => continue };
+        if !kind.is_dir() || kind.is_symlink() { continue; }
+        if let Ok(path) = fs::canonicalize(entry.path()).await {
+            if path.starts_with(&home) { dirs.push(path.to_string_lossy().into_owned()); }
         }
     }
-    workspaces.sort();
-    Ok(Json(workspaces))
+    dirs.sort_by_key(|p| p.to_lowercase());
+    let mut result = Vec::with_capacity(dirs.len()+1);
+    result.push(current.to_string_lossy().into_owned());
+    result.extend(dirs);
+    Ok(Json(result))
 }
 
 pub async fn list_sessions(
@@ -199,8 +173,17 @@ pub struct CreateSession {
     pub model: Option<String>,
 }
 async fn resolve_workspace(requested: Option<&str>) -> Result<String, StatusCode> {
-    let name = requested.unwrap_or("").trim();
-    resolve_workspace_under(&default_workspace_root(), name).await
+    let value = requested.unwrap_or("").trim();
+    let home = canonical_home().await?;
+    if value.is_empty() || value == "." || value == "~" { return Ok(home.to_string_lossy().into_owned()); }
+    let raw = FsPath::new(value);
+    let candidate = if raw.is_absolute() { raw.to_path_buf() } else { home.join(raw) };
+    let path = fs::canonicalize(&candidate).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound { StatusCode::NOT_FOUND } else { StatusCode::BAD_REQUEST }
+    })?;
+    if !path.is_dir() { return Err(StatusCode::BAD_REQUEST); }
+    if !path.starts_with(&home) { return Err(StatusCode::FORBIDDEN); }
+    Ok(path.to_string_lossy().into_owned())
 }
 
 async fn resolve_workspace_under(base_path: &FsPath, name: &str) -> Result<String, StatusCode> {
