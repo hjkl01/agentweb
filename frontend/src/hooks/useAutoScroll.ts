@@ -3,7 +3,8 @@ import type { RefObject } from "react";
 
 type Options = {
   contentVersion: unknown;
-  threshold?: number;\n  force?: boolean;
+  threshold?: number;
+  force?: boolean;
 };
 
 export function useAutoScroll<T extends HTMLElement>(
