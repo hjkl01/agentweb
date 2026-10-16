@@ -47,7 +47,7 @@ volumes:
   - ./data:/data
 ```
 
-`data/` 内部包含数据库、Agent 配置、Workspace、Node.js Runtime 和按需安装的 Agent。
+Docker 的 `data/` 持久化数据库、Agent HOME/配置和 Docker 专用 Runtime；Workspace 直接映射到宿主机 `$HOME`。宿主机直接运行二进制时，Agent 使用用户自己的 HOME 和已安装/配置的 Agent，不使用 Agent Web Runtime。
 
 ## 本地构建并直接启动
 
@@ -63,11 +63,9 @@ make start
 
 ```text
 agentweb/
-├── build/
-│   └── agentweb          # 独立运行的二进制，内含前端
-├── data/
-│   ├── workspaces/       # 工作区
-│   └── runtimes/         # Node.js Runtime
+├── agentweb              # 独立运行的二进制，内含前端
+├── backend/
+├── frontend/
 └── ...
 ```
 
@@ -84,9 +82,9 @@ agentweb/
 - Rust stable / Cargo
 - Node.js 22+
 - npm
-- Linux 工作区隔离依赖：`bubblewrap`（命令 `bwrap`）
+- Linux：宿主机 Agent/终端直接使用当前用户权限运行；Docker 内按容器权限运行
 
-Agent 和终端命令会通过 Linux namespace 沙箱启动：系统文件系统只读，当前会话工作区可写，`/tmp` 使用隔离的临时文件系统。 Pi 的原生会话状态会写入工作区内的 `.agentweb-state/pi-sessions/`，不会因此开放宿主 HOME 的写权限；其他 Agent 的原生状态目录兼容性仍需逐一验证。若系统没有可用的 `bwrap` 或 namespace 权限，启动会失败，不会自动退回到不受限制的执行方式。当前工作区沙箱仅支持 Linux；macOS/Windows 上的 Agent 与终端执行会被拒绝，直到提供对应平台的沙箱实现。
+宿主机直接运行二进制时，Agent 使用用户自己的 `HOME`、`~/.config`、`~/.local` 等原生配置目录，并以用户权限直接操作 `$HOME` 下的工作目录。Agent Web 不提供额外的文件系统沙箱。Docker 模式则使用容器内的 `/data/home` 作为 Agent HOME，并将宿主机 `$HOME` 挂载到 `/workspaces`。
 
 Arch Linux 可安装依赖：
 
@@ -94,7 +92,7 @@ Arch Linux 可安装依赖：
 sudo pacman -S bubblewrap
 ```
 
-本地开发的 SQLite 默认位于 `$HOME/.config/agentweb/agentweb.db`；`make start` 使用项目根目录 `data/` 下的工作区和 Node.js Runtime 目录，不要求创建 `/data`、`/workspaces`、`/opt/agent-runtimes` 等系统目录。
+本地开发的 SQLite 默认位于 `$HOME/.config/agentweb/agentweb.db`；宿主机 Workspace 默认就是 `$HOME`。宿主机 Agent 不使用 Agent Web Runtime，直接使用用户 PATH 和用户自己的 Agent 配置。
 
 ### 1. 启动后端
 
@@ -149,16 +147,14 @@ make fmt-frontend
 
 ```text
 agentweb/
-├── data/
-│   ├── home/                 # Docker 中 Agent 的 HOME
-│   ├── workspaces/           # Session 工作区
-│   └── runtimes/             # Node.js Runtime 和用户安装的 Agent
+├── agentweb                 # make build 生成的独立二进制
 ├── backend/
 ├── frontend/
 └── docker/
 
-# 宿主机默认数据库
+# 宿主机数据
 $HOME/.config/agentweb/agentweb.db
+$HOME/                           # Session 默认 Workspace
 ```
 
 Docker 中对应：
@@ -166,12 +162,12 @@ Docker 中对应：
 | 容器目录 | 用途 |
 |---|---|
 | `/data/home/.config/agentweb/agentweb.db` | SQLite 数据库 |
-| `/data/home` | Agent HOME、配置、缓存和数据 |
-| `/data/workspaces` | Agent 工作区 |
-| `/data/runtimes/node` | Node.js Runtime |
-| `/data/runtimes/agents` | 用户安装的 Agent 运行时数据 |
+| `/data/home` | Docker 中 Agent HOME、配置和缓存 |
+| `/workspaces` | 宿主机 `$HOME` 映射后的 Docker Workspace |
+| `/data/runtimes/node` | Docker 专用 Node.js Runtime |
+| `/data/runtimes/agents` | Docker 中用户安装的 Agent 运行时数据 |
 
-因此重新创建容器后，只要保留宿主机 `./data`，数据库、Agent 配置、Workspace 和 Runtime 都可以继续使用。
+因此重新创建容器后，保留宿主机 `./data` 可以继续使用数据库、Docker 内 Agent 配置和 Runtime；Workspace 则来自宿主机 `$HOME`，不随容器复制。
 
 ## 使用方法
 
