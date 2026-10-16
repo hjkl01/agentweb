@@ -49,15 +49,16 @@ COPY --from=backend /src/backend/target/release/agentweb /usr/local/bin/agentweb
 COPY docker/nginx.conf /etc/agentweb/nginx.conf.template
 COPY docker/entrypoint.sh /usr/local/bin/agentweb-entrypoint
 RUN chmod +x /usr/local/bin/agentweb-entrypoint \
-  && mkdir -p /data/home /workspaces /data/runtimes/node /data/runtimes/agents /etc/agentweb
+  && mkdir -p /home/agent /workspaces /agent-runtimes /data /etc/agentweb
 ENV TZ=Asia/Shanghai
-ENV HOME=/data/home
-ENV XDG_CONFIG_HOME=/data/home/.config
-ENV XDG_DATA_HOME=/data/home/.local/share
-ENV XDG_CACHE_HOME=/data/home/.cache
-ENV DATABASE_URL=sqlite:///data/home/.config/agentweb/agentweb.db
+ENV HOME=/home/agent
+ENV AGENTWEB_AGENT_HOME=/home/agent
+ENV XDG_CONFIG_HOME=/home/agent/.config
+ENV XDG_DATA_HOME=/home/agent/.local/share
+ENV XDG_CACHE_HOME=/home/agent/.cache
+ENV DATABASE_URL=sqlite:///home/agent/.config/agentweb/agentweb.db
 ENV AGENTWEB_WORKSPACE_DIR=/workspaces
-ENV AGENTWEB_RUNTIME_DIR=/data/runtimes/node
+ENV AGENTWEB_RUNTIME_DIR=/agent-runtimes
 ENV AGENTWEB_WORKERS=1
 ENV RUST_LOG=info
 EXPOSE 8080
