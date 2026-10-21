@@ -149,12 +149,18 @@ async fn recover_expired(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let now = stamp(Utc::now());
     sqlx::query("UPDATE scheduled_task_runs SET status='failed',finished_at=?,error_message=COALESCE(error_message,'parent task missing'),lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='queued' AND NOT EXISTS (SELECT 1 FROM scheduled_tasks t WHERE t.id=scheduled_task_runs.task_id)")
         .bind(&now).bind(&now).execute(pool).await?;
-    // Do not requeue a run while its associated session still has a live lease.
-    // This closes the small recovery race where the run lease expires first and a
-    // second worker would otherwise claim the run while the old Agent still owns
-    // the session.
-    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND (agent_session_id IS NULL OR NOT EXISTS (SELECT 1 FROM session_runtime s WHERE s.session_id=scheduled_task_runs.agent_session_id AND s.status='running' AND (s.lease_until IS NULL OR julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?))))")
-        .bind(&now).bind(&now).bind(&now).execute(pool).await?;
+    // A run that already reached an Agent is never retried. Its worker is gone
+    // (the lease expired), but the attempt may have had side effects, and
+    // requeueing it would re-execute the task on every backend restart. It is
+    // finalized as interrupted instead. Do not touch it while its session still
+    // has a live lease: that closes the race where the run lease expires first
+    // but the old Agent still owns the session.
+    sqlx::query("UPDATE scheduled_task_runs SET status='cancelled',finished_at=?,error_message=COALESCE(error_message,'执行被中断'),lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND agent_session_id IS NOT NULL AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?)) AND NOT EXISTS (SELECT 1 FROM session_runtime s WHERE s.session_id=scheduled_task_runs.agent_session_id AND s.status='running' AND (s.lease_until IS NULL OR julianday(s.lease_until) IS NULL OR julianday(s.lease_until)>=julianday(?)))")
+        .bind(&now).bind(&now).bind(&now).bind(&now).execute(pool).await?;
+    // A run that died before it started an Agent did nothing yet, so it is safe
+    // to put back in the queue.
+    sqlx::query("UPDATE scheduled_task_runs SET status='queued',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE status='running' AND agent_session_id IS NULL AND (lease_until IS NULL OR julianday(lease_until) IS NULL OR julianday(lease_until)<julianday(?))")
+        .bind(&now).bind(&now).execute(pool).await?;
     Ok(())
 }
 
@@ -596,6 +602,7 @@ mod tests {
         sqlx::query("CREATE TABLE scheduled_task_runs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL, status TEXT NOT NULL, scheduled_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, agent_session_id TEXT, summary TEXT, error_message TEXT, lease_owner TEXT, lease_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE sessions(id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE session_runtime(session_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle', worker_id TEXT, lease_until TEXT, updated_at TEXT NOT NULL DEFAULT '')").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)").execute(&pool).await.unwrap();
         pool
     }
 
@@ -627,7 +634,28 @@ mod tests {
         assert_eq!(status, "queued");
     }
     #[tokio::test]
-    async fn expired_run_waits_for_live_session_lease_before_requeueing() {
+    async fn started_run_is_cancelled_instead_of_restarted_after_backend_restart() {
+        let pool = test_pool().await;
+        let old = stamp(Utc::now() - Duration::minutes(1));
+        // The session row is gone (backend restarted, workspace removed, ...): the
+        // run still ran once and must not be re-executed by the next startup.
+        sqlx::query("INSERT INTO scheduled_task_runs(id,task_id,task_name,status,scheduled_at,agent_session_id,lease_owner,lease_until,created_at,updated_at) VALUES('r-started','t1','task','running',?,'s-gone','dead-worker',?,?,?)")
+            .bind(&old).bind(&old).bind(&old).bind(&old).execute(&pool).await.unwrap();
+
+        recover_expired(&pool).await.unwrap();
+
+        let (status, error): (String, Option<String>) = sqlx::query_as(
+            "SELECT status,error_message FROM scheduled_task_runs WHERE id='r-started'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "cancelled");
+        assert_eq!(error.as_deref(), Some("执行被中断"));
+    }
+
+    #[tokio::test]
+    async fn expired_run_waits_for_live_session_lease_before_cancelling() {
         let pool = test_pool().await;
         let now = Utc::now();
         let expired = stamp(now - Duration::minutes(1));
@@ -666,8 +694,8 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(
-            status, "queued",
-            "must requeue after the associated session lease expires"
+            status, "cancelled",
+            "a run that already started an Agent must not be re-executed after the worker is gone"
         );
     }
 
@@ -761,8 +789,6 @@ mod tests {
     #[tokio::test]
     async fn many_missed_interval_occurrences_coalesce_to_one_run() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
-            .execute(&pool).await.unwrap();
         let old = stamp(Utc::now() - Duration::hours(4));
         sqlx::query("INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t1','task','do it','codex','/tmp','interval','{\"seconds\":60}','UTC',?,1,?)")
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
@@ -792,8 +818,6 @@ mod tests {
     #[tokio::test]
     async fn due_occurrence_is_coalesced_while_task_has_active_run() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
-            .execute(&pool).await.unwrap();
         let old = stamp(Utc::now() - Duration::minutes(5));
         sqlx::query(r#"INSERT INTO scheduled_tasks(id,name,prompt,agent_id,working_directory,schedule_type,schedule_config,timezone,next_run_at,enabled,updated_at) VALUES('t-active','task','do it','codex','/tmp','interval','{"seconds":60}','UTC',?,1,?)"#)
             .bind(&old).bind(&old).execute(&pool).await.unwrap();
@@ -825,8 +849,6 @@ mod tests {
     #[tokio::test]
     async fn due_schedule_comparison_handles_timezone_offsets() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY,name TEXT,prompt TEXT,agent_id TEXT,working_directory TEXT,model TEXT,schedule_type TEXT,schedule_config TEXT,timezone TEXT,next_run_at TEXT,enabled INTEGER,last_run_at TEXT,updated_at TEXT)")
-            .execute(&pool).await.unwrap();
         // This local timestamp is earlier than UTC now, even though its hour
         // component can sort after a UTC timestamp when compared as plain text.
         let now = Utc::now();
@@ -852,10 +874,6 @@ mod tests {
     #[tokio::test]
     async fn orphaned_queued_run_is_failed_without_touching_valid_queue() {
         let pool = test_pool().await;
-        sqlx::query("CREATE TABLE scheduled_tasks(id TEXT PRIMARY KEY)")
-            .execute(&pool)
-            .await
-            .unwrap();
         let now = stamp(Utc::now());
         sqlx::query("INSERT INTO scheduled_tasks(id) VALUES('existing-task')")
             .execute(&pool)
