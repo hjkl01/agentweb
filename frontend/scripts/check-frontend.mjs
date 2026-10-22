@@ -1,0 +1,256 @@
+// 前端纯逻辑的检查：用 tsc 编译 src/lib/*.ts 后再断言（见 make test）。
+import assert from "node:assert/strict";
+import {
+  activityFacts,
+  diffLines,
+  firstLine,
+  formatDuration,
+  groupTranscript,
+  isActivityMessage,
+  toolSummary,
+} from "../.tmp-test/lib/format.js";
+import { familyRows } from "../.tmp-test/lib/sessionFamily.js";
+import {
+  DEFAULT_PREFERENCES,
+  clampChatContentWidth,
+  clampChatFontSize,
+  parsePreferences,
+} from "../.tmp-test/lib/preferences.js";
+import { ARCHIVED_KEY, groupSessions } from "../.tmp-test/lib/sessionGroups.js";
+import { settlePending } from "../.tmp-test/lib/pendingMessages.js";
+
+const session = (id, native, forkFrom) => ({
+  id,
+  native_session_id: native ?? null,
+  fork_from_native_session_id: forkFrom ?? null,
+});
+const rows = (list) =>
+  familyRows(list).map((row) => `${row.session.id}:${row.depth}`);
+
+// 父会话在后也有可能：子会话先出现在列表里，排序后仍要父在前、逐层缩进。
+assert.deepEqual(
+  rows([session("c", "nc", "nb"), session("b", "nb", "na"), session("a", "na")]),
+  ["a:0", "b:1", "c:2"],
+);
+// 无关会话保持原顺序，分支紧跟父会话。
+assert.deepEqual(
+  rows([session("a", "na"), session("x", "nx"), session("b", "nb", "na")]),
+  ["a:0", "b:1", "x:0"],
+);
+// 分叉出的会话自身还没写文件（没有原生 id）时，仍属于它的父会话。
+assert.deepEqual(rows([session("a", "na"), session("b", null, "na")]), [
+  "a:0",
+  "b:1",
+]);
+// 父会话不在这一批（例如父会话已归档、子会话还在项目组）时不能丢行。
+assert.deepEqual(rows([session("b", "nb", "na")]), ["b:0"]);
+// 自引用与互相引用都不能死循环，也不能丢行。
+assert.deepEqual(rows([session("a", "na", "na")]), ["a:0"]);
+assert.deepEqual(
+  rows([session("a", "na", "nb"), session("b", "nb", "na")]).sort(),
+  ["a:0", "b:1"],
+);
+assert.deepEqual(familyRows([]), []);
+
+console.log("sessionFamily: ok");
+
+// 偏好存档：坏数据与非布尔值一律退回默认。
+assert.deepEqual(parsePreferences(null), DEFAULT_PREFERENCES);
+assert.deepEqual(parsePreferences("not json"), DEFAULT_PREFERENCES);
+assert.deepEqual(parsePreferences("[1,2]"), DEFAULT_PREFERENCES);
+assert.deepEqual(parsePreferences('{"completionSound":"yes"}'), {
+  ...DEFAULT_PREFERENCES,
+  completionSound: false,
+});
+assert.equal(parsePreferences('{"completionSound":true}').completionSound, true);
+assert.equal(
+  parsePreferences('{"completionSound":false}').completionSound,
+  false,
+);
+// 数值要夹在合法区间，非数值一律退回默认值。
+assert.equal(clampChatFontSize(11), 12);
+assert.equal(clampChatFontSize(999), 20);
+assert.equal(clampChatContentWidth(100), 640);
+assert.equal(clampChatContentWidth(5000), 1600);
+assert.equal(clampChatContentWidth(1000.4), 1000);
+assert.equal(clampChatFontSize("14"), 13);
+assert.equal(clampChatContentWidth(null), 900);
+assert.deepEqual(parsePreferences('{"chatFontSize":99,"sendMode":"meta"}'), {
+  ...DEFAULT_PREFERENCES,
+  chatFontSize: 20,
+});
+assert.equal(parsePreferences('{"sendMode":"ctrlEnter"}').sendMode, "ctrlEnter");
+assert.equal(parsePreferences('{"thinkingExpanded":true}').thinkingExpanded, true);
+// 引用选区是已有功能，旧存档没有这个键时保持开启。
+assert.equal(parsePreferences('{"completionSound":true}').quoteSelection, true);
+assert.equal(parsePreferences('{"quoteSelection":false}').quoteSelection, false);
+console.log("preferences: ok");
+
+// 会话分组：置顶最前、归档最后、项目按首次出现顺序、worktree 归并回主仓库。
+const grouped = (id, extra = {}) => ({
+  id,
+  workspace: `/w/${id}`,
+  is_pinned: false,
+  archived_at: null,
+  ...extra,
+});
+const groupNames = groupSessions([
+  grouped("a", { workspace: "/w/repo" }),
+  grouped("b", { workspace: "/w/other" }),
+  grouped("c", { workspace: "/w/repo", is_pinned: true }),
+  grouped("d", { workspace: "/w/repo", archived_at: "2026-01-01T00:00:00Z" }),
+  grouped("e", { workspace: "/w/repo-worktrees/feature", updated: true }),
+]).map((group) => `${group.key}:${group.sessions.map((s) => s.id).join(",")}`);
+assert.deepEqual(groupNames, [
+  "__pinned__:c",
+  "/w/repo:a,e",
+  "/w/other:b",
+  `${ARCHIVED_KEY}:d`,
+]);
+assert.deepEqual(groupSessions([]), []);
+// 每个会话都必须出现在某个分组里，否则侧栏会漏掉会话。
+const all = groupSessions([
+  grouped("a", { workspace: "/w/repo" }),
+  grouped("b", { workspace: "/w/repo", is_pinned: true }),
+  grouped("c", { archived_at: "2026-01-01T00:00:00Z" }),
+]);
+assert.equal(
+  all.reduce((total, group) => total + group.sessions.length, 0),
+  3,
+);
+console.log("sessionGroups: ok");
+
+// 耗时展示：不足 1 秒按毫秒，1 分钟以上拆成分秒，坏值不显示。
+assert.equal(formatDuration(0), "0ms");
+assert.equal(formatDuration(850), "850ms");
+assert.equal(formatDuration(4200), "4.2s");
+assert.equal(formatDuration(45000), "45s");
+assert.equal(formatDuration(95000), "1m35s");
+assert.equal(formatDuration(undefined), undefined);
+assert.equal(formatDuration(Number.NaN), undefined);
+assert.equal(formatDuration(-1), undefined);
+console.log("format: ok");
+
+// 工具调用摘要：取首个关键词参数，压掉换行并截断。
+assert.equal(toolSummary({ command: "npm test" }), "npm test");
+assert.equal(toolSummary({ path: "src/a.ts" }), "src/a.ts");
+assert.equal(toolSummary({ command: "a\n  b" }), "a b");
+assert.equal(toolSummary({ other: "x" }), undefined);
+assert.equal(toolSummary({}), undefined);
+assert.equal(toolSummary(null), undefined);
+assert.equal(toolSummary({ command: "x".repeat(500) }).length, 120);
+console.log("toolSummary: ok");
+
+// 编辑工具的 diff 片段：区分新增/删除/上下文/空档行。
+assert.deepEqual(
+  diffLines("@@ -1 +1 @@\n-old\n+new\n keep\n   ..."),
+  [
+    { kind: "hunk", text: "@@ -1 +1 @@" },
+    { kind: "remove", text: "-old" },
+    { kind: "add", text: "+new" },
+    { kind: "context", text: " keep" },
+    { kind: "gap", text: "   ..." },
+  ],
+);
+assert.equal(diffLines("").length, 1);
+console.log("diffLines: ok");
+
+// 执行过程分组：思考与工具调用合成一段，工具结果按 tool_call_id 挂回那次调用。
+const thinking = (text) => ({ type: "thinking", text });
+const call = (id, name, args) => ({
+  type: "toolCall",
+  tool_call_id: id,
+  name,
+  arguments: args,
+});
+const assistant = (id, parts, extra = {}) => ({
+  id,
+  role: "assistant",
+  content: "",
+  parts,
+  ...extra,
+});
+const result_ = (id, callId, extra = {}) => ({
+  id,
+  role: "toolResult",
+  content: "输出",
+  tool_call_id: callId,
+  ...extra,
+});
+
+// 带工具调用的助手轮次属于执行过程；最终回答与失败的轮次不属于。
+assert.equal(isActivityMessage(assistant("a", [call("c1", "bash", {})])), true);
+assert.equal(isActivityMessage(assistant("a", [thinking("想")])), false);
+assert.equal(isActivityMessage(assistant("a", [{ type: "text", text: "答案" }])), false);
+assert.equal(
+  isActivityMessage(assistant("a", [call("c1", "bash", {})], { stop_reason: "error" })),
+  false,
+);
+assert.equal(isActivityMessage(result_("r", "c1")), true);
+
+// 一次工具循环 = 一段执行过程：思考 + 两次调用 + 两次结果，结果挂在调用行上。
+const entries = groupTranscript([
+  { id: "u1", role: "user", content: "帮我改代码" },
+  assistant("a1", [thinking("先看文件"), call("c1", "read", { path: "a.ts" })]),
+  result_("r1", "c1", { duration_ms: 12 }),
+  assistant("a2", [{ type: "text", text: "看完了，改这里" }, call("c2", "edit", { path: "a.ts" })], { stop_reason: "toolUse" }),
+  result_("r2", "c2", { duration_ms: 30, is_error: true }),
+  assistant("a3", [{ type: "text", text: "改好了" }], { stop_reason: "stop" }),
+]);
+assert.deepEqual(
+  entries.map((entry) => entry.kind),
+  ["message", "activity", "message"],
+);
+assert.equal(entries[1].key, "a1");
+assert.deepEqual(
+  entries[1].rows.map((row) => `${row.kind}:${row.name ?? row.text}`),
+  ["thinking:先看文件", "tool:read", "note:看完了，改这里", "tool:edit"],
+);
+assert.equal(entries[1].rows[1].result.id, "r1");
+assert.equal(entries[1].rows[1].summary, "a.ts");
+assert.equal(entries[1].rows[3].result.is_error, true);
+assert.deepEqual(activityFacts(entries[1].rows), {
+  tools: "思考 · read · edit",
+  durationMs: 42,
+  failed: 1,
+  truncated: 0,
+  pending: 0,
+});
+assert.equal(activityFacts(entries[1].rows).tools, "思考 · read · edit");
+
+// 结果找不到对应调用（历史被窗口截断）时单独成行，输出不能丢。
+const orphan = groupTranscript([result_("r9", "gone", { tool_name: "bash" })]);
+assert.equal(orphan[0].rows.length, 1);
+assert.equal(orphan[0].rows[0].name, "bash");
+assert.equal(orphan[0].rows[0].result.id, "r9");
+// 没有 tool_call_id 的老转录也要能挂上，走单独成行这条路。
+const unnamed = groupTranscript([result_("r8", undefined, { tool_name: "read" })]);
+assert.equal(unnamed[0].rows[0].name, "read");
+
+// 调用已发出、结果还没回来：计入 pending，并显示为运行中。
+const pending = groupTranscript([
+  assistant("a1", [call("c1", "bash", { command: "sleep 1" })]),
+]);
+assert.equal(activityFacts(pending[0].rows).pending, 1);
+assert.equal(activityFacts(pending[0].rows).durationMs, 0);
+// 同名工具合并计数，仅一次的工具不写倍数。
+assert.equal(
+  activityFacts([
+    { key: "1", kind: "tool", name: "bash", result: { id: "x", role: "toolResult", content: "", duration_ms: 5 } },
+    { key: "2", kind: "tool", name: "bash", result: { id: "y", role: "toolResult", content: "", duration_ms: 5, truncated: true } },
+  ]).tools,
+  "bash ×2",
+);
+assert.equal(firstLine("\n\n  第一行  \n第二行"), "第一行");
+assert.equal(firstLine("   "), undefined);
+console.log("activity: ok");
+
+// 本地回显的用户消息：转录里出现了就撤掉，否则留着（否则追加的任务会从页面消失）。
+assert.deepEqual(settlePending(["还没有的"], []), ["还没有的"]);
+assert.deepEqual(settlePending(["已进转录"], [{ role: "user", content: "已进转录" }]), []);
+assert.deepEqual(settlePending(["已进转录"], [{ role: "assistant", content: "已进转录" }]), ["已进转录"]);
+assert.deepEqual(settlePending([" 带空白 "], [{ role: "user", content: "带空白\n" }]), []);
+assert.deepEqual(settlePending(["a", "b"], [{ role: "user", content: "b" }]), ["a"]);
+const unchanged = ["a"];
+assert.equal(settlePending(unchanged, []), unchanged);
+console.log("pendingMessages: ok");

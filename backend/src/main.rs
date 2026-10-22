@@ -233,6 +233,22 @@ async fn main() -> Result<()> {
         )
         .route("/agents/{id}/status", get(api::agent_status))
         .route("/agents/{id}/models", get(api::agent_models))
+        .route("/agents/{id}/auth", get(api::agent_auth))
+        .route("/agents/{id}/commands", get(api::agent_commands))
+        .route(
+            "/agents/{id}/mcp",
+            get(api::list_mcp)
+                .post(api::add_mcp)
+                .delete(api::remove_mcp),
+        )
+        .route(
+            "/agents/{id}/plugins",
+            get(api::list_plugins).post(api::plugin_action),
+        )
+        .route(
+            "/agents/{id}/mcp/logout",
+            axum::routing::post(api::logout_mcp),
+        )
         .route(
             "/agents/{id}/install",
             axum::routing::post(api::install_agent),
@@ -242,10 +258,20 @@ async fn main() -> Result<()> {
             get(api::get_agent_config).put(api::save_agent_config),
         )
         .route("/terminal/ws", get(terminal::ws_terminal))
-        .route("/workspaces", get(api::list_workspaces))
+        .route(
+            "/workspaces",
+            get(api::list_workspaces)
+                .post(api::create_workspace)
+                .delete(api::delete_workspace),
+        )
         .route(
             "/sessions",
             get(api::list_sessions).post(api::create_session),
+        )
+        .route("/sessions/search", get(api::search_sessions))
+        .route(
+            "/sessions/{id}/archive",
+            axum::routing::put(api::set_session_archived),
         )
         .route(
             "/sessions/{id}",
@@ -265,8 +291,20 @@ async fn main() -> Result<()> {
             axum::routing::post(api::create_pi_fork),
         )
         .route(
+            "/sessions/{id}/fork-from",
+            axum::routing::post(api::fork_session_at_entry),
+        )
+        .route(
             "/sessions/{id}/model",
             axum::routing::put(api::set_session_model),
+        )
+        .route(
+            "/sessions/{id}/tools",
+            axum::routing::put(api::set_session_tools),
+        )
+        .route(
+            "/sessions/{id}/thinking",
+            axum::routing::put(api::set_session_thinking),
         )
         .route(
             "/sessions/{id}/agent",
@@ -277,6 +315,10 @@ async fn main() -> Result<()> {
             "/sessions/{id}/messages",
             get(api::list_messages).post(api::send_message),
         )
+        .route(
+            "/sessions/{id}/image/{entry_id}/{index}",
+            get(api::session_image),
+        )
         .route("/sessions/{id}/activity", get(api::list_session_activity))
         .route(
             "/sessions/{id}/interrupt",
@@ -284,7 +326,18 @@ async fn main() -> Result<()> {
         )
         .route("/sessions/{id}/files", get(api::workspace_files))
         .route("/sessions/{id}/file/{*path}", get(api::workspace_file))
+        .route("/sessions/{id}/raw/{*path}", get(api::workspace_raw))
+        .route(
+            "/sessions/{id}/upload",
+            axum::routing::post(api::workspace_upload),
+        )
         .route("/sessions/{id}/diff", get(api::workspace_diff))
+        .route(
+            "/worktrees",
+            get(api::list_worktrees)
+                .post(api::add_worktree)
+                .delete(api::remove_worktree),
+        )
         .route("/sessions/{id}/events", get(api::ws_events))
         .route("/events", get(api::ws_install_events))
         .layer(middleware::from_fn_with_state(

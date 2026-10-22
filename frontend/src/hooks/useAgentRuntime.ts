@@ -48,11 +48,13 @@ export function useAgentRuntime() {
         .filter((agent) => agent.installed)
         .map((agent) => {
           const known = catalogById.get(agent.id);
+          // 目录接口不带 kind，Pi 专属功能都靠它判断，必须从已配置的 agent 带过来。
           return known
-            ? { ...known, installed: true }
+            ? { ...known, kind: agent.kind, installed: true }
             : {
                 id: agent.id,
                 name: agent.name,
+                kind: agent.kind,
                 description: agent.kind,
                 installed: true,
                 requirements: [],

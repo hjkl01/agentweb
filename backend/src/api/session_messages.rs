@@ -1,11 +1,14 @@
 use super::sessions::{load_session, load_session_record};
 use crate::agents::pi_transcript::{
-    native_session_file_exists, read_messages, NativeSessionFileLookup, TranscriptMessage,
+    native_session_file_exists, read_entry_image, read_messages, NativeSessionFileLookup,
+    TranscriptMessage,
 };
 use crate::state::AppState;
 use axum::{
+    body::Body,
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::Response,
     Json,
 };
 use chrono::{Duration, Utc};
@@ -16,7 +19,8 @@ const SESSION_LEASE_SECONDS: i64 = 30;
 // Bound concurrent filesystem scans and JSON parsing per backend process.
 // Requests wait asynchronously instead of creating an unbounded queue of
 // blocking transcript readers.
-static TRANSCRIPT_READ_LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+pub(super) static TRANSCRIPT_READ_LIMIT: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(4);
 
 async fn is_pi_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
     let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
@@ -108,11 +112,53 @@ pub async fn list_messages(
     Ok(Json(messages))
 }
 
+/// Serve an image content part embedded in a Pi tool result (for example a
+/// screenshot). Base64 bytes stay out of the message list; the client requests
+/// them lazily by transcript entry id and part index.
+pub async fn session_image(
+    Path((id, entry_id, index)): Path<(String, String, usize)>,
+    State(s): State<AppState>,
+) -> Result<Response, StatusCode> {
+    let session = load_session_record(&s.db, &id).await?;
+    let is_pi = is_pi_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let Some(native_session_id) = session.native_session_id.clone().filter(|_| is_pi) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+        tracing::error!(%error, "Pi transcript read limiter is unavailable");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+    let image = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        read_entry_image(&native_session_id, &entry_id, index)
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "Pi transcript image reader task failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let Some((mime, bytes)) = image else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CONTENT_DISPOSITION, "inline")
+        .header("x-content-type-options", "nosniff")
+        .header(header::CACHE_CONTROL, "private, max-age=3600")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 #[derive(Deserialize)]
 pub struct SendMessage {
     pub message: String,
 }
-
 #[cfg(test)]
 mod tests {
     use super::is_pi_agent;
@@ -186,7 +232,15 @@ pub async fn send_message(
     };
     tracing::info!(session_id = %id, agent_id = %session.agent_id, worker_id = %worker_id, message_bytes = v.message.len(), "accepted chat message");
     let title = if session.title.trim().is_empty() || session.title == "New Chat" {
-        let title = format!("Chat {}", now.format("%Y-%m-%d %H:%M"));
+        // Name the chat after its first user message, mirroring how Pi names
+        // sessions. Fall back to a timestamped name for whitespace-only input.
+        let derived = v.message.split_whitespace().collect::<Vec<_>>().join(" ");
+        let derived = derived.chars().take(60).collect::<String>();
+        let title = if derived.is_empty() {
+            format!("Chat {}", now.format("%Y-%m-%d %H:%M"))
+        } else {
+            derived
+        };
         if sqlx::query("UPDATE sessions SET title=?,updated_at=? WHERE id=? AND title='New Chat'")
             .bind(&title)
             .bind(&now_text)

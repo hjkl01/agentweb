@@ -34,10 +34,26 @@ pub fn capabilities(kind: &str) -> AgentCapabilities {
         },
     }
 }
-pub fn known_paths(kind: &str) -> Vec<PathBuf> {
-    let home = env::var_os("HOME")
+/// The home directory Agents actually run with. Introspection commands must use the same
+/// one, or `models.json` / `mcp.json` / `auth.json` would be read from the wrong place
+/// whenever it differs from the service home.
+pub fn agent_home() -> PathBuf {
+    env::var_os("AGENTWEB_AGENT_HOME")
+        .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/data"));
+        .unwrap_or_else(|| PathBuf::from("/data"))
+}
+
+/// Pi's agent directory, where `models.json`, `mcp.json` and `auth.json` live.
+pub fn pi_agent_dir() -> PathBuf {
+    if let Some(custom) = env::var_os("PI_CODING_AGENT_DIR") {
+        return PathBuf::from(custom);
+    }
+    agent_home().join(".pi/agent")
+}
+
+pub fn known_paths(kind: &str) -> Vec<PathBuf> {
+    let home = agent_home();
     match kind {
         "codex" => {
             let mut paths = Vec::new();
@@ -47,7 +63,10 @@ pub fn known_paths(kind: &str) -> Vec<PathBuf> {
             paths.push(home.join(".codex/config.toml"));
             paths
         }
-        "pi" => vec![home.join(".pi/agent/models.json")],
+        "pi" => vec![
+            pi_agent_dir().join("models.json"),
+            pi_agent_dir().join("mcp.json"),
+        ],
         "opencode" => vec![
             home.join(".config/opencode/opencode.json"),
             home.join(".config/opencode/opencode.jsonc"),

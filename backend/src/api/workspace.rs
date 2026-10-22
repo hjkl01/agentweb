@@ -1,8 +1,10 @@
 use super::sessions::get_session;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    body::{Body, Bytes},
+    extract::{Path, Query, State},
+    http::{header, StatusCode},
+    response::Response,
     Json,
 };
 use std::{
@@ -14,7 +16,6 @@ use tokio::{fs, io::AsyncReadExt, process::Command};
 const MAX_DIFF_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_DIFF_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 512 * 1024;
-const MAX_WORKSPACE_ENTRIES: usize = 20_000;
 const IGNORED_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -27,12 +28,6 @@ const IGNORED_DIRS: &[&str] = &[
     "coverage",
 ];
 
-fn ignored_dir(path: &FsPath) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| IGNORED_DIRS.contains(&name))
-        .unwrap_or(false)
-}
 fn ignored_relative(path: &str) -> bool {
     path.split('/').any(|part| IGNORED_DIRS.contains(&part))
 }
@@ -422,6 +417,151 @@ pub async fn workspace_file(
     ))
 }
 
+/// Largest inline-preview payload. Images/audio/PDF are streamed whole, so this
+/// is the boundary that keeps a huge asset from exhausting memory. Bump it if
+/// large PDFs become a real use case.
+/// ponytail: read fully into memory; stream/chunk if large files matter.
+const MAX_RAW_BYTES: u64 = 25 * 1024 * 1024;
+
+/// Allow-list of previewable binary types. Anything not listed returns 415;
+/// this is the security boundary for what the browser may render inline.
+fn raw_content_type(path: &str) -> Option<&'static str> {
+    let ext = FsPath::new(path)
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        _ => return None,
+    })
+}
+
+/// Stream a workspace file with its real content type for inline preview
+/// (`<img>`, `<audio>`, `<iframe>`). Mounted behind the same cookie auth and
+/// path/symlink validation as the JSON preview endpoint.
+pub async fn workspace_raw(
+    Path((id, path)): Path<(String, String)>,
+    State(s): State<AppState>,
+) -> Result<Response, StatusCode> {
+    let Some(content_type) = raw_content_type(&path) else {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    };
+    let session = get_session(Path(id), State(s)).await?.0;
+    let file = workspace_file_path(&session.workspace, &path).await?;
+    let metadata = fs::metadata(&file)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if !metadata.is_file() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if metadata.len() > MAX_RAW_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let bytes = fs::read(&file).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    if bytes.len() as u64 > MAX_RAW_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_DISPOSITION, "inline")
+        .header("x-content-type-options", "nosniff")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(bytes))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
+
+#[derive(serde::Deserialize)]
+pub struct UploadQuery {
+    pub dir: Option<String>,
+    pub name: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct UploadedFile {
+    pub path: String,
+    pub size: usize,
+}
+
+/// Accept exactly one normal path component: reject separators, `.`, `..`,
+/// absolute paths, and empty names so an upload cannot pick its own directory.
+fn upload_file_name(name: &str) -> Result<&str, StatusCode> {
+    let name = name.trim();
+    let mut components = FsPath::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) if name != "." && name != ".." => Ok(name),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// `POST /sessions/{id}/upload?name=file.png[&dir=sub]`
+///
+/// Writes the raw request body into the session workspace. The destination is
+/// staged in the same directory and renamed into place, so a failed or
+/// interrupted write never leaves a partial file. An existing destination is
+/// refused (409) rather than overwritten.
+pub async fn workspace_upload(
+    Path(id): Path<String>,
+    Query(query): Query<UploadQuery>,
+    State(s): State<AppState>,
+    body: Bytes,
+) -> Result<Json<UploadedFile>, StatusCode> {
+    let name = upload_file_name(&query.name)?.to_owned();
+    if body.len() > MAX_UPLOAD_BYTES {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+    let session = get_session(Path(id), State(s)).await?.0;
+    let root = workspace_root(&session.workspace).await?;
+    let dir = query.dir.as_deref().unwrap_or("").trim().trim_matches('/');
+    let parent = if dir.is_empty() || dir == "." {
+        root
+    } else {
+        let path = workspace_file_path(&session.workspace, dir).await?;
+        if !fs::metadata(&path)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?
+            .is_dir()
+        {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        path
+    };
+    let destination = parent.join(&name);
+    // Existing file, directory, or symlink: refuse rather than clobber.
+    if fs::symlink_metadata(&destination).await.is_ok() {
+        return Err(StatusCode::CONFLICT);
+    }
+    let temp = parent.join(format!(".{name}.upload-{}", uuid::Uuid::new_v4()));
+    if fs::write(&temp, &body).await.is_err() || fs::rename(&temp, &destination).await.is_err() {
+        let _ = fs::remove_file(&temp).await;
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let path = if dir.is_empty() || dir == "." {
+        name
+    } else {
+        format!("{dir}/{name}")
+    };
+    Ok(Json(UploadedFile {
+        path,
+        size: body.len(),
+    }))
+}
+
 fn append_diff(diff: &mut String, block: &str) -> bool {
     let remaining = MAX_DIFF_TOTAL_BYTES.saturating_sub(diff.len());
     if block.len() <= remaining {
@@ -685,5 +825,28 @@ mod workspace_file_safety_tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raw_preview_only_allows_listed_types() {
+        assert_eq!(raw_content_type("a/b/pic.PNG"), Some("image/png"));
+        assert_eq!(raw_content_type("clip.mp3"), Some("audio/mpeg"));
+        assert_eq!(raw_content_type("doc.pdf"), Some("application/pdf"));
+        assert_eq!(raw_content_type("archive.zip"), None);
+        assert_eq!(raw_content_type("script.html"), None);
+        assert_eq!(raw_content_type("noext"), None);
+    }
+
+    #[test]
+    fn upload_name_must_be_a_single_normal_component() {
+        assert_eq!(upload_file_name("  shot.png ").unwrap(), "shot.png");
+        assert_eq!(upload_file_name(".env").unwrap(), ".env");
+        for rejected in ["", "  ", ".", "..", "a/b", "../escape", "/etc/passwd"] {
+            assert_eq!(
+                upload_file_name(rejected).unwrap_err(),
+                StatusCode::BAD_REQUEST,
+                "{rejected:?} must be rejected"
+            );
+        }
     }
 }

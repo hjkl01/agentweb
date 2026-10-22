@@ -39,6 +39,18 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
     },
     [setSessions],
   );
+  /** Branches Pi's session at one user message, returning the message text for the editor. */
+  const forkFromEntry = useCallback(
+    async (sessionId: string, entryId: string) => {
+      const result = await api<{ session: Session; text?: string }>(
+        `/sessions/${sessionId}/fork-from`,
+        { method: "POST", body: JSON.stringify({ entry_id: entryId }) },
+      );
+      setSessions((items) => [result.session, ...items]);
+      return result;
+    },
+    [setSessions],
+  );
   const restartMissingSession = useCallback(
     async (sessionId: string) => {
       const session = await api<Session>(`/sessions/${sessionId}/restart`, {
@@ -64,6 +76,33 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
     },
     [setSessions],
   );
+  const setThinking = useCallback(
+    async (sessionId: string, thinkingLevel?: string) => {
+      const session = await api<Session>(`/sessions/${sessionId}/thinking`, {
+        method: "PUT",
+        body: JSON.stringify({ thinking_level: thinkingLevel || null }),
+      });
+      setSessions((items) =>
+        items.map((item) => (item.id === sessionId ? session : item)),
+      );
+      return session;
+    },
+    [setSessions],
+  );
+  const setTools = useCallback(
+    async (sessionId: string, toolPreset?: string) => {
+      const session = await api<Session>(`/sessions/${sessionId}/tools`, {
+        method: "PUT",
+        body: JSON.stringify({ tool_preset: toolPreset || null }),
+      });
+      setSessions((items) =>
+        items.map((item) => (item.id === sessionId ? session : item)),
+      );
+      return session;
+    },
+    [setSessions],
+  );
+
   const setAgent = useCallback(
     async (sessionId: string, agentId: string) => {
       const session = await api<Session>(`/sessions/${sessionId}/agent`, {
@@ -116,6 +155,19 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
     },
     [setSessions],
   );
+  const setArchived = useCallback(
+    async (sessionId: string, archived: boolean) => {
+      const session = await api<Session>(`/sessions/${sessionId}/archive`, {
+        method: "PUT",
+        body: JSON.stringify({ archived }),
+      });
+      setSessions((items) =>
+        items.map((item) => (item.id === sessionId ? session : item)),
+      );
+      return session;
+    },
+    [setSessions],
+  );
   const renameSession = useCallback(
     async (sessionId: string, title: string) => {
       const session = await api<Session>(`/sessions/${sessionId}/title`, {
@@ -150,6 +202,20 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
     },
     [setSessions],
   );
+  /** Deletes many sessions, keeping whichever the backend refuses (e.g. still running). */
+  const deleteSessions = useCallback(
+    async (sessionIds: string[]) => {
+      const results = await Promise.allSettled(
+        sessionIds.map((id) => api(`/sessions/${id}`, { method: "DELETE" })),
+      );
+      const removed = new Set(
+        sessionIds.filter((_, index) => results[index].status === "fulfilled"),
+      );
+      setSessions((items) => items.filter((item) => !removed.has(item.id)));
+      return sessionIds.filter((_, index) => !removed.has(sessionIds[index]));
+    },
+    [setSessions],
+  );
   const interrupt = useCallback(
     async (sessionId: string) => {
       const result = await api<{ status?: string }>(
@@ -172,13 +238,18 @@ export function useSessionActions({ setSessions, markStatusChanged }: Options) {
   return {
     createSession,
     createPiFork,
+    forkFromEntry,
     restartMissingSession,
     setModel,
+    setThinking,
+    setTools,
     setAgent,
     sendMessage,
     renameSession,
     togglePin,
+    setArchived,
     deleteSession,
+    deleteSessions,
     interrupt,
   };
 }

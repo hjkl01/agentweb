@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { api } from "../lib/api";
+import { settlePending } from "../lib/pendingMessages";
 import type { ActivityItem, ChatMessage, FileItem, Session } from "../types";
 import { useSessionActions } from "./useSessionActions";
 import { useSessionEvents } from "./useSessionEvents";
@@ -9,6 +11,8 @@ export function useSession(active?: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [stream, setStream] = useState("");
+  // 排队中或刚发出的用户消息：转录里出现之前一直由本地回显渲染（见 pendingMessages.ts）。
+  const [pendingUser, setPendingUser] = useState<string[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
@@ -112,19 +116,32 @@ export function useSession(active?: string) {
     setSessions,
   });
 
+  const echoPendingUser = useCallback((text: string) => {
+    // 队列里的消息出队时还会再调一次 sendChat，这里去重避免回显两条。
+    setPendingUser((items) =>
+      items.includes(text) ? items : [...items, text],
+    );
+  }, []);
+
+  // 服务端整表替换转录时，把已经进转录的回显清掉；流式增量（函数式更新）不动。
+  const setServerMessages: Dispatch<SetStateAction<ChatMessage[]>> = (next) => {
+    if (typeof next !== "function")
+      setPendingUser((items) => settlePending(items, next));
+    setMessages(next);
+  };
+
   const sendChat = useCallback(
     async (sessionId: string, message: string) => {
       const content = message.trim();
       if (!content || activeSessionRef.current !== sessionId) return;
-      setMessages((items) => [
-        ...items,
-        { id: crypto.randomUUID(), role: "user", content },
-      ]);
+      echoPendingUser(content);
       setActivity([]);
       setActivityOpen(false);
       try {
         await actions.sendMessage(sessionId, content);
       } catch (error) {
+        // 没发出去就别留着回显。
+        setPendingUser((items) => items.filter((item) => item !== content));
         if (activeSessionRef.current === sessionId) {
           setMessages((items) => [
             ...items,
@@ -138,14 +155,14 @@ export function useSession(active?: string) {
         throw error;
       }
     },
-    [actions.sendMessage],
+    [actions.sendMessage, echoPendingUser],
   );
 
   useSessionEvents({
     active,
     refreshSessions,
     refreshActiveSession,
-    setMessages,
+    setMessages: setServerMessages,
     setFiles,
     setStream,
     setActivity,
@@ -191,7 +208,9 @@ export function useSession(active?: string) {
     activity,
     activityOpen,
     workspaceRevision,
+    pendingUser,
     error,
+    echoPendingUser,
     setMessages,
     setFiles,
     setActivity,

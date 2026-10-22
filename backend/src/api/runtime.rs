@@ -497,5 +497,7 @@ pub(crate) async fn build_agent_config(
         fork_from_native_session_id: None,
         runtime_path,
         model: None,
+        thinking_level: None,
+        tool_preset: None,
     })
 }

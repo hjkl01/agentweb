@@ -397,6 +397,8 @@ pub async fn run_session(
     config.native_session_id = session.native_session_id.clone();
     config.fork_from_native_session_id = session.fork_from_native_session_id.clone();
     config.model = session.model.clone();
+    config.thinking_level = session.thinking_level.clone();
+    config.tool_preset = session.tool_preset.clone();
     let kind = config.id.clone();
     let message = expand_mentions(&message, &session.workspace).await;
     let adapter = agents.adapter(&kind).await;
@@ -658,7 +660,10 @@ mod tests {
             native_session_id: None,
             fork_from_native_session_id: None,
             model: None,
+            thinking_level: None,
+            tool_preset: None,
             is_pinned: false,
+            archived_at: None,
             workspace_available: true,
         };
         let events = EventBus::new(db.clone()).for_worker("w1".into());

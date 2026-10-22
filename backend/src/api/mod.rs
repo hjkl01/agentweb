@@ -3,6 +3,8 @@ mod agents;
 mod events_websocket;
 mod filesystem;
 mod health;
+mod mcp;
+mod plugins;
 mod runtime;
 mod scheduled_tasks;
 mod session_events;
@@ -10,12 +12,17 @@ mod session_messages;
 mod session_websocket;
 mod sessions;
 mod workspace;
+mod worktrees;
 
 pub use agent_config::{get_agent_config, save_agent_config};
-pub use agents::{agent_models, agent_status, create_agent, list_agents};
+pub use agents::{
+    agent_auth, agent_commands, agent_models, agent_status, create_agent, list_agents,
+};
 pub use events_websocket::ws_events as ws_install_events;
 pub use filesystem::tree as filesystem_tree;
 pub use health::health;
+pub use mcp::{add_mcp, list_mcp, logout_mcp, remove_mcp};
+pub use plugins::{list_plugins, plugin_action};
 pub(crate) use runtime::build_agent_config;
 pub use runtime::{get_runtime_settings, install_agent, update_runtime_settings};
 pub use scheduled_tasks::{
@@ -26,12 +33,16 @@ pub use scheduled_tasks::{
     update as update_scheduled_task,
 };
 pub use session_events::list_session_activity;
-pub use session_messages::{interrupt, list_messages, send_message};
+pub use session_messages::{interrupt, list_messages, send_message, session_image};
 pub use session_websocket::ws_events;
 pub(crate) use sessions::load_session;
 pub use sessions::{
-    create_pi_fork, create_session, delete_session, get_session, list_sessions, list_workspaces,
-    rename_session, restart_missing_session, set_session_agent, set_session_model, toggle_pin,
-    Session,
+    create_pi_fork, create_session, create_workspace, delete_session, delete_workspace,
+    fork_session_at_entry, get_session, list_sessions, list_workspaces, rename_session,
+    restart_missing_session, search_sessions, set_session_agent, set_session_archived,
+    set_session_model, set_session_thinking, set_session_tools, toggle_pin, Session,
 };
-pub use workspace::{workspace_diff, workspace_file, workspace_files};
+pub use workspace::{
+    workspace_diff, workspace_file, workspace_files, workspace_raw, workspace_upload,
+};
+pub use worktrees::{add_worktree, list_worktrees, remove_worktree};

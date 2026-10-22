@@ -6,15 +6,19 @@ pub mod config;
 pub mod definition;
 pub mod event_parser;
 pub mod generic;
+pub mod mcp;
 pub mod models;
 pub mod opencode;
 pub mod pi;
 pub mod pi_events;
+pub mod pi_rpc;
 pub mod pi_transcript;
+pub mod plugins;
 pub mod process;
 pub mod session;
 
 pub use adapter::{AgentAdapter, AgentConfig};
+#[cfg(test)]
 use anyhow::Result;
 use codex::CodexAdapter;
 use commands::ProcessKind;
@@ -57,6 +61,7 @@ impl AgentManager {
         adapter
     }
 
+    #[cfg(test)]
     pub async fn interrupt(&self, kind: &str, session_id: &str, execution_id: &str) -> Result<()> {
         // An execution token belongs to one adapter only. Broadcasting a
         // pre-start cancellation marker to every adapter would leak markers and

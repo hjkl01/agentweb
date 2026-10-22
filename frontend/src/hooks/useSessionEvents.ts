@@ -70,6 +70,7 @@ export function useSessionEvents(options: Options) {
             restoredMessages[index] = {
               ...restoredMessages[index],
               content: "",
+              parts: undefined,
             };
             break;
           }
@@ -289,6 +290,15 @@ function handleEvent(raw: string, active: string, options: Options) {
     );
     options.setActivityOpen(false);
     options.setWorkspaceRevision((value) => value + 1);
+    // Pi keeps the conversation in its native JSONL transcript. Re-read it so
+    // structured parts (thinking/tool calls/results) replace the flat stream.
+    // Non-Pi agents return an empty list here, so their streamed transcript is
+    // preserved instead of being cleared.
+    void api<ChatMessage[]>(`/sessions/${active}/messages`)
+      .then((messages) => {
+        if (messages.length) options.setMessages(messages);
+      })
+      .catch(console.error);
     options.refreshActiveSession(active).catch(console.error);
     options.refreshSessions().catch(console.error);
   }

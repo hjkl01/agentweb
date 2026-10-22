@@ -40,10 +40,6 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
 }
-.message-row,
-.activity-card {
-  width: min(100%, 900px);
-}
 .message-content {
   min-width: 0;
   max-width: calc(100% - 40px);
@@ -51,10 +47,6 @@ body {
 .composer-wrap {
   width: 100%;
   min-width: 0;
-}
-.composer {
-  width: min(100%, 900px);
-  margin: 0 auto;
 }
 .workspace {
   width: 100%;
@@ -121,6 +113,9 @@ body {
   }
   .top-actions select {
     max-width: 150px;
+  }
+  .top-actions .mobile-settings {
+    display: inline-flex;
   }
   .message-row,
   .activity-card {

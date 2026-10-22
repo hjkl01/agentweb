@@ -6,10 +6,15 @@ import {
   Check,
   Copy,
   GitBranch,
+  LoaderCircle,
+  Paperclip,
+  Quote,
   Send,
+  SlidersHorizontal,
   Square,
+  User,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type {
   ActivityItem,
@@ -17,13 +22,38 @@ import type {
   AgentModel,
   ChatMessage,
   Session,
+  UploadedFile,
 } from "../types";
+import { api } from "../lib/api";
+import { formatDuration, groupTranscript } from "../lib/format";
+import type { Preferences } from "../lib/preferences";
+import { ActivityGroup } from "./ActivitySteps";
 import { AgentActivity } from "./AgentActivity";
 import { MentionPicker } from "./MentionPicker";
 import { ModelSelector } from "./ModelSelector";
+import { ThinkingSelector } from "./ThinkingSelector";
+import { ToolPresetSelector } from "./ToolPresetSelector";
 import { AgentSelector } from "./AgentSelector";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { AssistantParts, CompactionMessage } from "./MessageParts";
 import { SessionExportButton } from "./SessionExportButton";
+import { SessionStats } from "./SessionStats";
+
+/** How many messages the transcript renders before "show earlier". */
+const MESSAGE_PAGE = 80;
+
+/** Model and elapsed time of one assistant turn. */
+function MessageMeta({ message }: { message: ChatMessage }) {
+  const duration = formatDuration(message.duration_ms);
+  if (!message.model && !duration) return null;
+  return (
+    <span className="message-meta">
+      {message.model}
+      {message.model && duration ? " · " : ""}
+      {duration}
+    </span>
+  );
+}
 
 function CopyMessageButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
@@ -63,17 +93,23 @@ type Props = {
   activityOpen: boolean;
   input: string;
   queuedCount: number;
+  pendingUser: string[];
+  preferences: Preferences;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   chatRef: RefObject<HTMLElement | null>;
   onInputChange: (value: string) => void;
   onAgentChange: (id: string) => void;
   onModelChange: (model?: string) => void;
+  onThinkingChange: (level?: string) => void;
+  onToolsChange: (preset?: string) => void;
   onSend: () => void;
   onToggleActivity: () => void;
   onStop: () => void;
   onRestartMissingSession: () => void;
   onForkSession: () => void;
+  onForkFromMessage: (entryId: string) => void;
   onNewChat: () => void;
+  onOpenSettings: () => void;
   onAutoResize: () => void;
 };
 export function ChatPanel({
@@ -89,26 +125,95 @@ export function ChatPanel({
   activityOpen,
   input,
   queuedCount,
+  pendingUser,
+  preferences,
   textareaRef,
   chatRef,
   onInputChange,
   onAgentChange,
   onModelChange,
+  onThinkingChange,
+  onToolsChange,
   onSend,
   onToggleActivity,
   onStop,
   onRestartMissingSession,
   onForkSession,
+  onForkFromMessage,
   onNewChat,
+  onOpenSettings,
   onAutoResize,
 }: Props) {
   const running = current?.status === "running";
+  // Pi can branch at a user message only while the session is idle and present on disk.
+  const canFork =
+    currentAgent?.kind === "pi" &&
+    !!current?.native_session_id &&
+    !running &&
+    current?.status !== "missing";
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepth = useRef(0);
   const mentionQuery = useMemo(() => {
     const match = input.match(/(?:^|\s)@(?:\{([^}]*)\}|([^\s]*))$/);
     return match ? (match[1] ?? match[2] ?? "") : "";
   }, [input]);
   const shouldMention = !!active && /(?:^|\s)@(?:\{[^}]*|[^\s]*)$/.test(input);
+  // 选中转录文字后，可以在输入框里引用它，不用手动复制粘贴。
+  const [quote, setQuote] = useState<string>();
+  // 上千条消息的会话一次性布局会卡住主线程，按页向上展开。
+  const [messageWindow, setMessageWindow] = useState(MESSAGE_PAGE);
+  useEffect(() => {
+    setMessageWindow(MESSAGE_PAGE);
+  }, [current?.id]);
+  const visibleMessages =
+    messages.length > messageWindow
+      ? messages.slice(messages.length - messageWindow)
+      : messages;
+  const hiddenCount = messages.length - visibleMessages.length;
+  // 同一次工具循环的消息合成一段「执行过程」，避免一墙卡片。
+  const entries = groupTranscript(visibleMessages);
+  useEffect(() => {
+    if (!preferences.quoteSelection) {
+      setQuote(undefined);
+      return;
+    }
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const text =
+        selection && !selection.isCollapsed ? selection.toString().trim() : "";
+      const node = anchor instanceof Element ? anchor : anchor?.parentElement;
+      setQuote(
+        text &&
+          node &&
+          !node.closest("textarea, input") &&
+          chatRef.current?.contains(node)
+          ? text
+          : undefined,
+      );
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () =>
+      document.removeEventListener("selectionchange", onSelectionChange);
+  }, [chatRef, preferences.quoteSelection]);
+  const quoteSelection = () => {
+    if (!quote) return;
+    onInputChange(
+      `${quote
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}\n\n${input}`,
+    );
+    window.getSelection()?.removeAllRanges();
+    setQuote(undefined);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      onAutoResize();
+    });
+  };
   const chooseMention = (path: string) => {
     const match = input.match(/(?:^|\s)@(?:\{[^}]*)?[^\s]*$/);
     if (!match) return;
@@ -121,8 +226,66 @@ export function ChatPanel({
     setMentionOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
+  const appendMention = (path: string) => {
+    const token = path.includes(" ") ? `@{${path}}` : `@${path}`;
+    onInputChange(`${input.replace(/\s*$/, " ")}${token} `);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+  const uploadFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (!active || list.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of list) {
+        const uploaded = await api<UploadedFile>(
+          `/sessions/${active}/upload?name=${encodeURIComponent(file.name)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": file.type || "application/octet-stream",
+            },
+            body: file,
+          },
+        );
+        appendMention(uploaded.path);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "文件上传失败");
+    } finally {
+      setUploading(false);
+    }
+  };
   return (
-    <main className="main-panel">
+    <main
+      className="main-panel"
+      onDragEnter={(event) => {
+        if (!active || !event.dataTransfer.types.includes("Files")) return;
+        dragDepth.current += 1;
+        setDragActive(true);
+      }}
+      onDragOver={(event) => {
+        if (active && event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+        }
+      }}
+      onDragLeave={() => {
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) setDragActive(false);
+      }}
+      onDrop={(event) => {
+        dragDepth.current = 0;
+        setDragActive(false);
+        if (!active) return;
+        event.preventDefault();
+        void uploadFiles(event.dataTransfer.files);
+      }}
+    >
+      {dragActive && (
+        <div className="drop-overlay">
+          <Paperclip size={22} />
+          <span>松开以上传到工作目录并插入 @ 引用</span>
+        </div>
+      )}
       <header className="topbar">
         <div className="chat-title">
           <strong>{current?.title || "Agent Web"}</strong>
@@ -134,6 +297,17 @@ export function ChatPanel({
         </div>
         {active && (
           <div className="top-actions">
+            {/* 窄屏下侧栏整个隐藏，设置只能从这里进。 */}
+            <button
+              type="button"
+              className="mobile-settings"
+              onClick={onOpenSettings}
+              title="设置"
+              aria-label="设置"
+            >
+              <SlidersHorizontal size={16} />
+            </button>
+            <SessionStats messages={messages} />
             <AgentSelector
               value={current?.agent_id}
               agents={agents}
@@ -147,24 +321,35 @@ export function ChatPanel({
               disabled={running}
               onChange={onModelChange}
             />
+            {currentAgent?.kind === "pi" && (
+              <ThinkingSelector
+                value={current?.thinking_level}
+                disabled={running}
+                onChange={onThinkingChange}
+              />
+            )}
+            {currentAgent?.kind === "pi" && (
+              <ToolPresetSelector
+                value={current?.tool_preset || undefined}
+                disabled={running}
+                onChange={onToolsChange}
+              />
+            )}
             <SessionExportButton
               session={current}
               messages={messages}
               activity={activity}
             />
-            {currentAgent?.kind === "pi" &&
-              current?.native_session_id &&
-              !running &&
-              current.status !== "missing" && (
-                <button
-                  type="button"
-                  className="message-action"
-                  onClick={onForkSession}
-                  title="从当前 Pi 会话创建独立分支"
-                >
-                  <GitBranch size={14} /> <span>创建分支</span>
-                </button>
-              )}
+            {canFork && (
+              <button
+                type="button"
+                className="message-action"
+                onClick={onForkSession}
+                title="从当前 Pi 会话创建独立分支"
+              >
+                <GitBranch size={14} /> <span>创建分支</span>
+              </button>
+            )}
           </div>
         )}
       </header>
@@ -221,38 +406,98 @@ export function ChatPanel({
             </p>
           </div>
         )}
-        <AgentActivity
-          items={activity}
-          open={activityOpen}
-          onToggle={onToggleActivity}
-        />
+        {active && (running || !messages.length) && (
+          <AgentActivity
+            items={activity}
+            open={activityOpen}
+            onToggle={onToggleActivity}
+          />
+        )}
         {messages.length > 0 && <div className="chat-content-divider" />}
-        {messages.map((message) => (
-          <div key={message.id} className={`message-row ${message.role}`}>
-            <div className="avatar">
-              {message.role === "user" ? (
-                "U"
-              ) : message.role === "error" ? (
-                "!"
-              ) : (
-                <Bot size={15} />
-              )}
-            </div>
-            <div className="message-content">
-              <div className="message-heading">
-                <div className="message-role">
-                  {message.role === "user"
-                    ? "You"
-                    : message.role === "error"
-                      ? "Error"
-                      : currentAgent?.name || "Agent"}
-                </div>
-                <CopyMessageButton content={message.content} />
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            className="load-earlier"
+            onClick={() => setMessageWindow((value) => value + MESSAGE_PAGE)}
+          >
+            显示更早的 {Math.min(MESSAGE_PAGE, hiddenCount)} 条（共{" "}
+            {messages.length} 条）
+          </button>
+        )}
+        {entries.map((entry, index) => {
+          if (entry.kind === "activity")
+            return (
+              <ActivityGroup
+                key={entry.key}
+                rows={entry.rows}
+                sessionId={current?.id}
+                thinkingExpanded={preferences.thinkingExpanded}
+                // 只有最新一段、且最终回答还没出来时才默认展开；回答一到就收起。
+                defaultOpen={index === entries.length - 1 && !stream}
+              />
+            );
+          const message = entry.message;
+          if (message.role === "compaction") {
+            return (
+              <CompactionMessage key={message.id} content={message.content} />
+            );
+          }
+          return (
+            <div
+              key={message.id}
+              className={`message-row ${message.role}${message.stop_reason === "error" ? " failed" : ""}`}
+            >
+              <div className="avatar">
+                {message.role === "user" ? (
+                  "U"
+                ) : message.role === "error" ? (
+                  "!"
+                ) : (
+                  <Bot size={15} />
+                )}
               </div>
-              <MarkdownMessage content={message.content} />
+              <div className="message-content">
+                <div className="message-heading">
+                  <div className="message-role">
+                    {message.role === "user"
+                      ? "You"
+                      : message.role === "error"
+                        ? "Error"
+                        : currentAgent?.name || "Agent"}
+                  </div>
+                  <MessageMeta message={message} />
+                  <CopyMessageButton content={message.content} />
+                  {message.role === "user" && canFork && (
+                    <button
+                      type="button"
+                      className="message-action"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "从此消息创建分支？当前会话不受影响，这条消息会放回输入框等待修改后重发。",
+                          )
+                        ) {
+                          onForkFromMessage(message.id);
+                        }
+                      }}
+                      title="从这条消息创建独立分支"
+                    >
+                      <GitBranch size={13} /> <span>从此分叉</span>
+                    </button>
+                  )}
+                </div>
+                {message.role === "assistant" ? (
+                  <AssistantParts
+                    message={message}
+                    thinkingExpanded={preferences.thinkingExpanded}
+                  />
+                ) : (
+                  <MarkdownMessage content={message.content} />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {stream && (
           <div className="message-row assistant">
             <div className="avatar">
@@ -268,6 +513,19 @@ export function ChatPanel({
             </div>
           </div>
         )}
+        {pendingUser.map((text) => (
+          <div className="message-row user pending" key={text}>
+            <div className="avatar">
+              <User size={15} />
+            </div>
+            <div className="message-content">
+              <div className="message-role">
+                <span className="pending-hint">发送中…</span> You
+              </div>
+              <MarkdownMessage content={text} />
+            </div>
+          </div>
+        ))}
       </section>
       <div className="composer-wrap">
         <div className="composer-container">
@@ -281,6 +539,41 @@ export function ChatPanel({
             />
           )}
           <div className="composer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                void uploadFiles(event.target.files ?? []);
+                event.target.value = "";
+              }}
+            />
+            {quote && (
+              <button
+                type="button"
+                className="attach-button"
+                onClick={quoteSelection}
+                title={`引用选中的内容：${quote.slice(0, 80)}`}
+                aria-label="引用选区"
+              >
+                <Quote size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="attach-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!active || uploading}
+              title="上传文件到工作目录"
+              aria-label="上传文件"
+            >
+              {uploading ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <Paperclip size={16} />
+              )}
+            </button>
             <textarea
               ref={textareaRef}
               value={input}
@@ -299,7 +592,10 @@ export function ChatPanel({
                 if (
                   event.key === "Enter" &&
                   !event.shiftKey &&
-                  !shouldMention
+                  !shouldMention &&
+                  (preferences.sendMode !== "ctrlEnter" ||
+                    event.ctrlKey ||
+                    event.metaKey)
                 ) {
                   event.preventDefault();
                   onSend();
@@ -333,8 +629,10 @@ export function ChatPanel({
           </div>
         </div>
         <div className="composer-hint">
-          <AtSign size={12} /> @ 选择文件/文件夹 · Enter 发送 · Shift + Enter
-          换行
+          <AtSign size={12} /> @ 选择文件/文件夹 ·{" "}
+          {preferences.sendMode === "ctrlEnter"
+            ? "Ctrl / Cmd + Enter 发送 · Enter 换行"
+            : "Enter 发送 · Shift + Enter 换行"}
           {queuedCount > 0 &&
             ` · 已排队 ${queuedCount} 条，当前回复结束后自动发送`}
         </div>

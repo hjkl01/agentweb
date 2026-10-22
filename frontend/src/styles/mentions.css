@@ -1,6 +1,6 @@
 .composer-container {
   position: relative;
-  width: min(100%, 900px);
+  width: min(100%, var(--chat-content-width));
   margin: 0 auto;
 }
 .mention-picker {

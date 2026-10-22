@@ -101,7 +101,7 @@ export function AgentCatalog({
       <div className="agent-panel" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <div>
-            <h3>Agents & runtimes</h3>
+            <h3>Agent 与运行时</h3>
             <p>Node.js 和 Agent 都按需安装，安装结果保存在 /data。</p>
           </div>
           <button className="icon-button" onClick={onClose}>
@@ -114,7 +114,7 @@ export function AgentCatalog({
               <strong>Node.js</strong>
               <span>已安装版本</span>
             </div>
-            <span>{node?.active || "not installed"}</span>
+            <span>{node?.active || "未安装"}</span>
           </div>
           <div className="runtime-row">
             <input
@@ -213,7 +213,7 @@ export function AgentCatalog({
                 <div className="agent-name">
                   {agent.name} {agent.installed && <CheckCircle2 size={14} />}
                 </div>
-                <p>{agent.description || "No description"}</p>
+                <p>{agent.description || "暂无说明"}</p>
                 {agent.install_command && <code>{agent.install_command}</code>}
               </div>
               {agent.installed ? (

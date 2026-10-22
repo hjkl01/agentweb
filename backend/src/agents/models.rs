@@ -12,39 +12,56 @@ pub struct AgentModel {
     pub source: String,
 }
 
-fn command_parts(command: &str) -> Result<(String, Vec<String>)> {
-    let mut parts = command.split_whitespace();
-    let program = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("empty agent command"))?
-        .to_owned();
-    Ok((program, parts.map(str::to_owned).collect()))
-}
-async fn command_output(config: &AgentConfig, extra: &[&str]) -> Result<String> {
-    let (program, base) = command_parts(&config.command)?;
+/// Runs an Agent CLI subcommand. `timeout` bounds long introspection commands such as
+/// `pi mcp list`, which connects to every configured server.
+pub(super) async fn run_agent_command(
+    config: &AgentConfig,
+    extra: &[&str],
+    timeout: Option<std::time::Duration>,
+) -> Result<(bool, String, String)> {
+    let (program, base) = super::commands::command_parts(&config.command)?;
     let mut command = Command::new(program);
     command
         .args(base)
         .args(extra)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     if let Some(dir) = &config.working_directory {
         command.current_dir(dir);
     }
-    if let Some(runtime) = &config.runtime_path {
-        command.env(
-            "PATH",
-            format!("{}:{}", runtime, env::var("PATH").unwrap_or_default()),
-        );
-    }
-    let output = command.output().await?;
-    if !output.status.success() {
+    // Introspection must see the same home, and therefore the same Agent configuration,
+    // as a real run (see `commands::build`).
+    super::commands::apply_agent_environment(config, &mut command, None);
+    let output = match timeout {
+        Some(limit) => tokio::time::timeout(limit, command.output())
+            .await
+            .map_err(|_| anyhow::anyhow!("agent command timed out after {limit:?}"))??,
+        None => command.output().await?,
+    };
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
+async fn command_output_status(
+    config: &AgentConfig,
+    extra: &[&str],
+) -> Result<(bool, String, String)> {
+    run_agent_command(config, extra, None).await
+}
+
+async fn command_output(config: &AgentConfig, extra: &[&str]) -> Result<String> {
+    let (success, stdout, stderr) = command_output_status(config, extra).await?;
+    if !success {
         return Err(anyhow::anyhow!(
             "model discovery command failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            stderr.trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(stdout)
 }
 
 fn clean_cli_line(line: &str) -> String {
@@ -110,13 +127,7 @@ fn parse_pi_models(output: &str) -> Vec<AgentModel> {
 }
 
 fn pi_config_paths() -> Vec<PathBuf> {
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/data"));
-    let agent_dir = env::var_os("PI_CODING_AGENT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".pi/agent"));
-    vec![agent_dir.join("models.json")]
+    vec![super::config::pi_agent_dir().join("models.json")]
 }
 
 fn strip_jsonc(text: &str) -> String {
@@ -292,6 +303,77 @@ fn codex_config_models() -> Vec<AgentModel> {
     result
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderAuth {
+    pub provider: String,
+    pub status: String,
+    pub auth_type: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PiAuthReport {
+    status: Option<String>,
+    #[serde(rename = "authType")]
+    auth_type: Option<String>,
+    reason: Option<String>,
+}
+
+/// CLI identifiers are passed as a separate argv entry, so this only guards against
+/// a value that Pi would interpret as another flag.
+pub fn valid_cli_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && !value.starts_with('-')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+}
+
+fn parse_auth_report(provider: &str, text: &str) -> Result<ProviderAuth> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(anyhow::anyhow!("credential check produced no output"));
+    }
+    if let Ok(report) = serde_json::from_str::<PiAuthReport>(text) {
+        return Ok(ProviderAuth {
+            provider: provider.to_owned(),
+            status: report.status.unwrap_or_else(|| "unknown".into()),
+            auth_type: report.auth_type,
+            reason: report.reason,
+        });
+    }
+    // Older builds print a bare status word.
+    Ok(ProviderAuth {
+        provider: provider.to_owned(),
+        status: text.lines().next().unwrap_or("unknown").trim().to_owned(),
+        auth_type: None,
+        reason: None,
+    })
+}
+
+pub async fn check_auth(config: &AgentConfig, provider: &str) -> Result<ProviderAuth> {
+    // `pi auth check` exits non-zero for not_ready/invalid but still reports JSON on stdout.
+    let (success, stdout, stderr) = command_output_status(
+        config,
+        &[
+            "auth",
+            "check",
+            "--provider",
+            provider,
+            "--json",
+            "--no-refresh",
+        ],
+    )
+    .await?;
+    parse_auth_report(provider, &stdout).map_err(|error| {
+        anyhow::anyhow!(
+            "credential check failed (success={success}): {error}; {}",
+            stderr.trim()
+        )
+    })
+}
+
 pub async fn discover(kind: &str, config: &AgentConfig) -> Result<Vec<AgentModel>> {
     match kind {
         "codex" => Ok(codex_config_models()),
@@ -304,5 +386,50 @@ pub async fn discover(kind: &str, config: &AgentConfig) -> Result<Vec<AgentModel
             Ok(merge_models(configured, discovered))
         }
         _ => Ok(Vec::new()),
+    }
+}
+
+#[cfg(test)]
+mod auth_report_tests {
+    use super::*;
+
+    #[test]
+    fn parses_both_pi_auth_report_shapes() {
+        let ready = parse_auth_report(
+            "anthropic",
+            "{\"status\":\"ready\",\"provider\":\"anthropic\",\"authType\":\"api_key\"}",
+        )
+        .unwrap();
+        assert_eq!(ready.status, "ready");
+        assert_eq!(ready.auth_type.as_deref(), Some("api_key"));
+        let missing = parse_auth_report(
+            "openai",
+            "{\"status\":\"not_ready\",\"provider\":\"openai\",\"reason\":\"credentials_not_configured\"}",
+        )
+        .unwrap();
+        assert_eq!(missing.status, "not_ready");
+        assert_eq!(
+            missing.reason.as_deref(),
+            Some("credentials_not_configured")
+        );
+        let bare = parse_auth_report("openai", "ready\n").unwrap();
+        assert_eq!(bare.status, "ready");
+        assert!(parse_auth_report("openai", "  ").is_err());
+    }
+
+    #[test]
+    fn rejects_tokens_that_could_be_flags() {
+        assert!(valid_cli_token("anthropic"));
+        assert!(valid_cli_token("zai-coding-cn"));
+        for rejected in [
+            "",
+            "-json",
+            "--provider",
+            "openai; rm -rf /",
+            "a b",
+            "ünicode",
+        ] {
+            assert!(!valid_cli_token(rejected), "{rejected:?}");
+        }
     }
 }

@@ -6,10 +6,11 @@ import { ChatPanel } from "./components/ChatPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { AgentCatalog } from "./components/AgentCatalog";
-import { AgentConfigDialog } from "./components/AgentConfigDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { ChatSelectionDialog } from "./components/ChatSelectionDialog";
 import { UserPage } from "./components/UserPage";
 import { ScheduledTasksPanel } from "./components/ScheduledTasksPanel";
+import { useCompletionSound, usePreferences } from "./hooks/usePreferences";
 import type { Agent } from "./types";
 import "./styles/account.css";
 type Props = {
@@ -21,6 +22,17 @@ export function App({ sessionId, navigate }: Props) {
   const [configAgent, setConfigAgent] = useState<Agent>();
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [scheduledTasksOpen, setScheduledTasksOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { preferences, update, testSound } = usePreferences();
+  const runningIds = useMemo(
+    () =>
+      c.session.sessions
+        .filter((session) => session.status === "running")
+        .map((session) => session.id)
+        .join(","),
+    [c.session.sessions],
+  );
+  useCompletionSound(preferences.completionSound, runningIds);
   const activityVersion = useMemo(
     () =>
       c.session.activity
@@ -34,7 +46,7 @@ export function App({ sessionId, navigate }: Props) {
   });
   const openNewChat = () => {
     // Workspace selection is mandatory even when default Agent/model settings exist.
-    c.setNewChatOpen(true);
+    c.newChatInWorkspace();
   };
   return (
     <div
@@ -68,13 +80,17 @@ export function App({ sessionId, navigate }: Props) {
         }
         onRenameSession={c.renameSession}
         onTogglePin={c.togglePin}
+        onToggleArchive={c.toggleArchive}
         onDeleteSession={c.deleteSession}
+        onDeleteSessions={c.deleteSessions}
+        onNewChatInWorkspace={c.newChatInWorkspace}
         onOpenCatalog={() => c.setCatalogOpen(true)}
         onOpenAccount={() => c.setAccountOpen(true)}
         onLogout={c.logout}
         onHome={() => navigate("/")}
         onOpenTerminal={() => setTerminalOpen(true)}
         onOpenScheduledTasks={() => setScheduledTasksOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       {terminalOpen ? (
         <TerminalPanel
@@ -95,17 +111,23 @@ export function App({ sessionId, navigate }: Props) {
           activityOpen={c.session.activityOpen}
           input={c.input}
           queuedCount={c.queuedMessages.length}
+          pendingUser={c.session.pendingUser}
+          preferences={preferences}
           textareaRef={c.textareaRef}
           chatRef={c.chatRef}
           onInputChange={c.setInput}
           onAgentChange={c.changeAgent}
           onModelChange={c.changeModel}
+          onThinkingChange={c.changeThinking}
+          onToolsChange={c.changeTools}
           onSend={c.send}
           onToggleActivity={() => c.session.setActivityOpen((v) => !v)}
           onStop={c.stop}
           onRestartMissingSession={c.restartMissingSession}
           onForkSession={c.forkSession}
+          onForkFromMessage={c.forkFromMessage}
           onNewChat={openNewChat}
+          onOpenSettings={() => setSettingsOpen(true)}
           onAutoResize={c.autoResize}
         />
       )}
@@ -121,6 +143,7 @@ export function App({ sessionId, navigate }: Props) {
         selectedFile={c.workspace.selectedFile}
         selectedLine={c.focusLine}
         diff={c.workspace.diff}
+        filesError={c.workspace.error}
         tab={c.workspace.tab}
         onFilterChange={c.workspace.setFilter}
         onSelectTab={c.workspace.selectTab}
@@ -131,6 +154,19 @@ export function App({ sessionId, navigate }: Props) {
           c.setFocusLine(undefined);
         }}
       />
+      <SettingsDialog
+        open={settingsOpen}
+        agents={c.runtime.agents}
+        agent={configAgent}
+        workspace={c.current?.workspace}
+        preferences={preferences}
+        onUpdate={update}
+        onTestSound={testSound}
+        onClose={() => {
+          setSettingsOpen(false);
+          setConfigAgent(undefined);
+        }}
+      />
       <ChatSelectionDialog
         open={c.newChatOpen}
         agents={c.runtime.agents}
@@ -138,6 +174,7 @@ export function App({ sessionId, navigate }: Props) {
         onCreate={c.createChat}
         defaultAgentId={c.runtime.defaultAgentId}
         defaultModel={c.runtime.defaultModel}
+        defaultWorkspace={c.newChatWorkspace}
         onDefaultChange={c.runtime.saveDefaults}
         onManageAgents={() => {
           c.setNewChatOpen(false);
@@ -161,12 +198,10 @@ export function App({ sessionId, navigate }: Props) {
         onInstallNode={c.installation.installNode}
         onInstallAgent={c.installation.installAgent}
         onInstallCustomAgent={c.installation.installCustomAgent}
-        onConfigureAgent={setConfigAgent}
-      />
-      <AgentConfigDialog
-        open={Boolean(configAgent)}
-        agent={configAgent}
-        onClose={() => setConfigAgent(undefined)}
+        onConfigureAgent={(agent) => {
+          setConfigAgent(agent);
+          setSettingsOpen(true);
+        }}
       />
       <UserPage
         open={c.accountOpen}

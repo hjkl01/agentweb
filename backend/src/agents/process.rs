@@ -342,6 +342,7 @@ impl ProcessAdapter {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub async fn run(
         &self,
         kind: ProcessKind,
@@ -621,6 +622,7 @@ impl ProcessAdapter {
     fn wrap_process_group(command: Command) -> Command {
         command
     }
+    #[cfg(test)]
     pub async fn interrupt_process(&self, session_id: &str) -> Result<()> {
         self.interrupt_execution(session_id, session_id).await
     }
@@ -690,6 +692,14 @@ pub use super::session::run_session;
 mod tests {
     use super::ProcessAdapter;
     use std::sync::Arc;
+
+    /// `commands::build` 拒绝在没有显式工作目录时启动进程，所以生命周期用例先造一个临时目录。
+    fn test_workspace() -> String {
+        let dir =
+            std::env::temp_dir().join(format!("agentweb-process-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp workspace should be creatable");
+        dir.to_string_lossy().into_owned()
+    }
 
     #[test]
     fn detects_explicit_missing_native_session_errors_only() {
@@ -762,10 +772,12 @@ mod tests {
         let config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
 
@@ -863,10 +875,12 @@ mod tests {
         let config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
 
@@ -950,10 +964,12 @@ mod tests {
         let config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
 
@@ -1019,10 +1035,12 @@ mod tests {
         let next_config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
         let next_result = timeout(
@@ -1067,13 +1085,15 @@ mod tests {
             .unwrap();
         let events = EventBus::new(db);
         let adapter = Arc::new(ProcessAdapter::new());
-        let config = super::super::adapter::AgentConfig {
+        let config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
 
@@ -1187,10 +1207,12 @@ mod tests {
         let config = AgentConfig {
             id: "test".into(),
             command: "sleep".into(),
-            working_directory: None,
+            working_directory: Some(test_workspace()),
             native_session_id: None,
             fork_from_native_session_id: None,
             runtime_path: None,
+            thinking_level: None,
+            tool_preset: None,
             model: None,
         };
 

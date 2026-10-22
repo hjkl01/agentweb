@@ -41,7 +41,7 @@ dev-frontend: ## Start Vite frontend development server
 build: install ## Build frontend and backend into a standalone binary in the project root
 	cd frontend && npm run build
 	cd backend && cargo build --release
-	@cp $(RELEASE_BINARY) ./agentweb
+	@cp $(RELEASE_BINARY) $(RELEASE_BINARY).new && mv -f $(RELEASE_BINARY).new ./agentweb	# 直接覆盖运行中的二进制会 ETXTBSY
 	@echo "构建完成：./agentweb（前端已嵌入二进制）"
 
 release: build ## Build the optimized standalone binary (alias of build)
@@ -53,9 +53,11 @@ start: ## Start the packaged app from ./agentweb
 check: ## Run Rust checks and frontend build checks
 	cd backend && cargo check
 	cd frontend && npm run build
+	./frontend/scripts/check-names.sh
 
-test: ## Run Rust tests
+test: ## Run Rust tests and frontend unit checks
 	cd backend && cargo test
+	cd frontend && rm -rf .tmp-test && ./node_modules/.bin/tsc src/lib/format.ts src/lib/sessionFamily.ts src/lib/preferences.ts src/lib/sessionGroups.ts src/lib/pendingMessages.ts --outDir .tmp-test --module esnext --target esnext --moduleResolution bundler && node scripts/check-frontend.mjs; status=$$?; rm -rf .tmp-test; exit $$status
 
 fmt: ## Format Rust and frontend code
 	cd backend && cargo fmt

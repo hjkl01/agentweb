@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { CodePreview } from "./CodePreview";
 import { DiffViewer } from "./DiffViewer";
 import { FileTree } from "./FileTree";
+import { RichPreview, previewKind } from "./RichPreview";
 import type { FileItem, Session, WorkspaceDiff, WorkspaceFile } from "../types";
 
 type Props = {
@@ -22,6 +23,7 @@ type Props = {
   selectedFile?: WorkspaceFile;
   selectedLine?: number;
   diff?: WorkspaceDiff;
+  filesError?: string;
   tab: "files" | "diff";
   onFilterChange: (value: string) => void;
   onSelectTab: (tab: "files" | "diff") => void;
@@ -50,6 +52,7 @@ function PreviewNotice({ file }: { file: WorkspaceFile }) {
 function Preview({
   file,
   line,
+  sessionId,
   onClose,
   onRetry,
   maximized,
@@ -57,12 +60,14 @@ function Preview({
 }: {
   file: WorkspaceFile;
   line?: number;
+  sessionId: string;
   onClose: () => void;
   onRetry: () => void;
   maximized: boolean;
   onToggleMaximize: () => void;
 }) {
   const unavailable = file.binary || file.truncated;
+  const kind = previewKind(file.path);
   return (
     <div className="preview">
       <div className="preview-head">
@@ -103,8 +108,12 @@ function Preview({
         </div>
       ) : (
         <>
-          <PreviewNotice file={file} />
-          {!unavailable && <CodePreview file={file} focusLine={line} />}
+          {!kind && <PreviewNotice file={file} />}
+          {kind ? (
+            <RichPreview sessionId={sessionId} file={file} kind={kind} />
+          ) : (
+            !unavailable && <CodePreview file={file} focusLine={line} />
+          )}
         </>
       )}
     </div>
@@ -118,6 +127,7 @@ export function WorkspacePanel({
   selectedFile,
   selectedLine,
   diff,
+  filesError,
   tab,
   onFilterChange,
   onSelectTab,
@@ -179,6 +189,10 @@ export function WorkspacePanel({
     }
   };
 
+  // `selectedFile?.path === activePath` 在回调里不会收窄 selectedFile，先绑一个局部变量。
+  const activeFile =
+    selectedFile?.path === activePath ? selectedFile : undefined;
+
   return (
     <aside className={`workspace${maximized ? " preview-maximized" : ""}`}>
       <div className="workspace-head">
@@ -205,6 +219,12 @@ export function WorkspacePanel({
           {diff?.truncated && <span className="tab-warning">!</span>}
         </button>
       </div>
+      {filesError && (
+        <div className="workspace-error" role="alert">
+          <AlertTriangle size={14} />
+          <span>{filesError}</span>
+        </div>
+      )}
       {tab === "files" && (
         <>
           <div className="file-search">
@@ -252,14 +272,15 @@ export function WorkspacePanel({
               </div>
             ))}
           </div>
-          {selectedFile?.path === activePath ? (
+          {activeFile && current ? (
             <Preview
-              file={selectedFile}
+              file={activeFile}
               line={selectedLine}
-              onClose={() => closeTab(selectedFile.path)}
+              sessionId={current.id}
+              onClose={() => closeTab(activeFile.path)}
               onRetry={() => {
                 onCloseFile();
-                openFile(selectedFile.path);
+                openFile(activeFile.path);
               }}
               maximized={maximized}
               onToggleMaximize={() => setMaximized((value) => !value)}

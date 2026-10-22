@@ -185,18 +185,7 @@
 .logout-button {
   color: #b42318 !important;
 }
-.agent-config-panel {
-  width: min(920px, calc(100vw - 32px));
-  max-height: 88vh;
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 30px 90px #11182730;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.agent-config-panel .modal-head h3 {
+.settings-modal .modal-head h3 {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -297,9 +286,6 @@
   }
   .account-grid {
     grid-template-columns: 1fr;
-  }
-  .agent-config-panel {
-    padding: 16px;
   }
   .config-path-row {
     flex-direction: column;

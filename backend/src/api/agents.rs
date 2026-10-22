@@ -1,9 +1,12 @@
 use super::runtime::{
     agent_runtime_label, build_agent_config, detect_agent_version, resolve_agent_binary,
 };
-use crate::{agents::models::AgentModel, state::AppState};
+use crate::{
+    agents::models::{valid_cli_token, AgentModel, ProviderAuth},
+    state::AppState,
+};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -126,4 +129,62 @@ pub async fn agent_models(
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(Json(models))
+}
+
+#[derive(Deserialize)]
+pub struct AuthQuery {
+    provider: String,
+}
+
+pub async fn agent_auth(
+    Path(id): Path<String>,
+    Query(query): Query<AuthQuery>,
+    State(s): State<AppState>,
+) -> Result<Json<ProviderAuth>, StatusCode> {
+    let provider = query.provider.trim();
+    if !valid_cli_token(provider) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let cfg = build_agent_config(&s.db, &id).await?;
+    if cfg.id != "pi" {
+        return Err(StatusCode::NOT_IMPLEMENTED);
+    }
+    let auth = crate::agents::models::check_auth(&cfg, provider)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(Json(auth))
+}
+
+#[derive(Deserialize)]
+pub struct CommandsQuery {
+    cwd: Option<String>,
+}
+
+/// Skills, prompt templates, and extension commands Pi loads for one working directory.
+pub async fn agent_commands(
+    Path(id): Path<String>,
+    Query(query): Query<CommandsQuery>,
+    State(s): State<AppState>,
+) -> Result<Json<Vec<crate::agents::pi_rpc::CommandInfo>>, (StatusCode, String)> {
+    let mut cfg = build_agent_config(&s.db, &id)
+        .await
+        .map_err(|status| (status, "未知 Agent".to_owned()))?;
+    if cfg.id != "pi" {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "只有 Pi Agent 支持列出命令与技能".to_owned(),
+        ));
+    }
+    // Project-scoped resources depend on the cwd, so it has to stay inside the workspace root.
+    let cwd = query.cwd.as_deref().map(str::trim).unwrap_or_default();
+    if !cwd.is_empty() {
+        let path = super::worktrees::allowed_cwd(cwd)
+            .await
+            .map_err(|status| (status, "工作目录必须在允许的根目录之内".to_owned()))?;
+        cfg.working_directory = Some(path.to_string_lossy().into_owned());
+    }
+    crate::agents::pi_rpc::list_commands(&cfg)
+        .await
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_GATEWAY, error.to_string()))
 }
