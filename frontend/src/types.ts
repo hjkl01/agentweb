@@ -115,6 +115,8 @@ export type ChatMessage = {
   model?: string;
   stop_reason?: string;
   error_message?: string;
+  /** Raw `details` map from Pi toolResult (e.g. { server, tool } for MCP tools). */
+  details?: Record<string, unknown>;
 };
 export type ActivityItem = {
   id: string;

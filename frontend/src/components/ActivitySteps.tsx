@@ -19,6 +19,8 @@ import {
   diffLines,
   firstLine,
   formatToolDuration,
+  mcpToolLabel,
+  prettyMcpResultText,
   type ToolField,
   toolFieldsOfInput,
   toolSummary,
@@ -133,7 +135,7 @@ function imageParts(result?: ChatMessage) {
   );
 }
 
-/** 工具结果的正文：分栏 diff / 行式 diff / 文本 / 图片 / 「无输出」。 */
+/** 工具结果的正文：分栏 diff / 行式 diff / 文本 / 图片 / 「no output」。 */
 function ResultBody({
   result,
   sessionId,
@@ -161,7 +163,7 @@ function ResultBody({
       )}
       {texts.map((part, index) => (
         <pre key={index} className="step-result">
-          {part.text}
+          {prettyMcpResultText(part.text ?? "")}
         </pre>
       ))}
       {sessionId &&
@@ -174,7 +176,7 @@ function ResultBody({
             loading="lazy"
           />
         ))}
-      {empty && <pre className="step-empty">(无输出)</pre>}
+      {empty && <pre className="step-empty">(no output)</pre>}
     </>
   );
 }
@@ -252,7 +254,12 @@ function Card({
             />
           )}
         </span>
-        <span className="step-name">{name}</span>
+        <span
+          className="step-name"
+          style={{ color: failed ? "#f87171" : "#16a34a" }}
+        >
+          {name}
+        </span>
         <span className="step-summary">{summary}</span>
         {truncated && <span className="step-badge">已截断</span>}
         {!!images && <span className="step-badge">{images} 张图</span>}
@@ -303,7 +310,8 @@ export function ThinkingCard({
 }
 
 /** 工具调用：折叠时一行（原名 + 参数摘要 + 耗时），展开看参数、diff、输出与图片。
- *  名称保持英文原名：中文标签要靠一张映射表，漏一个就显示成错的动词。 */
+ *  名称保持英文原名：中文标签要靠一张映射表，漏一个就显示成错的动词。
+ *  MCP 工具名 (`mcp__server__tool`) 显示为 `server/tool`，与 pi TUI 一致。 */
 export function ToolCard({
   id,
   name,
@@ -324,11 +332,15 @@ export function ToolCard({
     : toolSummary(args);
   const fields = toolFieldsOfInput(args);
   const argsText = argumentsText(args);
+  const mcpLabel = mcpToolLabel(name ?? "", result?.details);
+  const displayName = mcpLabel
+    ? `${mcpLabel.server}/${mcpLabel.tool}`
+    : name || "tool";
   return (
     <Card
       cardKey={id}
       kind={familyOf(name)}
-      name={name || "tool"}
+      name={displayName}
       summary={summary}
       failed={failed}
       pending={!result}
