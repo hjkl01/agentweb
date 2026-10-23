@@ -1,14 +1,5 @@
-import {
-  Activity,
-  Brain,
-  CheckCircle2,
-  ChevronDown,
-  Circle,
-  FileText,
-  Terminal,
-  Wrench,
-  XCircle,
-} from "lucide-react";
+import { Activity, Brain, CheckCircle2, ChevronDown, Circle, FileText, Terminal, Wrench, XCircle } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { ActivityItem } from "../types";
 
 type Props = { items: ActivityItem[]; open: boolean; onToggle: () => void };
@@ -121,6 +112,16 @@ function ActivityRow({
 export function AgentActivity({ items, open, onToggle }: Props) {
   if (!items.length) return null;
   const status = currentStatus(items);
+  const listRef = useRef<HTMLDivElement>(null);
+  // 运行中展开时自动滚到底，保证最新的执行步骤始终可见。
+  useEffect(() => {
+    if (!open || status.state !== "running") return;
+    const el = listRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [items.length, open, status.state]);
 
   return (
     <section className={`activity-card ${status.state}`}>
@@ -148,7 +149,7 @@ export function AgentActivity({ items, open, onToggle }: Props) {
         />
       </button>
       {open && (
-        <div className="activity-list">
+        <div className="activity-list" ref={listRef}>
           {items.map((item) => (
             <ActivityRow
               key={item.id}
