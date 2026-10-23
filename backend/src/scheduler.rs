@@ -52,7 +52,7 @@ fn cron_field_matches(field: &str, value: u32, min: u32, max: u32) -> bool {
                 Err(_) => return false,
             }
         };
-        value >= lo && value <= hi && (value - lo) % step == 0
+        value >= lo && value <= hi && (value - lo).is_multiple_of(step)
     })
 }
 

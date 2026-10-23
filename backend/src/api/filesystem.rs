@@ -150,7 +150,7 @@ async fn search_tree(root: &PathBuf, needle: &str) -> Result<(Vec<TreeItem>, boo
         }
     }
 
-    result.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    result.sort_by_key(|a| a.path.to_lowercase());
     Ok((result, truncated))
 }
 

@@ -71,7 +71,7 @@ fn clean_cli_line(line: &str) -> String {
         if ch == '\u{1b}' {
             if chars.peek() == Some(&'[') {
                 chars.next();
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if ('@'..='~').contains(&next) {
                         break;
                     }
@@ -154,7 +154,7 @@ fn strip_jsonc(text: &str) -> String {
         }
         if ch == '/' && chars.peek() == Some(&'/') {
             chars.next();
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if next == '\n' {
                     out.push('\n');
                     break;
