@@ -79,6 +79,10 @@ pub struct TranscriptMessage {
     pub stop_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// Raw `details` map from the Pi toolResult message (contains `server`/`tool`
+    /// for MCP tools, plus diff/patch/truncation already extracted above).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 fn sessions_root() -> Option<PathBuf> {
@@ -257,7 +261,7 @@ pub fn list_native_sessions() -> NativeSessionDiscovery {
                 complete = false;
             }
             if title.is_empty() {
-                title = format!("Pi session {}", &id.chars().take(8).collect::<String>());
+                title = format!("Pi session {}", id.chars().take(8).collect::<String>());
             }
             title = title.chars().take(80).collect();
             let timestamp = header
@@ -1123,6 +1127,7 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
                 model: None,
                 stop_reason: None,
                 error_message: None,
+                details: None,
             });
             continue;
         }
@@ -1192,6 +1197,9 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
                 .then(|| message_text_field(message, "stopReason"))
                 .flatten(),
             error_message,
+            details: is_tool_result
+                .then(|| message_details(message).cloned())
+                .flatten(),
         });
     }
     messages

@@ -1,4 +1,14 @@
-import { Activity, Brain, CheckCircle2, ChevronDown, Circle, FileText, Terminal, Wrench, XCircle } from "lucide-react";
+import {
+  Activity,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  Circle,
+  FileText,
+  Terminal,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ActivityItem } from "../types";
 

@@ -981,8 +981,8 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
         let Some((execution_id, lease_until)) = execution else {
             return StatusCode::CONFLICT;
         };
-        match lease_until.as_deref() {
-            Some(lease) => match chrono::DateTime::parse_from_rfc3339(lease) {
+        if let Some(lease) = lease_until.as_deref() {
+            match chrono::DateTime::parse_from_rfc3339(lease) {
                 Ok(lease) if lease.with_timezone(&Utc) >= Utc::now() => {
                     return StatusCode::CONFLICT;
                 }
@@ -990,8 +990,7 @@ pub async fn delete_session(Path(id): Path<String>, State(s): State<AppState>) -
                 // or delete a possibly live execution based on invalid data.
                 Err(_) => return StatusCode::CONFLICT,
                 _ => {}
-            },
-            None => {}
+            }
         }
         let execution_id = execution_id;
         let Some(execution_id) = execution_id else {

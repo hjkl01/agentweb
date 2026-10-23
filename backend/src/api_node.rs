@@ -185,12 +185,12 @@ pub async fn catalog(State(_s): State<AppState>) -> Json<Vec<CatalogItem>> {
             other => other,
         };
         result.push(CatalogItem {
-            id: *id,
-            name: *name,
-            description: *description,
+            id: id,
+            name: name,
+            description: description,
             installed: agent_installed(binary).await,
             requirements: requirements.to_vec(),
-            install_command: *install_command,
+            install_command: install_command,
         });
     }
     Json(result)
