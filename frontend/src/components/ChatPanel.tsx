@@ -25,9 +25,12 @@ import type {
   UploadedFile,
 } from "../types";
 import { api } from "../lib/api";
-import { formatDuration, groupTranscript } from "../lib/format";
+import {
+  formatDuration,
+  responseSeconds,
+  toolResultsByCall,
+} from "../lib/format";
 import type { Preferences } from "../lib/preferences";
-import { ActivityGroup } from "./ActivitySteps";
 import { AgentActivity } from "./AgentActivity";
 import { MentionPicker } from "./MentionPicker";
 import { ModelSelector } from "./ModelSelector";
@@ -35,7 +38,11 @@ import { ThinkingSelector } from "./ThinkingSelector";
 import { ToolPresetSelector } from "./ToolPresetSelector";
 import { AgentSelector } from "./AgentSelector";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { AssistantParts, CompactionMessage } from "./MessageParts";
+import {
+  AssistantParts,
+  CompactionMessage,
+  ToolResultCard,
+} from "./MessageParts";
 import { SessionExportButton } from "./SessionExportButton";
 import { SessionStats } from "./SessionStats";
 
@@ -173,8 +180,10 @@ export function ChatPanel({
       ? messages.slice(messages.length - messageWindow)
       : messages;
   const hiddenCount = messages.length - visibleMessages.length;
-  // 同一次工具循环的消息合成一段「执行过程」，避免一墙卡片。
-  const entries = groupTranscript(visibleMessages);
+  // 工具结果挂回对应的调用卡片；思考耗时用相邻消息的时间差近似。
+  // visibleMessages 每次渲染都是新数组，memo 不划算，直接算。
+  const toolResults = toolResultsByCall(visibleMessages);
+  const thinkingSeconds = responseSeconds(visibleMessages);
   useEffect(() => {
     if (!preferences.quoteSelection) {
       setQuote(undefined);
@@ -424,19 +433,15 @@ export function ChatPanel({
             {messages.length} 条）
           </button>
         )}
-        {entries.map((entry, index) => {
-          if (entry.kind === "activity")
-            return (
-              <ActivityGroup
-                key={entry.key}
-                rows={entry.rows}
-                sessionId={current?.id}
-                thinkingExpanded={preferences.thinkingExpanded}
-                // 只有最新一段、且最终回答还没出来时才默认展开；回答一到就收起。
-                defaultOpen={index === entries.length - 1 && !stream}
-              />
+        {visibleMessages.map((message) => {
+          // 结果已经挂在对应调用卡片上的就跳过；配不到调用的（调用被分页截断）单独成卡片。
+          if (message.role === "toolResult")
+            return toolResults.get(message.tool_call_id ?? "") ===
+              message ? null : (
+              <div key={message.id} className="orphan-result">
+                <ToolResultCard message={message} sessionId={current?.id} />
+              </div>
             );
-          const message = entry.message;
           if (message.role === "compaction") {
             return (
               <CompactionMessage key={message.id} content={message.content} />
@@ -489,6 +494,9 @@ export function ChatPanel({
                 {message.role === "assistant" ? (
                   <AssistantParts
                     message={message}
+                    sessionId={current?.id}
+                    toolResults={toolResults}
+                    thinkingSeconds={thinkingSeconds.get(message.id)}
                     thinkingExpanded={preferences.thinkingExpanded}
                   />
                 ) : (

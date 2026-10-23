@@ -145,10 +145,25 @@ export function useSessionEvents(options: Options) {
             connection.close();
           });
       };
+      // 协议层的 pong 浏览器 JS 看不到，所以后端收到文本会用 JSON 回一个 pong：一段时间
+      // 收不到任何回应说明这条连接已经是半开的（睡眠/切网不触发 onclose），主动断开，
+      // 交给下面 onclose 的重连逻辑重建并重新拉一次快照。
+      let pongTimer: ReturnType<typeof setTimeout> | undefined;
+      const heartbeat = window.setInterval(() => {
+        if (connection.readyState !== WebSocket.OPEN) return;
+        connection.send('{"type":"ping"}');
+        window.clearTimeout(pongTimer);
+        pongTimer = window.setTimeout(
+          () => connection.close(),
+          PONG_TIMEOUT_MS,
+        );
+      }, HEARTBEAT_MS);
       connection.onerror = () => {
         if (!disposed) options.setError("WebSocket 连接失败，正在重试。");
       };
       connection.onclose = () => {
+        window.clearInterval(heartbeat);
+        window.clearTimeout(pongTimer);
         if (disposed) return;
         reconnectTimer = setTimeout(() => {
           connect();
@@ -156,6 +171,8 @@ export function useSessionEvents(options: Options) {
         reconnectDelay = Math.min(reconnectDelay * 2, 8000);
       };
       connection.onmessage = (event) => {
+        // 任何一条消息都说明链路是活的。
+        window.clearTimeout(pongTimer);
         // WebSocket close is asynchronous: a queued message from the previous
         // session can still arrive after cleanup. Never let an obsolete socket
         // mutate the newly selected session's UI state.
@@ -184,6 +201,11 @@ export function useSessionEvents(options: Options) {
     };
   }, [active]);
 }
+
+/** 心跳间隔：空闲会话也要定期确认链路，但走的是 WebSocket 不是 HTTP。 */
+const HEARTBEAT_MS = 15_000;
+/** 心跳发出后多久收不到任何消息就判定这条连接已死。 */
+const PONG_TIMEOUT_MS = 10_000;
 
 function isTranscriptBackedMessageEvent(raw: string) {
   try {

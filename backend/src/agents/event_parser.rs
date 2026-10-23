@@ -93,6 +93,12 @@ pub async fn emit_generic(
 ) -> Option<String> {
     let (typ, _, output, name) = parsed(value);
     let t = typ.to_ascii_lowercase();
+    // Pi's structured records are mapped by `pi_events`; these heuristics would
+    // only misfire on them (`toolcall_start` matches "tool", `tool_execution_end`
+    // never matches `done`).
+    if value.get("assistantMessageEvent").is_some() || t.starts_with("tool_execution") {
+        return None;
+    }
     let nested = item_type(value);
     let combined = format!("{t} {nested}");
     let start = t.contains("start") || t == "turn.started" || t == "turn_start";

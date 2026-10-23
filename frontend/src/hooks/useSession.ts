@@ -102,15 +102,9 @@ export function useSession(active?: string) {
     [isStatusSnapshotNewer],
   );
 
-  // Keep polling even while locally "running". If the completion WebSocket is
-  // lost, the authoritative runtime status must still recover the composer.
-  useEffect(() => {
-    if (!active) return;
-    const timer = window.setInterval(() => {
-      refreshActiveSession(active).catch(console.error);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [active, refreshActiveSession]);
+  const activeRunning = active
+    ? sessions.find((item) => item.id === active)?.status === "running"
+    : false;
 
   const actions = useSessionActions({
     setSessions,
@@ -193,13 +187,10 @@ export function useSession(active?: string) {
   }, [active]);
 
   useEffect(() => {
-    const running = active
-      ? sessions.find((item) => item.id === active)?.status === "running"
-      : false;
-    if (running && !previousRunningRef.current) setActivityOpen(true);
-    if (!running && previousRunningRef.current) setActivityOpen(false);
-    previousRunningRef.current = running;
-  }, [active, sessions]);
+    if (activeRunning && !previousRunningRef.current) setActivityOpen(true);
+    if (!activeRunning && previousRunningRef.current) setActivityOpen(false);
+    previousRunningRef.current = activeRunning;
+  }, [activeRunning]);
 
   return {
     sessions,

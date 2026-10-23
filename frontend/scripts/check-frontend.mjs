@@ -1,16 +1,14 @@
 // 前端纯逻辑的检查：用 tsc 编译 src/lib/*.ts 后再断言（见 make test）。
 import assert from "node:assert/strict";
 import {
-  activityFacts,
   diffLines,
   firstLine,
   formatDuration,
   formatToolDuration,
-  groupTranscript,
-  isActivityMessage,
-  toolLabel,
-  toolSummary,
+  responseSeconds,
   toolFieldsOfInput,
+  toolResultsByCall,
+  toolSummary,
 } from "../.tmp-test/lib/format.js";
 import { familyRows } from "../.tmp-test/lib/sessionFamily.js";
 import {
@@ -218,107 +216,26 @@ const result_ = (id, callId, extra = {}) => ({
   tool_call_id: callId,
   ...extra,
 });
-
-// 带工具调用的助手轮次属于执行过程；最终回答与失败的轮次不属于。
-assert.equal(isActivityMessage(assistant("a", [call("c1", "bash", {})])), true);
-assert.equal(isActivityMessage(assistant("a", [thinking("想")])), false);
-assert.equal(
-  isActivityMessage(assistant("a", [{ type: "text", text: "答案" }])),
-  false,
-);
-assert.equal(
-  isActivityMessage(
-    assistant("a", [call("c1", "bash", {})], { stop_reason: "error" }),
-  ),
-  false,
-);
-assert.equal(isActivityMessage(result_("r", "c1")), true);
-
-// 一次工具循环 = 一段执行过程：思考 + 两次调用 + 两次结果，结果挂在调用行上。
-const entries = groupTranscript([
-  { id: "u1", role: "user", content: "帮我改代码" },
-  assistant("a1", [thinking("先看文件"), call("c1", "read", { path: "a.ts" })]),
+// 工具结果按 tool_call_id 挂回可见的调用；孤立结果（调用被分页截断）不配，由 ChatPanel 单独成卡。
+const byCall = toolResultsByCall([
+  assistant("a", [call("c1", "bash", {})]),
   result_("r1", "c1", { duration_ms: 12 }),
-  assistant(
-    "a2",
-    [
-      { type: "text", text: "看完了，改这里" },
-      call("c2", "edit", { path: "a.ts" }),
-    ],
-    { stop_reason: "toolUse" },
-  ),
-  result_("r2", "c2", { duration_ms: 30, is_error: true }),
-  assistant("a3", [{ type: "text", text: "改好了" }], { stop_reason: "stop" }),
+  result_("r2", "gone", { tool_name: "bash" }),
 ]);
-assert.deepEqual(
-  entries.map((entry) => entry.kind),
-  ["message", "activity", "message"],
-);
-assert.equal(entries[1].key, "a1");
-assert.deepEqual(
-  entries[1].rows.map((row) => `${row.kind}:${row.name ?? row.text}`),
-  ["thinking:先看文件", "tool:read", "note:看完了，改这里", "tool:edit"],
-);
-assert.equal(entries[1].rows[1].result.id, "r1");
-assert.equal(entries[1].rows[1].summary, "a.ts");
-assert.equal(entries[1].rows[3].result.is_error, true);
-assert.deepEqual(activityFacts(entries[1].rows), {
-  tools: "思考 · 读取文件 · 修改文件",
-  durationMs: 42,
-  failed: 1,
-  truncated: 0,
-  pending: 0,
-});
-assert.equal(
-  activityFacts(entries[1].rows).tools,
-  "思考 · 读取文件 · 修改文件",
-);
-
-// 结果找不到对应调用（历史被窗口截断）时单独成行，输出不能丢。
-const orphan = groupTranscript([result_("r9", "gone", { tool_name: "bash" })]);
-assert.equal(orphan[0].rows.length, 1);
-assert.equal(orphan[0].rows[0].name, "bash");
-assert.equal(orphan[0].rows[0].result.id, "r9");
-// 没有 tool_call_id 的老转录也要能挂上，走单独成行这条路。
-const unnamed = groupTranscript([
-  result_("r8", undefined, { tool_name: "read" }),
+assert.equal(byCall.get("c1").id, "r1");
+assert.equal(byCall.has("gone"), false);
+assert.equal(toolResultsByCall([result_("r1", "c1")]).size, 0);
+assert.equal(toolResultsByCall([assistant("a", [call("c1", "bash", {})])]).size, 0);
+// 思考耗时：助手消息跟上一条消息的时间差，整秒；同一秒或没有时间戳就不显示。
+const seconds = responseSeconds([
+  { id: "u1", role: "user", content: "", created_at: "2026-01-01T00:00:00Z" },
+  { id: "a1", role: "assistant", content: "", created_at: "2026-01-01T00:00:04.600Z" },
+  { id: "a2", role: "assistant", content: "", created_at: "2026-01-01T00:00:04.600Z" },
 ]);
-assert.equal(unnamed[0].rows[0].name, "read");
-
-// 调用已发出、结果还没回来：计入 pending，并显示为运行中。
-const pending = groupTranscript([
-  assistant("a1", [call("c1", "bash", { command: "sleep 1" })]),
-]);
-assert.equal(activityFacts(pending[0].rows).pending, 1);
-assert.equal(activityFacts(pending[0].rows).durationMs, 0);
-// 同名工具合并计数，仅一次的工具不写倍数。
-assert.equal(
-  activityFacts([
-    {
-      key: "1",
-      kind: "tool",
-      name: "bash",
-      result: { id: "x", role: "toolResult", content: "", duration_ms: 5 },
-    },
-    {
-      key: "2",
-      kind: "tool",
-      name: "bash",
-      result: {
-        id: "y",
-        role: "toolResult",
-        content: "",
-        duration_ms: 5,
-        truncated: true,
-      },
-    },
-  ]).tools,
-  "运行命令 ×2",
-);
-// 没见过的工具名原样显示英文名，不猜一个错的动词。
-assert.equal(toolLabel("bash"), "运行命令");
-assert.equal(toolLabel("weird_tool"), "weird_tool");
-assert.equal(toolLabel(undefined), "工具");
+assert.equal(seconds.get("a1"), 5);
+assert.equal(seconds.has("a2"), false);
+assert.equal(responseSeconds([{ id: "a1", role: "assistant", content: "" }]).size, 0);
+console.log("activity: ok");
 assert.equal(firstLine("\n\n  第一行  \n第二行"), "第一行");
 assert.equal(firstLine("   "), undefined);
 // patch: 统一 diff 解析成分栏行（左右行号 + 空格子）和单列行
@@ -383,7 +300,6 @@ assert.equal(firstLine("   "), undefined);
   assert.equal(diffGapLabel(5), "5 行未改动");
 }
 console.log("patch: ok");
-console.log("activity: ok");
 
 // 本地回显的用户消息：转录里出现了就撤掉，否则留着（否则追加的任务会从页面消失）。
 assert.deepEqual(settlePending(["还没有的"], []), ["还没有的"]);

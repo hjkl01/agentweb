@@ -1,32 +1,8 @@
-import { AlertTriangle, Brain } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import type { ChatMessage } from "../types";
+import { ThinkingCard, ToolCard } from "./ActivitySteps";
 import { MarkdownMessage } from "./MarkdownMessage";
-
-/** Assistant turns without tool calls can still carry reasoning (and Pi always
- *  reports the final answer's thinking). Tool calls live in `ActivitySteps`. */
-function ThinkingPart({
-  text,
-  defaultOpen,
-}: {
-  text: string;
-  defaultOpen: boolean;
-}) {
-  // details 的展开状态归浏览器管，这里只同步回来，避免 React 重新渲染时把用户的手动折叠盖掉。
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <details
-      className="msg-thinking"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        <Brain size={12} /> 思考过程
-      </summary>
-      <pre>{text}</pre>
-    </details>
-  );
-}
 
 /** Provider failure or truncation notice for one assistant turn. */
 function turnNotice(message: ChatMessage) {
@@ -44,16 +20,24 @@ function turnNotice(message: ChatMessage) {
   return null;
 }
 
-/** Body of an assistant message: structured parts when present, else text. */
+/** Body of an assistant message: structured parts when present, else text.
+ *  思考和工具调用按转录顺序内联成卡片，工具结果按 `tool_call_id` 挂回对应的调用卡片。 */
 export function AssistantParts({
   message,
+  sessionId,
+  toolResults,
+  thinkingSeconds,
   thinkingExpanded,
 }: {
   message: ChatMessage;
+  sessionId?: string;
+  toolResults?: Map<string, ChatMessage>;
+  thinkingSeconds?: number;
   thinkingExpanded?: boolean;
 }) {
   const notice = turnNotice(message);
-  if (!message.parts?.length)
+  const parts = message.parts ?? [];
+  if (!parts.length)
     return (
       <div className="msg-parts">
         {notice}
@@ -63,21 +47,56 @@ export function AssistantParts({
   return (
     <div className="msg-parts">
       {notice}
-      {message.parts.map((part, index) => {
+      {parts.map((part, index) => {
+        const key = `${message.id}:${index}`;
         if (part.type === "thinking")
           return (
-            <ThinkingPart
-              key={index}
+            <ThinkingCard
+              key={key}
+              id={key}
               text={part.text || ""}
-              defaultOpen={!!thinkingExpanded}
+              seconds={thinkingSeconds}
+              expanded={thinkingExpanded}
+            />
+          );
+        if (part.type === "toolCall")
+          return (
+            <ToolCard
+              key={key}
+              id={part.tool_call_id || key}
+              name={part.name}
+              args={part.arguments}
+              result={
+                part.tool_call_id
+                  ? toolResults?.get(part.tool_call_id)
+                  : undefined
+              }
+              sessionId={sessionId}
             />
           );
         if (part.type === "text")
-          return <MarkdownMessage key={index} content={part.text || ""} />;
-        // Tool calls are rendered by `ActivitySteps`, grouped per turn.
+          return <MarkdownMessage key={key} content={part.text || ""} />;
         return null;
       })}
     </div>
+  );
+}
+
+/** 配不到调用的工具结果（调用被分页截断）：单独一张卡片，输出不能丢。 */
+export function ToolResultCard({
+  message,
+  sessionId,
+}: {
+  message: ChatMessage;
+  sessionId?: string;
+}) {
+  return (
+    <ToolCard
+      id={message.id}
+      name={message.tool_name}
+      result={message}
+      sessionId={sessionId}
+    />
   );
 }
 

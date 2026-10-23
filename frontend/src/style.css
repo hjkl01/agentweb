@@ -4074,22 +4074,11 @@ select:focus-visible {
   gap: 8px;
   min-width: 0;
 }
-/* One turn's thinking and tool calls, collapsed into a single compact block.
-   A real answer makes 5-10 tool calls; one card each buries the conversation. */
-.activity-steps {
+/* 配不到调用的工具结果（调用被分页截断）：单独一张卡片，跟正文列对齐。 */
+.orphan-result {
   width: min(100%, var(--chat-content-width));
   margin: 0 auto 16px;
   padding-left: 39px; /* align with the message content column (avatar + gap) */
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  overflow: hidden;
-  box-shadow: var(--ui-shadow-sm);
-  /* 执行过程是次要内容，比正文小 1px，但要跟正文字号一起缩放。 */
-  font-size: calc(var(--chat-font-size) - 1px);
-}
-.activity-steps.failed {
-  border-color: #f2c7c2;
 }
 /* 标题行同时被 AgentActivity（运行中的实时卡片）和这里的执行过程复用。 */
 .activity-header {
@@ -4165,14 +4154,6 @@ select:focus-visible {
 .activity-chevron.expanded {
   transform: rotate(180deg);
 }
-.step-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px 8px;
-  border-top: 1px solid var(--ui-border);
-  background: var(--ui-surface);
-}
 /* 每行是一张 pi-web 式的卡片：成功偏绿、出错偏红，颜色本身就是状态。 */
 .step {
   border: 1px solid rgba(34, 197, 94, 0.25);
@@ -4239,14 +4220,19 @@ select:focus-visible {
   color: var(--ui-danger);
 }
 /* 固定宽度的动作列，让每行的目标都从同一条竖线开始。 */
+/* pi-web 式的工具名：英文原名 + 等宽，成功绿、出错红；宽度随内容，不再排成固定动作列。 */
 .step-name {
   flex: 0 0 auto;
-  width: 5.5em;
+  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--step-accent, var(--ui-text));
-  font-size: 1em;
+  color: #16a34a;
+  font:
+    0.957em/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   font-weight: 600;
 }
 .step.failed .step-name {
@@ -4492,43 +4478,6 @@ select:focus-visible {
 .step-bulb.active {
   color: #d4a017;
   fill: rgba(250, 204, 21, 0.18);
-}
-/* Assistant reasoning without a tool call (the final answer's thinking). */
-.msg-thinking {
-  border: 1px solid #e9e9ef;
-  border-radius: 9px;
-  background: #fcfcfd;
-}
-.msg-thinking > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  padding: 6px 10px;
-  color: #8a8a94;
-  font-size: 0.885em;
-  list-style: none;
-  user-select: none;
-}
-.msg-thinking > summary::-webkit-details-marker {
-  display: none;
-}
-.msg-thinking[open] > summary {
-  border-bottom: 1px solid #eef0f3;
-}
-.msg-thinking pre {
-  margin: 0;
-  padding: 8px 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: #6b6b74;
-  font:
-    11px/1.6 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-  max-height: 320px;
-  overflow: auto;
 }
 .compaction-message {
   margin: 4px 0;
