@@ -189,7 +189,12 @@ pub fn build(kind: ProcessKind, config: &AgentConfig, message: &str) -> Result<C
     // No bwrap, namespace isolation, filesystem overlay, or bind mounts.
     apply_agent_environment(config, &mut command, Some(&agent_home));
     // Do not override PI_CODING_AGENT_SESSION_DIR: Pi selects its native session store under HOME.
+    // Every agent kind receives the prompt in argv, so stdin is unused. Leaving it
+    // inherited hands the agent the server's terminal, and agents that read stdin
+    // (Pi waits for stdin EOF after `agent_end`) then never exit — which stalls the
+    // run, so no completion event is ever published.
     command
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     Ok(command)

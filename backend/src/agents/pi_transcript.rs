@@ -61,10 +61,16 @@ pub struct TranscriptMessage {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
-    /// Unified-diff fragment Pi attaches to `edit` results, so the transcript
-    /// can show what changed without re-reading the file.
+    /// Line-numbered change preview Pi attaches to `edit` results
+    /// (`details.diff`: `" 12 context"`, `"-13 old"`, `"+13 new"`), so the
+    /// transcript can show what changed without re-reading the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<String>,
+    /// The same change as a real unified diff (`details.patch`, with `---`/`+++`
+    /// and `@@` headers), which is what a side-by-side view can parse. Pi sends
+    /// both keys, and neither is guaranteed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
     /// Present on assistant messages: the answering model, why the turn stopped
     /// (`stop`/`toolUse`/`error`/`length`) and the provider error if it failed.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -611,11 +617,13 @@ fn message_details(message: &Value) -> Option<&Value> {
     message.get("details").filter(|value| !value.is_null())
 }
 
-fn message_result_diff(message: &Value) -> Option<String> {
+/// Text Pi puts under `details.<key>` on a tool result. Capped so a single
+/// patch cannot blow up the transcript payload.
+fn message_result_details_text(message: &Value, key: &str) -> Option<String> {
     message_details(message)
-        .and_then(|details| details.get("diff"))
+        .and_then(|details| details.get(key))
         .and_then(Value::as_str)
-        .filter(|diff| !diff.is_empty() && diff.chars().count() <= MAX_RESULT_DIFF_CHARS)
+        .filter(|text| !text.is_empty() && text.chars().count() <= MAX_RESULT_DIFF_CHARS)
         .map(str::to_owned)
 }
 
@@ -1111,6 +1119,7 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
                 duration_ms: None,
                 truncated: None,
                 diff: None,
+                patch: None,
                 model: None,
                 stop_reason: None,
                 error_message: None,
@@ -1171,7 +1180,10 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
             duration_ms: message.get("durationMs").and_then(Value::as_u64),
             truncated: truncated.then_some(true),
             diff: is_tool_result
-                .then(|| message_result_diff(message))
+                .then(|| message_result_details_text(message, "diff"))
+                .flatten(),
+            patch: is_tool_result
+                .then(|| message_result_details_text(message, "patch"))
                 .flatten(),
             model: is_assistant
                 .then(|| message_text_field(message, "model"))
@@ -1506,7 +1518,7 @@ mod tests {
         let content = [
             r#"{"type":"session","id":"session-tools","version":3}"#,
             r#"{"type":"message","id":"a1","parentId":null,"message":{"role":"assistant","model":"gpt-test","stopReason":"toolUse","durationMs":1500,"content":[{"type":"thinking","thinking":"plan"},{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"ls"}}],"usage":{"input":10,"output":5,"cacheRead":2,"cacheWrite":0,"totalTokens":17,"cost":{"total":0.01}}}}"#,
-            r#"{"type":"message","id":"r1","parentId":"a1","message":{"role":"toolResult","toolCallId":"call-1","toolName":"bash","isError":true,"durationMs":42,"details":{"diff":"-old\n+new","truncation":{"content":"tail"}},"content":[{"type":"text","text":"boom"}]}}"#,
+            r#"{"type":"message","id":"r1","parentId":"a1","message":{"role":"toolResult","toolCallId":"call-1","toolName":"bash","isError":true,"durationMs":42,"details":{"diff":"-old\n+new","patch":"--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new","truncation":{"content":"tail"}},"content":[{"type":"text","text":"boom"}]}}"#,
         ]
         .join("\n");
 
@@ -1529,6 +1541,10 @@ mod tests {
         assert_eq!(messages[1].duration_ms, Some(42));
         assert_eq!(messages[1].truncated, Some(true));
         assert_eq!(messages[1].diff.as_deref(), Some("-old\n+new"));
+        assert_eq!(
+            messages[1].patch.as_deref(),
+            Some("--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new")
+        );
     }
 
     #[test]
@@ -1551,6 +1567,7 @@ mod tests {
             Some("Request timed out.")
         );
         assert!(messages[0].diff.is_none());
+        assert!(messages[0].patch.is_none());
         assert!(messages[0].tool_name.is_none());
     }
 

@@ -5,9 +5,12 @@ import {
   diffLines,
   firstLine,
   formatDuration,
+  formatToolDuration,
   groupTranscript,
   isActivityMessage,
+  toolLabel,
   toolSummary,
+  toolFieldsOfInput,
 } from "../.tmp-test/lib/format.js";
 import { familyRows } from "../.tmp-test/lib/sessionFamily.js";
 import {
@@ -17,6 +20,11 @@ import {
   parsePreferences,
 } from "../.tmp-test/lib/preferences.js";
 import { ARCHIVED_KEY, groupSessions } from "../.tmp-test/lib/sessionGroups.js";
+import {
+  diffGapLabel,
+  parseUnifiedPatch,
+  unifiedDiffLines,
+} from "../.tmp-test/lib/patch.js";
 import { settlePending } from "../.tmp-test/lib/pendingMessages.js";
 
 const session = (id, native, forkFrom) => ({
@@ -29,7 +37,11 @@ const rows = (list) =>
 
 // 父会话在后也有可能：子会话先出现在列表里，排序后仍要父在前、逐层缩进。
 assert.deepEqual(
-  rows([session("c", "nc", "nb"), session("b", "nb", "na"), session("a", "na")]),
+  rows([
+    session("c", "nc", "nb"),
+    session("b", "nb", "na"),
+    session("a", "na"),
+  ]),
   ["a:0", "b:1", "c:2"],
 );
 // 无关会话保持原顺序，分支紧跟父会话。
@@ -62,7 +74,10 @@ assert.deepEqual(parsePreferences('{"completionSound":"yes"}'), {
   ...DEFAULT_PREFERENCES,
   completionSound: false,
 });
-assert.equal(parsePreferences('{"completionSound":true}').completionSound, true);
+assert.equal(
+  parsePreferences('{"completionSound":true}').completionSound,
+  true,
+);
 assert.equal(
   parsePreferences('{"completionSound":false}').completionSound,
   false,
@@ -79,11 +94,20 @@ assert.deepEqual(parsePreferences('{"chatFontSize":99,"sendMode":"meta"}'), {
   ...DEFAULT_PREFERENCES,
   chatFontSize: 20,
 });
-assert.equal(parsePreferences('{"sendMode":"ctrlEnter"}').sendMode, "ctrlEnter");
-assert.equal(parsePreferences('{"thinkingExpanded":true}').thinkingExpanded, true);
+assert.equal(
+  parsePreferences('{"sendMode":"ctrlEnter"}').sendMode,
+  "ctrlEnter",
+);
+assert.equal(
+  parsePreferences('{"thinkingExpanded":true}').thinkingExpanded,
+  true,
+);
 // 引用选区是已有功能，旧存档没有这个键时保持开启。
 assert.equal(parsePreferences('{"completionSound":true}').quoteSelection, true);
-assert.equal(parsePreferences('{"quoteSelection":false}').quoteSelection, false);
+assert.equal(
+  parsePreferences('{"quoteSelection":false}').quoteSelection,
+  false,
+);
 console.log("preferences: ok");
 
 // 会话分组：置顶最前、归档最后、项目按首次出现顺序、worktree 归并回主仓库。
@@ -129,6 +153,26 @@ assert.equal(formatDuration(95000), "1m35s");
 assert.equal(formatDuration(undefined), undefined);
 assert.equal(formatDuration(Number.NaN), undefined);
 assert.equal(formatDuration(-1), undefined);
+
+// 工具耗时：跟 pi CLI 的 Took 一致，太快（<100ms）就不显示。
+assert.equal(formatToolDuration(100), "0.1s");
+assert.equal(formatToolDuration(2400), "2.4s");
+assert.equal(formatToolDuration(59400), "59.4s");
+assert.equal(formatToolDuration(65000), "1m 5s");
+assert.equal(formatToolDuration(3725000), "1h 2m 5s");
+assert.equal(formatToolDuration(99), undefined);
+assert.equal(formatToolDuration(undefined), undefined);
+
+// 参数表：只有「一排标量」才排成两列，出现嵌套对象/空值就整体退回 JSON（pi-web 的规则）。
+assert.deepEqual(toolFieldsOfInput({ command: "ls", timeout: 5 }), [
+  { key: "command", value: "ls", multiline: false },
+  { key: "timeout", value: "5", multiline: false },
+]);
+assert.equal(toolFieldsOfInput({ content: "a\nb" })?.[0].multiline, true);
+assert.equal(toolFieldsOfInput({ a: { b: 1 } }), undefined);
+assert.equal(toolFieldsOfInput({ a: "" }), undefined);
+assert.equal(toolFieldsOfInput({}), undefined);
+assert.equal(toolFieldsOfInput("ls"), undefined);
 console.log("format: ok");
 
 // 工具调用摘要：取首个关键词参数，压掉换行并截断。
@@ -142,16 +186,13 @@ assert.equal(toolSummary({ command: "x".repeat(500) }).length, 120);
 console.log("toolSummary: ok");
 
 // 编辑工具的 diff 片段：区分新增/删除/上下文/空档行。
-assert.deepEqual(
-  diffLines("@@ -1 +1 @@\n-old\n+new\n keep\n   ..."),
-  [
-    { kind: "hunk", text: "@@ -1 +1 @@" },
-    { kind: "remove", text: "-old" },
-    { kind: "add", text: "+new" },
-    { kind: "context", text: " keep" },
-    { kind: "gap", text: "   ..." },
-  ],
-);
+assert.deepEqual(diffLines("@@ -1 +1 @@\n-old\n+new\n keep\n   ..."), [
+  { kind: "hunk", text: "@@ -1 +1 @@" },
+  { kind: "remove", text: "-old" },
+  { kind: "add", text: "+new" },
+  { kind: "context", text: " keep" },
+  { kind: "gap", text: "   ..." },
+]);
 assert.equal(diffLines("").length, 1);
 console.log("diffLines: ok");
 
@@ -181,9 +222,14 @@ const result_ = (id, callId, extra = {}) => ({
 // 带工具调用的助手轮次属于执行过程；最终回答与失败的轮次不属于。
 assert.equal(isActivityMessage(assistant("a", [call("c1", "bash", {})])), true);
 assert.equal(isActivityMessage(assistant("a", [thinking("想")])), false);
-assert.equal(isActivityMessage(assistant("a", [{ type: "text", text: "答案" }])), false);
 assert.equal(
-  isActivityMessage(assistant("a", [call("c1", "bash", {})], { stop_reason: "error" })),
+  isActivityMessage(assistant("a", [{ type: "text", text: "答案" }])),
+  false,
+);
+assert.equal(
+  isActivityMessage(
+    assistant("a", [call("c1", "bash", {})], { stop_reason: "error" }),
+  ),
   false,
 );
 assert.equal(isActivityMessage(result_("r", "c1")), true);
@@ -193,7 +239,14 @@ const entries = groupTranscript([
   { id: "u1", role: "user", content: "帮我改代码" },
   assistant("a1", [thinking("先看文件"), call("c1", "read", { path: "a.ts" })]),
   result_("r1", "c1", { duration_ms: 12 }),
-  assistant("a2", [{ type: "text", text: "看完了，改这里" }, call("c2", "edit", { path: "a.ts" })], { stop_reason: "toolUse" }),
+  assistant(
+    "a2",
+    [
+      { type: "text", text: "看完了，改这里" },
+      call("c2", "edit", { path: "a.ts" }),
+    ],
+    { stop_reason: "toolUse" },
+  ),
   result_("r2", "c2", { duration_ms: 30, is_error: true }),
   assistant("a3", [{ type: "text", text: "改好了" }], { stop_reason: "stop" }),
 ]);
@@ -210,13 +263,16 @@ assert.equal(entries[1].rows[1].result.id, "r1");
 assert.equal(entries[1].rows[1].summary, "a.ts");
 assert.equal(entries[1].rows[3].result.is_error, true);
 assert.deepEqual(activityFacts(entries[1].rows), {
-  tools: "思考 · read · edit",
+  tools: "思考 · 读取文件 · 修改文件",
   durationMs: 42,
   failed: 1,
   truncated: 0,
   pending: 0,
 });
-assert.equal(activityFacts(entries[1].rows).tools, "思考 · read · edit");
+assert.equal(
+  activityFacts(entries[1].rows).tools,
+  "思考 · 读取文件 · 修改文件",
+);
 
 // 结果找不到对应调用（历史被窗口截断）时单独成行，输出不能丢。
 const orphan = groupTranscript([result_("r9", "gone", { tool_name: "bash" })]);
@@ -224,7 +280,9 @@ assert.equal(orphan[0].rows.length, 1);
 assert.equal(orphan[0].rows[0].name, "bash");
 assert.equal(orphan[0].rows[0].result.id, "r9");
 // 没有 tool_call_id 的老转录也要能挂上，走单独成行这条路。
-const unnamed = groupTranscript([result_("r8", undefined, { tool_name: "read" })]);
+const unnamed = groupTranscript([
+  result_("r8", undefined, { tool_name: "read" }),
+]);
 assert.equal(unnamed[0].rows[0].name, "read");
 
 // 调用已发出、结果还没回来：计入 pending，并显示为运行中。
@@ -236,21 +294,114 @@ assert.equal(activityFacts(pending[0].rows).durationMs, 0);
 // 同名工具合并计数，仅一次的工具不写倍数。
 assert.equal(
   activityFacts([
-    { key: "1", kind: "tool", name: "bash", result: { id: "x", role: "toolResult", content: "", duration_ms: 5 } },
-    { key: "2", kind: "tool", name: "bash", result: { id: "y", role: "toolResult", content: "", duration_ms: 5, truncated: true } },
+    {
+      key: "1",
+      kind: "tool",
+      name: "bash",
+      result: { id: "x", role: "toolResult", content: "", duration_ms: 5 },
+    },
+    {
+      key: "2",
+      kind: "tool",
+      name: "bash",
+      result: {
+        id: "y",
+        role: "toolResult",
+        content: "",
+        duration_ms: 5,
+        truncated: true,
+      },
+    },
   ]).tools,
-  "bash ×2",
+  "运行命令 ×2",
 );
+// 没见过的工具名原样显示英文名，不猜一个错的动词。
+assert.equal(toolLabel("bash"), "运行命令");
+assert.equal(toolLabel("weird_tool"), "weird_tool");
+assert.equal(toolLabel(undefined), "工具");
 assert.equal(firstLine("\n\n  第一行  \n第二行"), "第一行");
 assert.equal(firstLine("   "), undefined);
+// patch: 统一 diff 解析成分栏行（左右行号 + 空格子）和单列行
+{
+  const patch = [
+    "--- a/x.ts",
+    "+++ b/x.ts",
+    "@@ -1,4 +1,5 @@",
+    " const a = 1;",
+    "-const b = 2;",
+    "+const b = 3;",
+    "+const c = 4;",
+    "@@ -10,2 +11,2 @@",
+    " tail(1);",
+    "-tail(2);",
+    "+tail(3);",
+  ].join("\n");
+  const files = parseUnifiedPatch(patch);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].newPath, "b/x.ts");
+  assert.deepEqual(
+    files[0].rows.map((row) => row.type),
+    ["hunk", "line", "line", "line", "gap", "hunk", "line", "line"],
+  );
+  // 两个 hunk 之间没显示的老文件行数：10 - (1 + 4)
+  assert.equal(files[0].rows[4].count, 5);
+  assert.deepEqual(files[0].rows[2].left, {
+    lineNo: 2,
+    type: "removed",
+    text: "const b = 2;",
+  });
+  assert.deepEqual(files[0].rows[2].right, {
+    lineNo: 2,
+    type: "added",
+    text: "const b = 3;",
+  });
+  // 只有新增的那一行，左侧补空格子
+  assert.equal(files[0].rows[3].left.type, "empty");
+  assert.equal(files[0].rows[3].right.type, "added");
+  // hunk 里的 `--- ` / `+++ ` 是内容，不能当文件头
+  const tricky = parseUnifiedPatch(
+    ["--- a/f", "+++ b/f", "@@ -1,2 +1,2 @@", "--- x", "+++ y"].join("\n"),
+  );
+  assert.equal(tricky.length, 1);
+  assert.equal(tricky[0].rows.at(-1).left.text, "-- x");
+  // 解析不动就交回 null，让界面去显示原文
+  assert.equal(parseUnifiedPatch("hello"), null);
+  // 单列：删的行压在增的行上面，hunk 头不进正文
+  assert.deepEqual(
+    unifiedDiffLines(files[0]).map((line) => line.type),
+    [
+      "context",
+      "removed",
+      "added",
+      "added",
+      "gap",
+      "context",
+      "removed",
+      "added",
+    ],
+  );
+  assert.equal(diffGapLabel(5), "5 行未改动");
+}
+console.log("patch: ok");
 console.log("activity: ok");
 
 // 本地回显的用户消息：转录里出现了就撤掉，否则留着（否则追加的任务会从页面消失）。
 assert.deepEqual(settlePending(["还没有的"], []), ["还没有的"]);
-assert.deepEqual(settlePending(["已进转录"], [{ role: "user", content: "已进转录" }]), []);
-assert.deepEqual(settlePending(["已进转录"], [{ role: "assistant", content: "已进转录" }]), ["已进转录"]);
-assert.deepEqual(settlePending([" 带空白 "], [{ role: "user", content: "带空白\n" }]), []);
-assert.deepEqual(settlePending(["a", "b"], [{ role: "user", content: "b" }]), ["a"]);
+assert.deepEqual(
+  settlePending(["已进转录"], [{ role: "user", content: "已进转录" }]),
+  [],
+);
+assert.deepEqual(
+  settlePending(["已进转录"], [{ role: "assistant", content: "已进转录" }]),
+  ["已进转录"],
+);
+assert.deepEqual(
+  settlePending([" 带空白 "], [{ role: "user", content: "带空白\n" }]),
+  [],
+);
+assert.deepEqual(settlePending(["a", "b"], [{ role: "user", content: "b" }]), [
+  "a",
+]);
 const unchanged = ["a"];
 assert.equal(settlePending(unchanged, []), unchanged);
 console.log("pendingMessages: ok");

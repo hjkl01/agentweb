@@ -109,6 +109,8 @@ export type ChatMessage = {
   duration_ms?: number;
   truncated?: boolean;
   diff?: string;
+  /** `edit` 结果的统一 diff（后端从 `details.patch` 取），分栏视图解析的是它。 */
+  patch?: string;
   /** assistant: answering model, why the turn stopped, provider error. */
   model?: string;
   stop_reason?: string;

@@ -10,7 +10,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -249,7 +252,7 @@ impl ProcessAdapter {
         line: &str,
         result: &Arc<Mutex<AgentRunResult>>,
         events: &EventBus,
-    ) {
+    ) -> bool {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             if !line.trim().is_empty() {
                 let text = format!("{line}\n");
@@ -261,8 +264,11 @@ impl ProcessAdapter {
                     })
                     .await;
             }
-            return;
+            return false;
         };
+        if matches!(kind, ProcessKind::Pi) && pi_events::is_settled(&value) {
+            return true;
+        }
         if result.lock().await.native_session_id.is_none() {
             if let Some(native) = Self::native_session(kind, &value) {
                 result.lock().await.native_session_id = Some(native);
@@ -283,7 +289,7 @@ impl ProcessAdapter {
                 if !accumulated.is_empty() {
                     if accumulated.ends_with(&final_text) {
                         // The final assistant event repeats text already streamed.
-                        return;
+                        return false;
                     }
                     if let Some(remainder) = final_text.strip_prefix(&accumulated) {
                         // Preserve any suffix that was not included in partial events.
@@ -297,7 +303,7 @@ impl ProcessAdapter {
                                 })
                                 .await;
                         }
-                        return;
+                        return false;
                     }
                 }
             }
@@ -310,7 +316,7 @@ impl ProcessAdapter {
                     text,
                 })
                 .await;
-            return;
+            return false;
         }
         if let Some(text) = event_parser::emit_generic(session_id, &value, line, events).await {
             if Self::assistant_event(kind, &value) {
@@ -323,6 +329,7 @@ impl ProcessAdapter {
                     .await;
             }
         }
+        false
     }
     async fn stop_child(child: &Arc<Mutex<Child>>) -> Result<()> {
         let mut process = child.lock().await;
@@ -423,11 +430,17 @@ impl ProcessAdapter {
         let out_result = result.clone();
         let out_events = events.clone();
         let out_sid = sid.clone();
+        let settled = Arc::new(AtomicBool::new(false));
+        let out_settled = settled.clone();
         let out = tokio::spawn(async move {
             if let Some(stdout) = stdout {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Some(line) = lines.next_line().await? {
-                    Self::handle_stdout(kind, &out_sid, &line, &out_result, &out_events).await;
+                    let done =
+                        Self::handle_stdout(kind, &out_sid, &line, &out_result, &out_events).await;
+                    if done {
+                        out_settled.store(true, Ordering::SeqCst);
+                    }
                 }
             }
             Ok::<(), anyhow::Error>(())
@@ -460,7 +473,20 @@ impl ProcessAdapter {
             }
             Ok::<(), anyhow::Error>(())
         });
+        let mut settled_stopped = false;
         let status = loop {
+            // Pi announces the end of its agent loop without exiting when extensions
+            // keep child processes around, so stop it here to finish the run.
+            if !settled_stopped && settled.load(Ordering::SeqCst) {
+                settled_stopped = true;
+                if let Err(error) = Self::stop_child(&child).await {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        %error,
+                        "failed to stop settled agent process"
+                    );
+                }
+            }
             match child.lock().await.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
@@ -574,7 +600,9 @@ impl ProcessAdapter {
                 AgentRunError::failed(error.to_string(), result.native_session_id.clone()).into(),
             );
         }
-        if status.success() {
+        // A settled agent stopped by us is a normal end of run even though the
+        // resulting exit status is a signal, not a zero exit code.
+        if status.success() || settled_stopped {
             events
                 .publish(AgentEvent::MessageCompleted {
                     session_id: session_id.into(),

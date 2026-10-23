@@ -34,6 +34,13 @@ pub async fn handle(session_id: &str, value: &Value, events: &EventBus) -> Optio
     }
 }
 
+/// Pi reports that the agent loop finished. The process itself can stay alive
+/// afterwards when extension child processes (MCP servers) keep it running, so
+/// the runner needs this signal to stop it and complete the session.
+pub fn is_settled(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("agent_settled")
+}
+
 pub fn is_assistant(value: &Value) -> bool {
     value.get("type").and_then(Value::as_str) == Some("message_update")
         && value

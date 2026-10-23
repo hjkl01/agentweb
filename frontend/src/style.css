@@ -1264,16 +1264,6 @@ button:disabled {
   border-radius: 12px;
   box-shadow: 0 2px 8px #00000005;
 }
-.activity-header {
-  min-height: 56px;
-  padding: 10px 14px;
-  gap: 11px;
-  text-align: left;
-  background: #fff;
-}
-.activity-header:hover:not(:disabled) {
-  background: #fafafa;
-}
 .activity-status-icon {
   width: 30px;
   height: 30px;
@@ -1306,19 +1296,14 @@ button:disabled {
   text-align: left;
 }
 .activity-heading strong {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #29292f;
 }
 .activity-heading small {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   color: #92929b;
-}
-.activity-chevron {
-  color: #96969f;
-  transition: transform 0.18s;
-  flex: 0 0 auto;
 }
 .activity-chevron.expanded {
   transform: rotate(180deg);
@@ -2155,12 +2140,6 @@ select:focus-visible {
   border-color: var(--ui-border);
   border-radius: var(--ui-radius-md);
   box-shadow: var(--ui-shadow-sm);
-}
-
-.activity-header {
-  min-height: 39px;
-  background: var(--ui-surface-muted);
-  color: var(--ui-text-muted);
 }
 
 .activity-list {
@@ -4101,33 +4080,40 @@ select:focus-visible {
   width: min(100%, var(--chat-content-width));
   margin: 0 auto 16px;
   padding-left: 39px; /* align with the message content column (avatar + gap) */
-  border: 1px solid #e9e9ef;
-  border-radius: 10px;
-  background: #fcfcfd;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
   overflow: hidden;
-  /* 执行过程是次要内容，比正文小 1.5px，但要跟正文字号一起缩放。 */
-  font-size: calc(var(--chat-font-size) - 1.5px);
+  box-shadow: var(--ui-shadow-sm);
+  /* 执行过程是次要内容，比正文小 1px，但要跟正文字号一起缩放。 */
+  font-size: calc(var(--chat-font-size) - 1px);
 }
 .activity-steps.failed {
   border-color: #f2c7c2;
 }
+/* 标题行同时被 AgentActivity（运行中的实时卡片）和这里的执行过程复用。 */
 .activity-header {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  min-height: 40px;
+  padding: 7px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: #6b6b74;
-  font-size: 1em;
+  color: var(--ui-text);
+  font-size: 1.043em;
   font-weight: 600;
   text-align: left;
 }
 .activity-header:hover:not(:disabled) {
-  background: #f5f5f9;
-  color: #3f3f4a;
+  background: var(--ui-surface-hover);
+}
+.activity-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--ui-text-subtle);
 }
 .activity-title {
   flex: 0 0 auto;
@@ -4138,18 +4124,25 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #93939c;
+  color: var(--ui-text-muted);
+  font-size: 0.957em;
   font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.activity-duration {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+  font-size: 0.957em;
   font-variant-numeric: tabular-nums;
 }
 .activity-badge {
   flex: 0 0 auto;
-  padding: 0 6px;
+  padding: 1px 7px;
   border: 0;
   border-radius: 999px;
   background: #f0f0f4;
-  color: #7a7a86;
-  font-size: 0.87em;
+  color: #6b6b74;
+  font-size: 0.913em;
   font-weight: 500;
 }
 .activity-badge.failed {
@@ -4161,67 +4154,103 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  color: #5b5bd6;
-  font-size: 0.913em;
+  color: var(--ui-accent);
+  font-size: 0.957em;
 }
 .activity-chevron {
   flex: 0 0 auto;
-  color: #9a9aa4;
+  color: var(--ui-text-subtle);
   transition: transform 0.15s;
 }
 .activity-chevron.expanded {
   transform: rotate(180deg);
 }
 .step-list {
-  border-top: 1px solid #eef0f3;
-  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface);
 }
-.step + .step {
-  border-top: 1px solid #f2f2f6;
+/* 每行是一张 pi-web 式的卡片：成功偏绿、出错偏红，颜色本身就是状态。 */
+.step {
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 7px;
+  background: rgba(34, 197, 94, 0.04);
+}
+.step[data-kind="thinking"],
+.step[data-kind="note"] {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-muted);
+}
+.step.failed {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.05);
 }
 .step-row {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border: 0;
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
-  color: #4a4a55;
-  font-size: 1em;
+  color: var(--ui-text-muted);
+  font-size: 0.96em;
   text-align: left;
 }
 .step-row:hover:not(:disabled) {
-  background: #fafafc;
+  background: var(--ui-surface-hover);
 }
-.step.failed > .step-row {
-  background: #fff8f7;
-  color: #b42318;
+/* 图标按工具家族上色：八种形状加六种颜色，二十行也能一眼扫过去。 */
+.step[data-kind="shell"] {
+  --step-accent: #3b6fd4;
+}
+.step[data-kind="file"] {
+  --step-accent: #5c6f8e;
+}
+.step[data-kind="edit"] {
+  --step-accent: #b25e09;
+}
+.step[data-kind="search"] {
+  --step-accent: #0f766e;
+}
+.step[data-kind="web"] {
+  --step-accent: #6d5bd0;
+}
+.step[data-kind="context"] {
+  --step-accent: #7c6bb8;
+}
+.step[data-kind="agent"] {
+  --step-accent: #b4375f;
 }
 .step-icon {
   flex: 0 0 auto;
   display: flex;
-  color: #9a9aa4;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--step-accent, var(--ui-text-subtle));
 }
 .step.failed .step-icon {
-  color: #d1432f;
+  color: var(--ui-danger);
 }
+/* 固定宽度的动作列，让每行的目标都从同一条竖线开始。 */
 .step-name {
   flex: 0 0 auto;
-  max-width: 32%;
+  width: 5.5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #5b5b66;
-  font:
-    0.957em/1.5 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  color: var(--step-accent, var(--ui-text));
+  font-size: 1em;
+  font-weight: 600;
 }
 .step.failed .step-name {
-  color: #b42318;
+  color: var(--ui-danger);
 }
 .step-summary {
   flex: 1;
@@ -4229,81 +4258,240 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #93939c;
+  color: var(--ui-text-muted);
   font:
-    0.957em/1.5 ui-monospace,
+    0.957em/1.6 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
 }
+/* 思考是散文，不是命令：不进等宽字体，也比工具行安静。 */
+.step[data-kind="thinking"] .step-name {
+  color: var(--ui-text-muted);
+  font-weight: 400;
+}
+.step[data-kind="thinking"] .step-summary {
+  font-family: inherit;
+  font-size: 1em;
+}
 .step-time {
   flex: 0 0 auto;
-  color: #a4a4ac;
+  min-width: 3.2em;
+  color: var(--ui-text-muted);
   font-size: 0.913em;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 .step-state {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  color: #5b5bd6;
-  font-size: 0.913em;
+  color: var(--ui-accent);
+  font-size: 0.957em;
 }
 .step-badge {
   flex: 0 0 auto;
-  padding: 0 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   background: #fdf4e6;
   color: #b25e09;
-  font-size: 0.87em;
+  font-size: 0.913em;
 }
 .step-chevron {
   flex: 0 0 auto;
-  color: #b4b4bc;
+  color: var(--ui-text-subtle);
   transition: transform 0.15s;
 }
+/* pi-web 的箭头一直可见，展开时转半圈。 */
 .step-chevron.open {
-  transform: rotate(90deg);
+  transform: rotate(180deg);
 }
 .step-note {
-  padding: 5px 10px 7px;
-  color: #6b6b74;
+  padding: 6px 10px 7px;
+  color: var(--ui-text-muted);
   font-size: 1.043em;
 }
 .step-body {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  padding: 2px 10px 9px 30px;
+  padding: 0 8px 8px;
 }
 .step-body pre {
   margin: 0;
-  padding: 7px 9px;
-  border-radius: 7px;
-  background: #f7f7fa;
-  color: #5c5c66;
-  max-height: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: var(--ui-surface);
+  color: var(--ui-text-muted);
+  max-height: 400px;
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-word;
+  word-break: break-all;
   font:
-    0.957em/1.55 ui-monospace,
+    0.92em/1.55 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
 }
-.step-empty {
-  color: #a4a4ac;
+/* 思考是散文，底色比工具输出暗一档，别和命令输出混在一起。 */
+.step-thinking-text {
+  background: var(--ui-surface-muted);
+  max-height: 320px;
+}
+/* pi-web 的空结果：斜体淡淡的 (no output)，不画一个空框。 */
+.step-body pre.step-empty {
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-subtle);
+  font-style: italic;
+  opacity: 0.6;
+}
+/* 参数表：左边参数名，右边值；值一多行就换成块，不再拉宽表格。 */
+.step-args-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.step-arg-key {
+  padding: 4px 12px 4px 0;
+  color: var(--ui-text-subtle);
+  font-size: 0.92em;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.step-arg-value {
+  padding: 4px 0;
+  color: var(--ui-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.step-body pre.step-arg-block {
+  padding: 8px 10px;
+  max-height: 260px;
+  line-height: 1.5;
+  font: inherit;
 }
 .step-image {
   display: block;
   max-width: 100%;
-  max-height: 420px;
+  max-height: 520px;
   object-fit: contain;
-  border-radius: 8px;
-  border: 1px solid #e6e6eb;
-  background: #fafafa;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface-muted);
+}
+/* 工具改动的分栏 diff：左旧右新，行号贴在每格内侧，改动底色只铺在格子上。 */
+.patch-files {
+  display: flex;
+  flex-direction: column;
+}
+.patch-files.many {
+  gap: 14px;
+}
+.patch-file-path {
+  margin-bottom: 6px;
+  padding: 4px 10px 3px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-subtle);
+  font:
+    0.88em/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.patch-scroll {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-surface);
+  max-height: 560px;
+  overflow: auto;
+}
+.patch-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.patch-cell {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 1px 10px 1px 6px;
+  color: var(--ui-text-muted);
+  font:
+    0.92em/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
+}
+.patch-cell.added {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+.patch-cell.removed {
+  background: rgba(248, 113, 113, 0.13);
+  color: #dc2626;
+}
+/* 另一侧没有对应行时留空，两栏的行号才不会错位。 */
+.patch-cell.empty {
+  background: var(--ui-surface-muted);
+}
+.patch-gutter {
+  flex: 0 0 auto;
+  width: 42px;
+  color: var(--ui-text-subtle);
+  text-align: right;
+  white-space: nowrap;
+}
+.patch-marker {
+  flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  opacity: 0.7;
+}
+.patch-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* hunk 头和省略行横跨两栏（单列模式不是网格，grid-column 不起作用，无害）。 */
+.patch-hunk {
+  grid-column: 1 / -1;
+  padding: 2px 10px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-subtle);
+  font:
+    0.88em/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.patch-gap {
+  grid-column: 1 / -1;
+  padding: 3px 10px;
+  border-top: 1px dashed var(--ui-border);
+  border-bottom: 1px dashed var(--ui-border);
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-subtle);
+  font-size: 0.88em;
+  text-align: center;
+}
+/* 解析不动的补丁原样等宽显示（卡片样式继承 .step-body pre）。 */
+.patch-plain {
+  max-height: 260px;
+  font-size: 0.92em;
+}
+/* 思考图标展开时点亮，跟 pi-web 的灯泡一致。 */
+.step-bulb.active {
+  color: #d4a017;
+  fill: rgba(250, 204, 21, 0.18);
 }
 /* Assistant reasoning without a tool call (the final answer's thinking). */
 .msg-thinking {

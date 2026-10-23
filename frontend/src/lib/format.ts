@@ -11,6 +11,22 @@ export function formatDuration(ms?: number): string | undefined {
   return `${Math.floor(ms / 60_000)}m${seconds}s`;
 }
 
+/** 快过这个耗时的工具不显示时间：每次快速读取都写 0.0s，只是噪音。（pi-web 同值） */
+export const TOOL_DURATION_MIN_MS = 100;
+
+/** 工具耗时，按 pi CLI 的 `Took` 写法：2.4s → 3m 5s → 1h 2m 5s。 */
+export function formatToolDuration(ms?: number): string | undefined {
+  if (ms === undefined || !Number.isFinite(ms) || ms < TOOL_DURATION_MIN_MS) {
+    return undefined;
+  }
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds}s`;
+}
+
 /** Keys that identify a tool call at a glance, in order of usefulness. */
 const SUMMARY_KEYS = [
   "command",
@@ -35,6 +51,32 @@ export function toolSummary(args: unknown): string | undefined {
       return value.replace(/\s+/g, " ").trim().slice(0, 120);
   }
   return undefined;
+}
+
+/** 参数表的一行。（pi-web tool-fields.ts） */
+export type ToolField = {
+  key: string;
+  value: string;
+  multiline: boolean;
+};
+
+/** 参数是「一排标量」时排成两列表；只要有一个值是嵌套对象/数组/空值，就整体退回 JSON 视图。 */
+export function toolFieldsOfInput(input: unknown): ToolField[] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (!entries.length) return undefined;
+  const fields: ToolField[] = [];
+  for (const [key, raw] of entries) {
+    if (raw === null || raw === undefined || typeof raw === "object") {
+      return undefined;
+    }
+    const value = typeof raw === "string" ? raw : String(raw);
+    if (!value.trim()) return undefined;
+    fields.push({ key, value, multiline: value.includes("\n") });
+  }
+  return fields;
 }
 
 export type DiffLineKind = "hunk" | "gap" | "add" | "remove" | "context";
@@ -162,7 +204,36 @@ export function groupTranscript(messages: ChatMessage[]): TranscriptEntry[] {
   return entries;
 }
 
-/** 执行过程标题行右侧的事实：`bash ×3 · read · 12s`，以及出错/截断/运行中的提示。 */
+/** 工具名 → 中文短标签。查不到就原样显示英文名：宁可露出原名，也不要猜一个错的动词。 */
+const TOOL_LABELS: Record<string, string> = {
+  bash: "运行命令",
+  read: "读取文件",
+  write: "写入文件",
+  edit: "修改文件",
+  patch: "修改文件",
+  grep: "搜索代码",
+  glob: "查找文件",
+  web_search: "联网搜索",
+  fetch_content: "抓取网页",
+  compress: "压缩上下文",
+  decompress: "展开上下文",
+  search_context: "检索上下文",
+  subagent: "委派任务",
+  task: "委派任务",
+  todo: "更新待办",
+  memory_read: "读取记忆",
+  memory_write: "写入记忆",
+  memory_search: "检索记忆",
+  scratchpad: "记录备忘",
+  ask_user_question: "询问用户",
+};
+
+export function toolLabel(name?: string): string {
+  if (!name) return "工具";
+  return TOOL_LABELS[name] ?? name;
+}
+
+/** 执行过程标题行右侧的事实：`运行命令 ×3 · 读取文件 · 12s`，以及出错/截断/运行中的提示。 */
 export function activityFacts(rows: ActivityRow[]): {
   tools: string;
   durationMs: number;
@@ -177,7 +248,7 @@ export function activityFacts(rows: ActivityRow[]): {
   let pending = 0;
   for (const row of rows) {
     if (row.kind === "note") continue;
-    const name = row.kind === "thinking" ? "思考" : row.name || "tool";
+    const name = row.kind === "thinking" ? "思考" : toolLabel(row.name);
     counts.set(name, (counts.get(name) ?? 0) + 1);
     if (row.kind === "thinking") continue;
     if (!row.result) {
