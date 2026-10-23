@@ -24,6 +24,10 @@ import {
   unifiedDiffLines,
 } from "../.tmp-test/lib/patch.js";
 import { settlePending } from "../.tmp-test/lib/pendingMessages.js";
+import {
+  turnWrittenFiles,
+  workspaceRelative,
+} from "../.tmp-test/lib/turnFiles.js";
 
 const session = (id, native, forkFrom) => ({
   id,
@@ -321,3 +325,86 @@ assert.deepEqual(settlePending(["a", "b"], [{ role: "user", content: "b" }]), [
 const unchanged = ["a"];
 assert.equal(settlePending(unchanged, []), unchanged);
 console.log("pendingMessages: ok");
+
+// turnFiles：每轮写入文件只认工具调用的参数，不扫回复正文。
+assert.equal(
+  workspaceRelative("/home/ljl/proj", "/home/ljl/proj/src/a.ts"),
+  "src/a.ts",
+);
+assert.equal(workspaceRelative("/home/ljl/proj", "/etc/passwd"), undefined);
+assert.equal(workspaceRelative("/home/ljl/proj/", "src/b.ts"), "src/b.ts");
+const writeCall = (id, name, args) => ({
+  type: "toolCall",
+  name,
+  arguments: args,
+  tool_call_id: id,
+});
+const callResult = (callId, extra = {}) => ({
+  id: `r-${callId}`,
+  role: "toolResult",
+  content: "",
+  tool_call_id: callId,
+  ...extra,
+});
+const turn = {
+  id: "a1",
+  role: "assistant",
+  content: "",
+  parts: [
+    writeCall("c1", "write", { path: "/home/ljl/proj/src/a.ts" }),
+    writeCall("c2", "edit", { file_path: "/home/ljl/proj/src/a.ts" }),
+    writeCall("c3", "bash", { command: "touch x" }),
+    writeCall("c4", "write", { path: "/etc/passwd" }),
+  ],
+};
+const results = new Map(
+  ["c1", "c2", "c3", "c4"].map((id) => [id, callResult(id)]),
+);
+// 同一文件写两次只列一个；工作区外的路径不列；非写文件的工具不列。
+assert.deepEqual(
+  turnWrittenFiles([turn], results, "/home/ljl/proj")
+    .get("a1")
+    .map((file) => file.path),
+  ["src/a.ts"],
+);
+// 结果缺失（调用被分页截断）或失败时都不列。
+assert.equal(
+  turnWrittenFiles([turn], new Map(), "/home/ljl/proj").size,
+  0,
+);
+assert.deepEqual(
+  turnWrittenFiles(
+    [turn],
+    new Map([...results, ["c1", callResult("c1", { is_error: true })]]),
+    "/home/ljl/proj",
+  )
+    .get("a1")
+    .map((file) => file.path),
+  ["src/a.ts"],
+);
+// apply_patch 的路径只能从补丁文本取，删除的文件不算写入。
+const patched = turnWrittenFiles(
+  [
+    {
+      id: "a2",
+      role: "assistant",
+      content: "",
+      parts: [writeCall("p1", "apply_patch", { patch: "*** Begin Patch" })],
+    },
+  ],
+  new Map([
+    [
+      "p1",
+      callResult("p1", {
+        patch:
+          "*** Begin Patch\n*** Add File: /home/ljl/proj/notes.md\n+x\n*** Update File: /home/ljl/proj/src/a.ts\n*** Delete File: /home/ljl/proj/old.md\n*** End Patch",
+      }),
+    ],
+  ]),
+  "/home/ljl/proj",
+);
+assert.deepEqual(
+  patched.get("a2").map((file) => file.path),
+  ["notes.md", "src/a.ts"],
+);
+console.log("turnFiles: ok");

@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api } from "../lib/api";
 import { settlePending } from "../lib/pendingMessages";
-import type { ActivityItem, ChatMessage, FileItem, Session } from "../types";
+import type {
+  ActivityItem,
+  BranchPoint,
+  ChatMessage,
+  FileItem,
+  Session,
+} from "../types";
 import { useSessionActions } from "./useSessionActions";
 import { useSessionEvents } from "./useSessionEvents";
 
@@ -16,6 +22,9 @@ export function useSession(active?: string) {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  // 选中的分支叶节点；undefined 表示 pi 的默认分支（最后一条 entry 所在路径）。
+  const [leaf, setLeaf] = useState<string>();
+  const [branches, setBranches] = useState<BranchPoint[]>([]);
   const [error, setError] = useState<string>();
   const refreshRequestId = useRef(0);
   const activeRefreshRequestId = useRef(0);
@@ -129,6 +138,8 @@ export function useSession(active?: string) {
       const content = message.trim();
       if (!content || activeSessionRef.current !== sessionId) return;
       echoPendingUser(content);
+      // 发出新消息后 pi 会继续默认分支，视图必须跟着回去。
+      setLeaf(undefined);
       setActivity([]);
       setActivityOpen(false);
       try {
@@ -158,6 +169,8 @@ export function useSession(active?: string) {
     refreshActiveSession,
     setMessages: setServerMessages,
     setFiles,
+    setBranches,
+    leaf,
     setStream,
     setActivity,
     setActivityOpen,
@@ -199,6 +212,9 @@ export function useSession(active?: string) {
     activity,
     activityOpen,
     workspaceRevision,
+    leaf,
+    branches,
+    setLeaf,
     pendingUser,
     error,
     echoPendingUser,

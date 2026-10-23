@@ -15,12 +15,13 @@ import {
   Square,
   User,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type {
   ActivityItem,
   Agent,
   AgentModel,
+  BranchPoint,
   ChatMessage,
   Session,
   UploadedFile,
@@ -38,14 +39,18 @@ import { ModelSelector } from "./ModelSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ToolPresetSelector } from "./ToolPresetSelector";
 import { AgentSelector } from "./AgentSelector";
+import { ChatMinimap } from "./ChatMinimap";
 import { MarkdownMessage } from "./MarkdownMessage";
 import {
   AssistantParts,
+  BranchSwitcher,
   CompactionMessage,
   ToolResultCard,
+  WrittenFiles,
 } from "./MessageParts";
 import { SessionExportButton } from "./SessionExportButton";
 import { SessionStats } from "./SessionStats";
+import { turnWrittenFiles } from "../lib/turnFiles";
 
 /** How many messages the transcript renders before "show earlier". */
 const MESSAGE_PAGE = 80;
@@ -119,6 +124,12 @@ type Props = {
   onNewChat: () => void;
   onOpenSettings: () => void;
   onAutoResize: () => void;
+  onOpenFile?: (path: string) => void;
+  /** 会话树里的岔口；空表示线性会话。 */
+  branches?: BranchPoint[];
+  /** 正在查看的分支叶节点；不传表示 pi 的默认分支。 */
+  leaf?: string;
+  onSelectBranch: (leaf?: string) => void;
 };
 export function ChatPanel({
   current,
@@ -151,6 +162,10 @@ export function ChatPanel({
   onNewChat,
   onOpenSettings,
   onAutoResize,
+  onOpenFile,
+  branches,
+  leaf,
+  onSelectBranch,
 }: Props) {
   const running = current?.status === "running";
   // Pi can branch at a user message only while the session is idle and present on disk.
@@ -185,6 +200,26 @@ export function ChatPanel({
   // visibleMessages 每次渲染都是新数组，memo 不划算，直接算。
   const toolResults = toolResultsByCall(visibleMessages);
   const thinkingSeconds = responseSeconds(visibleMessages);
+  const writtenFiles = turnWrittenFiles(
+    visibleMessages,
+    toolResults,
+    current?.workspace ?? "",
+  );
+  const contextWindow = models.find(
+    (model) => model.id === current?.model,
+  )?.context_window;
+  // 运行中不改分支：底层文件还在追加，切走会看到半截路径。
+  const branchPointFor = (id: string) => {
+    const point = branches?.find((item) => item.after === id);
+    if (!point || running) return null;
+    return (
+      <BranchSwitcher
+        options={point.options}
+        leaf={leaf}
+        onSelect={onSelectBranch}
+      />
+    );
+  };
   useEffect(() => {
     if (!preferences.quoteSelection) {
       setQuote(undefined);
@@ -317,7 +352,7 @@ export function ChatPanel({
             >
               <SlidersHorizontal size={16} />
             </button>
-            <SessionStats messages={messages} />
+            <SessionStats messages={messages} contextWindow={contextWindow} />
             <AgentSelector
               value={current?.agent_id}
               agents={agents}
@@ -434,6 +469,19 @@ export function ChatPanel({
             {messages.length} 条）
           </button>
         )}
+        {leaf && !running && (
+          <div className="branch-banner">
+            <GitBranch size={13} />
+            <span>正在查看历史分支，后续消息不会接在这条线上</span>
+            <button
+              type="button"
+              className="message-action"
+              onClick={() => onSelectBranch(undefined)}
+            >
+              返回当前分支
+            </button>
+          </div>
+        )}
         {visibleMessages.map((message) => {
           // 结果已经挂在对应调用卡片上的就跳过；配不到调用的（调用被分页截断）单独成卡片。
           if (message.role === "toolResult")
@@ -445,12 +493,16 @@ export function ChatPanel({
             );
           if (message.role === "compaction") {
             return (
-              <CompactionMessage key={message.id} content={message.content} />
+              <Fragment key={message.id}>
+                <CompactionMessage content={message.content} />
+                {branchPointFor(message.id)}
+              </Fragment>
             );
           }
           return (
+            <Fragment key={message.id}>
             <div
-              key={message.id}
+              data-message-id={message.id}
               className={`message-row ${message.role}${message.stop_reason === "error" ? " failed" : ""}`}
             >
               {message.role !== "user" && (
@@ -489,18 +541,28 @@ export function ChatPanel({
                   )}
                 </div>
                 {message.role === "assistant" ? (
-                  <AssistantParts
-                    message={message}
-                    sessionId={current?.id}
-                    toolResults={toolResults}
-                    thinkingSeconds={thinkingSeconds.get(message.id)}
-                    thinkingExpanded={preferences.thinkingExpanded}
-                  />
+                  <>
+                    <AssistantParts
+                      message={message}
+                      sessionId={current?.id}
+                      toolResults={toolResults}
+                      thinkingSeconds={thinkingSeconds.get(message.id)}
+                      thinkingExpanded={preferences.thinkingExpanded}
+                    />
+                    {writtenFiles.has(message.id) && (
+                      <WrittenFiles
+                        files={writtenFiles.get(message.id) ?? []}
+                        onOpenFile={onOpenFile}
+                      />
+                    )}
+                  </>
                 ) : (
                   <MarkdownMessage content={message.content} />
                 )}
               </div>
             </div>
+            {branchPointFor(message.id)}
+            </Fragment>
           );
         })}
         {stream && (
@@ -532,6 +594,7 @@ export function ChatPanel({
           </div>
         ))}
       </section>
+      <ChatMinimap messages={visibleMessages} chatRef={chatRef} />
       <div className="composer-wrap">
         <div className="composer-container">
           {mentionOpen && (

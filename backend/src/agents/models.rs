@@ -10,6 +10,9 @@ pub struct AgentModel {
     pub name: String,
     pub provider: Option<String>,
     pub source: String,
+    /// `pi --list-models` 的 context 列，例如 `128K` → 128000。缺省表示未知。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 /// Runs an Agent CLI subcommand. `timeout` bounds long introspection commands such as
@@ -84,6 +87,18 @@ fn clean_cli_line(line: &str) -> String {
     result.trim().to_owned()
 }
 
+/// context 列的写法：`128K` / `1M` / `200000`。
+fn parse_context_window(raw: &str) -> Option<u64> {
+    let text = raw.trim();
+    let (number, factor) = match text.chars().last()? {
+        'K' | 'k' => (&text[..text.len() - 1], 1_000f64),
+        'M' | 'm' => (&text[..text.len() - 1], 1_000_000f64),
+        _ => (text, 1f64),
+    };
+    let value: f64 = number.trim().parse().ok()?;
+    (value > 0.0).then(|| (value * factor).round() as u64)
+}
+
 fn parse_pi_models(output: &str) -> Vec<AgentModel> {
     let mut result = Vec::new();
     for raw in output.lines() {
@@ -102,6 +117,7 @@ fn parse_pi_models(output: &str) -> Vec<AgentModel> {
         let Some(model) = columns.next() else {
             continue;
         };
+        let context_window = columns.next().and_then(parse_context_window);
         if provider.starts_with('-')
             || model.starts_with('-')
             || provider.eq_ignore_ascii_case("provider")
@@ -121,6 +137,7 @@ fn parse_pi_models(output: &str) -> Vec<AgentModel> {
             name: model.to_owned(),
             provider: Some(provider.to_owned()),
             source: "pi --list-models".into(),
+            context_window,
         });
     }
     result
@@ -238,6 +255,7 @@ fn pi_config_models() -> Vec<AgentModel> {
                     name: model.name.unwrap_or_else(|| id.clone()),
                     provider: Some(provider.clone()),
                     source: path.to_string_lossy().into_owned(),
+                    context_window: None,
                 });
             }
         }
@@ -246,8 +264,12 @@ fn pi_config_models() -> Vec<AgentModel> {
 }
 fn merge_models(mut configured: Vec<AgentModel>, discovered: Vec<AgentModel>) -> Vec<AgentModel> {
     for model in discovered {
-        if !configured.iter().any(|item| item.id == model.id) {
-            configured.push(model);
+        match configured.iter_mut().find(|item| item.id == model.id) {
+            // 配置里的条目不带窗口信息，用 `pi --list-models` 的补上。
+            Some(existing) => {
+                existing.context_window = existing.context_window.or(model.context_window);
+            }
+            None => configured.push(model),
         }
     }
     configured
@@ -297,6 +319,7 @@ fn codex_config_models() -> Vec<AgentModel> {
                 name: value.to_owned(),
                 provider: Some("openai".into()),
                 source: path.to_string_lossy().into_owned(),
+                context_window: None,
             });
         }
     }
@@ -431,5 +454,47 @@ mod auth_report_tests {
         ] {
             assert!(!valid_cli_token(rejected), "{rejected:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod model_list_tests {
+    use super::*;
+
+    #[test]
+    fn parses_context_window_column() {
+        let output = "Provider    Model           Context  Max-out\n\
+╭───────────┬───────────────┬────────┬────────╮\n\
+  qwen      glm-5.3         128K     16.4K\n\
+  agnes     agnes-2.5-flash 1M       128K\n\
+  local     my-model        200000   n/a\n\
+  broken    no-context      -        n/a\n";
+        let models = parse_pi_models(output);
+        let window = |id: &str| {
+            models
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.context_window)
+        };
+        assert_eq!(window("qwen/glm-5.3"), Some(128_000));
+        assert_eq!(window("agnes/agnes-2.5-flash"), Some(1_000_000));
+        assert_eq!(window("local/my-model"), Some(200_000));
+        assert_eq!(window("broken/no-context"), None);
+    }
+
+    #[test]
+    fn discovered_window_fills_configured_entry() {
+        let configured = vec![AgentModel {
+            id: "qwen/glm-5.3".into(),
+            name: "glm-5.3".into(),
+            provider: Some("qwen".into()),
+            source: "/home/u/.pi/agent/models.json".into(),
+            context_window: None,
+        }];
+        let discovered = parse_pi_models("qwen  glm-5.3  128K  16.4K\n");
+        let merged = merge_models(configured, discovered);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].context_window, Some(128_000));
+        assert_eq!(merged[0].source, "/home/u/.pi/agent/models.json");
     }
 }

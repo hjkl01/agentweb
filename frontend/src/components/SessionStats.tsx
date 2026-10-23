@@ -18,7 +18,14 @@ function sumUsage(usage: MessageUsage) {
 }
 
 /** Compact token/cost summary aggregated from Pi `message.usage` fields. */
-export function SessionStats({ messages }: { messages: ChatMessage[] }) {
+export function SessionStats({
+  messages,
+  contextWindow,
+}: {
+  messages: ChatMessage[];
+  /** 当前模型的上下文窗口（tokens），未知时不显示占比。 */
+  contextWindow?: number;
+}) {
   const stats = useMemo(() => {
     let tokens = 0;
     let cost = 0;
@@ -40,16 +47,28 @@ export function SessionStats({ messages }: { messages: ChatMessage[] }) {
   }, [messages]);
 
   if (!stats.turns && !stats.tokens) return null;
+  // 上下文用量仪表：超出窗口时按 100% 显示，否则取整数百分比。
+  const percent = contextWindow
+    ? Math.min(100, Math.round((stats.context / contextWindow) * 100))
+    : undefined;
   const detail = [
-    `上下文约 ${stats.context.toLocaleString()} tokens`,
+    percent === undefined
+      ? `上下文约 ${stats.context.toLocaleString()} tokens`
+      : `上下文 ${stats.context.toLocaleString()} / ${contextWindow!.toLocaleString()} tokens（${percent}%）`,
     `累计 ${stats.tokens.toLocaleString()} tokens`,
     `费用 $${stats.cost.toFixed(4)}`,
     `${stats.turns} 轮`,
   ].join("\n");
   return (
-    <span className="session-stats" title={detail}>
+    <span
+      className={`session-stats${percent !== undefined && percent >= 80 ? " warn" : ""}`}
+      title={detail}
+    >
       <Gauge size={13} />
-      <span>{formatTokens(stats.context)} ctx</span>
+      <span>
+        {formatTokens(stats.context)} ctx
+        {percent === undefined ? "" : ` · ${percent}%`}
+      </span>
       <span className="session-stats-cost">${stats.cost.toFixed(3)}</span>
     </span>
   );

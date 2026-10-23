@@ -61,6 +61,8 @@ export type AgentModel = {
   name: string;
   provider?: string;
   source?: string;
+  /** pi `--list-models` 的 context 列（tokens）。缺失表示未知。 */
+  context_window?: number;
 };
 export type Session = {
   id: string;
@@ -124,6 +126,18 @@ export type ActivityItem = {
   type: string;
   label: string;
   detail?: string;
+};
+// Pi 把会话存成树：转录只渲染其中一条根→叶路径，这些是其余的岔口。
+export type BranchOption = {
+  id: string;
+  role: string;
+  preview: string;
+  entries: number;
+  live: boolean;
+};
+export type BranchPoint = {
+  after: string;
+  options: BranchOption[];
 };
 export type NodeInfo = {
   available: string[];

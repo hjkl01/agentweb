@@ -1,12 +1,12 @@
 use super::sessions::{load_session, load_session_record};
 use crate::agents::pi_transcript::{
-    native_session_file_exists, read_entry_image, read_messages, NativeSessionFileLookup,
-    TranscriptMessage,
+    native_session_file_exists, read_branches, read_entry_image, read_messages_at, BranchPoint,
+    NativeSessionFileLookup, TranscriptMessage,
 };
 use crate::state::AppState;
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::Response,
     Json,
@@ -30,8 +30,17 @@ async fn is_pi_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx
     Ok(kind.as_deref() == Some("pi"))
 }
 
+/// Optional branch selector for a transcript request. Pi stores sessions as a
+/// tree; the default transcript is one root-to-leaf path of it.
+#[derive(Debug, Deserialize)]
+pub struct MessagesQuery {
+    /// Entry id of the branch tip to read instead of the default branch.
+    pub leaf: Option<String>,
+}
+
 pub async fn list_messages(
     Path(id): Path<String>,
+    Query(params): Query<MessagesQuery>,
     State(s): State<AppState>,
 ) -> Result<Json<Vec<TranscriptMessage>>, StatusCode> {
     // Conversation content belongs to the Agent's native session, not SQLite.
@@ -64,13 +73,14 @@ pub async fn list_messages(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
     let native_session_id = native_session_id.to_owned();
+    let leaf = params.leaf;
     let (lookup, messages) = tokio::task::spawn_blocking(move || {
         // Keep the permit for the entire blocking read, including if the HTTP
         // request is cancelled after the worker has started.
         let _permit = permit;
         let lookup = native_session_file_exists(&native_session_id);
         let messages = if lookup == NativeSessionFileLookup::Found {
-            read_messages(&native_session_id)
+            read_messages_at(&native_session_id, leaf.as_deref())
         } else {
             Vec::new()
         };
@@ -110,6 +120,46 @@ pub async fn list_messages(
         }
     }
     Ok(Json(messages))
+}
+
+/// List the divergence points of a Pi session tree. The transcript only ever
+/// shows one branch, so this is what lets the client offer the others.
+pub async fn list_branches(
+    Path(id): Path<String>,
+    State(s): State<AppState>,
+) -> Result<Json<Vec<BranchPoint>>, StatusCode> {
+    let session = load_session_record(&s.db, &id).await?;
+    let is_pi = is_pi_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if !is_pi {
+        return Ok(Json(Vec::new()));
+    }
+    let Some(native_session_id) = session
+        .native_session_id
+        .as_deref()
+        .or(session.fork_from_native_session_id.as_deref())
+    else {
+        return Ok(Json(Vec::new()));
+    };
+    let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+        tracing::error!(%error, "Pi transcript read limiter is unavailable");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+    let native_session_id = native_session_id.to_owned();
+    let branches = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        read_branches(&native_session_id)
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "Pi branch reader task failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(branches))
 }
 
 /// Serve an image content part embedded in a Pi tool result (for example a

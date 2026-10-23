@@ -645,6 +645,23 @@ pub fn read_messages(native_session_id: &str) -> Vec<TranscriptMessage> {
     read_messages_from_root(&root, native_session_id)
 }
 
+/// Read the transcript of one branch of a session tree. `leaf` is the tip of a
+/// branch returned by [`read_branches`]; an unknown tip reads as empty rather
+/// than falling back to the default branch.
+pub fn read_messages_at(native_session_id: &str, leaf: Option<&str>) -> Vec<TranscriptMessage> {
+    let Some(root) = sessions_root() else {
+        return Vec::new();
+    };
+    let suffix = format!("_{native_session_id}.jsonl");
+    let Ok(Some(path)) = find_by_suffix(&root, &suffix, native_session_id) else {
+        return Vec::new();
+    };
+    let Some(content) = read_transcript_text(&path) else {
+        return Vec::new();
+    };
+    parse_messages_at(&content, native_session_id, leaf)
+}
+
 /// One message hit inside a transcript, with a snippet for display.
 #[derive(Clone, Debug)]
 pub struct TranscriptSearchHit {
@@ -991,20 +1008,18 @@ fn read_entry_image_from_root(
     None
 }
 
-fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessage> {
+/// Parse the JSONL prefix into `(file index, entry)` pairs, or `None` when the header
+/// or the entry caps make the file unusable for display.
+fn parse_entries(content: &str, native_session_id: &str) -> Option<Vec<(usize, Value)>> {
     // The first JSONL record is the session header. Do not let a malformed or
     // missing header be silently skipped so a later record can masquerade as
     // the header; malformed records after the header are still ignored below.
-    let Some(first_line) = content.lines().next() else {
-        return Vec::new();
-    };
-    let Ok(header) = serde_json::from_str::<Value>(first_line) else {
-        return Vec::new();
-    };
+    let first_line = content.lines().next()?;
+    let header = serde_json::from_str::<Value>(first_line).ok()?;
     if header.get("type").and_then(Value::as_str) != Some("session")
         || header.get("id").and_then(Value::as_str) != Some(native_session_id)
     {
-        return Vec::new();
+        return None;
     }
 
     // A byte limit alone does not bound the number of allocated JSON
@@ -1017,11 +1032,11 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
     let mut entries = Vec::new();
     for (index, line) in content.lines().enumerate() {
         if index >= MAX_TRANSCRIPT_LINES {
-            return Vec::new();
+            return None;
         }
         if let Ok(entry) = serde_json::from_str::<Value>(line) {
             if entries.len() >= MAX_TRANSCRIPT_ENTRIES {
-                return Vec::new();
+                return None;
             }
             entries.push((index, entry));
         }
@@ -1031,14 +1046,28 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
     // session header identifies the native session requested by the database.
     // This also prevents a malformed or replaced file from being shown as a
     // different conversation.
-    let Some((_, header)) = entries.first() else {
-        return Vec::new();
-    };
+    let (_, header) = entries.first()?;
     if header.get("type").and_then(Value::as_str) != Some("session")
         || header.get("id").and_then(Value::as_str) != Some(native_session_id)
     {
-        return Vec::new();
+        return None;
     }
+
+    Some(entries)
+}
+
+fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessage> {
+    parse_messages_at(content, native_session_id, None)
+}
+
+fn parse_messages_at(
+    content: &str,
+    native_session_id: &str,
+    leaf: Option<&str>,
+) -> Vec<TranscriptMessage> {
+    let Some(entries) = parse_entries(content, native_session_id) else {
+        return Vec::new();
+    };
 
     // Pi v2/v3 sessions are trees. On load, Pi restores the leaf from the last
     // persisted entry, then derives the visible branch by following parentId.
@@ -1060,11 +1089,17 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
             }
         }
         let mut active = std::collections::HashSet::new();
-        let mut current = entries.iter().rev().find_map(|(_, entry)| {
-            (entry.get("type").and_then(Value::as_str) != Some("session"))
-                .then(|| entry.get("id").and_then(Value::as_str))
-                .flatten()
-        });
+        // Viewing another branch starts the parent walk at that branch's tip;
+        // a tip that is no longer in the file filters everything out.
+        let mut current = if let Some(leaf) = leaf {
+            by_id.contains_key(leaf).then_some(leaf)
+        } else {
+            entries.iter().rev().find_map(|(_, entry)| {
+                (entry.get("type").and_then(Value::as_str) != Some("session"))
+                    .then(|| entry.get("id").and_then(Value::as_str))
+                    .flatten()
+            })
+        };
         while let Some(id) = current {
             if !active.insert(id.to_owned()) {
                 break;
@@ -1203,6 +1238,163 @@ fn parse_messages(content: &str, native_session_id: &str) -> Vec<TranscriptMessa
         });
     }
     messages
+}
+
+/// One selectable branch of a divergence point in Pi's session tree.
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchOption {
+    /// Entry id of the branch tip. The transcript for this branch is the path
+    /// from the session root to this entry.
+    pub id: String,
+    pub role: String,
+    pub preview: String,
+    /// Number of entries below the divergence point, including the tip.
+    pub entries: usize,
+    /// True for the branch the transcript shows by default (Pi's own leaf).
+    pub live: bool,
+}
+
+/// A divergence in the session tree, anchored to the message it follows.
+#[derive(Debug, Clone, Serialize)]
+pub struct BranchPoint {
+    pub after: String,
+    pub options: Vec<BranchOption>,
+}
+
+/// Read the divergence points of a session tree. Sibling branches are dropped
+/// from the transcript itself, so this is the only way to reach them again.
+pub fn read_branches(native_session_id: &str) -> Vec<BranchPoint> {
+    let Some(root) = sessions_root() else {
+        return Vec::new();
+    };
+    let suffix = format!("_{native_session_id}.jsonl");
+    let Ok(Some(path)) = find_by_suffix(&root, &suffix, native_session_id) else {
+        return Vec::new();
+    };
+    let Some(content) = read_transcript_text(&path) else {
+        return Vec::new();
+    };
+    parse_branches(&content, native_session_id)
+}
+
+/// First non-empty line of a message, short enough for a menu row.
+fn branch_preview(message: &Value) -> String {
+    let text = text_content(message.get("content").unwrap_or(&Value::Null)).unwrap_or_default();
+    let line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .trim();
+    let mut preview: String = line.chars().take(80).collect();
+    if line.chars().count() > 80 {
+        preview.push('…');
+    }
+    preview
+}
+
+fn parse_branches(content: &str, native_session_id: &str) -> Vec<BranchPoint> {
+    let Some(entries) = parse_entries(content, native_session_id) else {
+        return Vec::new();
+    };
+    let mut by_id = std::collections::HashMap::new();
+    for (_, entry) in &entries {
+        let Some(id) = entry.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        // Same rule as the transcript: ambiguous ids cannot be navigated.
+        if by_id.insert(id, entry).is_some() {
+            return Vec::new();
+        }
+    }
+    // Children in file order, which is append order and therefore age order.
+    let mut children: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for (_, entry) in &entries {
+        let (Some(id), Some(parent)) = (
+            entry.get("id").and_then(Value::as_str),
+            entry.get("parentId").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        children.entry(parent).or_default().push(id);
+    }
+
+    // The live branch is the one Pi restores: walk back from the last entry.
+    let mut live = std::collections::HashSet::new();
+    let mut current = entries.iter().rev().find_map(|(_, entry)| {
+        (entry.get("type").and_then(Value::as_str) != Some("session"))
+            .then(|| entry.get("id").and_then(Value::as_str))
+            .flatten()
+    });
+    while let Some(id) = current {
+        if !live.insert(id.to_owned()) {
+            break;
+        }
+        current = by_id
+            .get(id)
+            .and_then(|entry| entry.get("parentId"))
+            .and_then(Value::as_str);
+    }
+
+    let mut points = Vec::new();
+    for (_, entry) in &entries {
+        let Some(after) = entry.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !live.contains(after) {
+            continue;
+        }
+        let Some(branches) = children.get(after) else {
+            continue;
+        };
+        if branches.len() < 2 {
+            continue;
+        }
+        // The switcher sits under a rendered row: only messages and compaction
+        // summaries get one, so a divergence no user can see is not offered.
+        if entry.get("message").is_none()
+            && entry.get("type").and_then(Value::as_str) != Some("compaction")
+        {
+            continue;
+        }
+
+        let mut options = Vec::new();
+        for id in branches {
+            let Some(option) = by_id.get(id) else {
+                continue;
+            };
+            // Follow the most recent child so the option points at the branch
+            // as it currently ends, not at an early node of it.
+            let mut tip = *id;
+            let mut entries_below = 1;
+            while let Some(next) = children
+                .get(tip)
+                .and_then(|next| next.last())
+                .copied()
+            {
+                tip = next;
+                entries_below += 1;
+            }
+            let message = option.get("message").unwrap_or(&Value::Null);
+            options.push(BranchOption {
+                id: tip.to_owned(),
+                role: message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                preview: branch_preview(message),
+                entries: entries_below,
+                live: live.contains(*id),
+            });
+        }
+        if options.iter().any(|option| option.live) {
+            points.push(BranchPoint {
+                after: after.to_owned(),
+                options,
+            });
+        }
+    }
+    points
 }
 
 #[cfg(test)]
@@ -1361,6 +1553,79 @@ mod tests {
             ]
         );
         assert_eq!(messages[2].role, "compaction");
+    }
+
+    const BRANCHED_SESSION: [&str; 5] = [
+        r#"{"type":"session","id":"session-branch","version":3}"#,
+        r#"{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":"ask"}}"#,
+        r#"{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":"first answer"}}"#,
+        r#"{"type":"message","id":"alt","parentId":"u1","message":{"role":"assistant","content":"second answer"}}"#,
+        r#"{"type":"message","id":"u2","parentId":"alt","message":{"role":"user","content":"follow up"}}"#,
+    ];
+
+    #[test]
+    fn reports_divergence_points_with_live_branch_marked() {
+        let content = BRANCHED_SESSION.join("\n");
+
+        let points = parse_branches(&content, "session-branch");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].after, "u1");
+
+        let options = &points[0].options;
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].id, "a1");
+        assert_eq!(options[0].preview, "first answer");
+        assert_eq!(options[0].entries, 1);
+        assert!(!options[0].live);
+        // The last entry wins the default branch, so its option ends at u2.
+        assert_eq!(options[1].id, "u2");
+        assert_eq!(options[1].preview, "second answer");
+        assert_eq!(options[1].entries, 2);
+        assert!(options[1].live);
+    }
+
+    #[test]
+    fn reads_an_abandoned_branch_by_its_leaf() {
+        let content = BRANCHED_SESSION.join("\n");
+
+        let default = parse_messages(&content, "session-branch");
+        assert_eq!(
+            default
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ask", "second answer", "follow up"]
+        );
+
+        let abandoned = parse_messages_at(&content, "session-branch", Some("a1"));
+        assert_eq!(
+            abandoned
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ask", "first answer"]
+        );
+
+        // A tip that is no longer in the file must not fall back silently.
+        assert!(parse_messages_at(&content, "session-branch", Some("gone")).is_empty());
+    }
+
+    #[test]
+    fn linear_sessions_report_no_branch_points() {
+        let linear = [
+            r#"{"type":"session","id":"session-linear","version":3}"#,
+            r#"{"type":"message","id":"u1","message":{"role":"user","content":"only"}}"#,
+        ]
+        .join("\n");
+        assert!(parse_branches(&linear, "session-linear").is_empty());
+
+        let duplicated = [
+            r#"{"type":"session","id":"session-duplicate","version":3}"#,
+            r#"{"type":"message","id":"same","parentId":null,"message":{"role":"user","content":"a"}}"#,
+            r#"{"type":"message","id":"same","parentId":null,"message":{"role":"user","content":"b"}}"#,
+        ]
+        .join("\n");
+        assert!(parse_branches(&duplicated, "session-duplicate").is_empty());
     }
 
     #[test]

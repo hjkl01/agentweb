@@ -2056,6 +2056,7 @@ select:focus-visible {
 }
 
 .main-panel {
+  position: relative;
   background: var(--ui-bg);
 }
 
@@ -4565,6 +4566,121 @@ select:focus-visible {
 }
 .session-stats-cost {
   color: #8a8a94;
+}
+/* 上下文用量接近模型窗口上限时提醒。 */
+.session-stats.warn {
+  border-color: #f2c7c2;
+  color: #b42318;
+}
+.session-stats.warn svg {
+  color: #d97706;
+}
+
+/* 本轮写入/修改过的文件：点开在工作区面板里预览。 */
+.written-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.written-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid #e6e6eb;
+  border-radius: 6px;
+  background: #f6f6f8;
+  color: #55555e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+.written-file:hover {
+  border-color: #c9c9d2;
+  color: #1f1f24;
+}
+
+/* 会话树岔口：一行里放“别的分支”按钮，或在历史分支上放回去的按钮。 */
+.branch-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px 34px;
+  color: #8a8a94;
+  font-size: 11px;
+}
+.branch-option {
+  max-width: 320px;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid #e6e6eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #55555e;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branch-option:hover {
+  border-color: #c9c9d2;
+  color: #1f1f24;
+}
+.branch-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto 12px;
+  padding: 6px 10px;
+  max-width: 760px;
+  border: 1px solid #f2d9b8;
+  border-radius: 8px;
+  background: #fdf6ec;
+  color: #8a5a12;
+  font-size: 12px;
+}
+.branch-banner .message-action {
+  margin-left: auto;
+}
+
+/* 长会话右侧的轮次导航：悬在聊天区上，不跟着内容滚。 */
+.minimap {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60%;
+  margin-top: 30px;
+  overflow: hidden;
+  transform: translateY(-50%);
+}
+.minimap-tick {
+  width: 14px;
+  height: 4px;
+  padding: 3px 0;
+  border: none;
+  border-radius: 2px;
+  background: #d8d8e0;
+  background-clip: content-box;
+  cursor: pointer;
+}
+.minimap-tick:hover {
+  background: #a5a5b2;
+  background-clip: content-box;
+}
+.minimap-tick.active {
+  background: #6d6d7c;
+  background-clip: content-box;
+}
+
+@media (width <= 900px) {
+  .minimap {
+    display: none;
+  }
 }
 
 /* Rich file previews: images, audio, PDF, CSV/TSV tables. */

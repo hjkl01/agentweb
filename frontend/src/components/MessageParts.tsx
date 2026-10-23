@@ -1,6 +1,7 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, FileText, GitBranch } from "lucide-react";
 import { useState } from "react";
-import type { ChatMessage } from "../types";
+import type { WrittenFile } from "../lib/turnFiles";
+import type { BranchOption, ChatMessage } from "../types";
 import { ThinkingCard, ToolCard } from "./ActivitySteps";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -78,6 +79,68 @@ export function AssistantParts({
           return <MarkdownMessage key={key} content={part.text || ""} />;
         return null;
       })}
+    </div>
+  );
+}
+
+/** 本轮写入/修改过的文件：点开在工作区面板里预览。 */
+export function WrittenFiles({
+  files,
+  onOpenFile,
+}: {
+  files: WrittenFile[];
+  onOpenFile?: (path: string) => void;
+}) {
+  return (
+    <div className="written-files">
+      {files.map((file) => (
+        <button
+          key={`${file.callId}:${file.path}`}
+          type="button"
+          className="written-file"
+          title={file.path}
+          onClick={() => onOpenFile?.(file.path)}
+        >
+          <FileText size={12} />
+          {file.path.split("/").pop()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * pi 把会话存成树，转录只显示其中一条根→叶路径。这里给出岔口上的其它去向：
+ * 当前看的是默认分支时列出别的分支，看的是历史分支时给出回去的按钮。
+ */
+export function BranchSwitcher({
+  options,
+  leaf,
+  onSelect,
+}: {
+  options: BranchOption[];
+  leaf?: string;
+  onSelect: (leaf?: string) => void;
+}) {
+  const current = leaf ?? options.find((option) => option.live)?.id;
+  const others = options.filter((option) => option.id !== current);
+  if (!others.length) return null;
+  return (
+    <div className="branch-switch">
+      <GitBranch size={13} />
+      {others.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className="branch-option"
+          title={`${option.role || "entry"} · ${option.entries} 条：${option.preview}`}
+          onClick={() => onSelect(option.live ? undefined : option.id)}
+        >
+          {option.live
+            ? "返回当前分支"
+            : `切换到别的分支 · ${option.preview || option.id}`}
+        </button>
+      ))}
     </div>
   );
 }

@@ -315,6 +315,7 @@ async fn main() -> Result<()> {
             "/sessions/{id}/messages",
             get(api::list_messages).post(api::send_message),
         )
+        .route("/sessions/{id}/branches", get(api::list_branches))
         .route(
             "/sessions/{id}/image/{entry_id}/{index}",
             get(api::session_image),

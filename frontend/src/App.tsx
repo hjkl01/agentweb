@@ -129,6 +129,10 @@ export function App({ sessionId, navigate }: Props) {
           onNewChat={openNewChat}
           onOpenSettings={() => setSettingsOpen(true)}
           onAutoResize={c.autoResize}
+          onOpenFile={c.openWorkspaceFile}
+          branches={c.session.branches}
+          leaf={c.session.leaf}
+          onSelectBranch={c.session.setLeaf}
         />
       )}
       <ScheduledTasksPanel

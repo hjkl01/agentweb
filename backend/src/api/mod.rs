@@ -33,7 +33,9 @@ pub use scheduled_tasks::{
     update as update_scheduled_task,
 };
 pub use session_events::list_session_activity;
-pub use session_messages::{interrupt, list_messages, send_message, session_image};
+pub use session_messages::{
+    interrupt, list_branches, list_messages, send_message, session_image,
+};
 pub use session_websocket::ws_events;
 pub(crate) use sessions::load_session;
 pub use sessions::{

@@ -5,6 +5,7 @@ import { applyAgentEvent } from "../lib/agentActivity";
 import type {
   ActivityItem,
   AgentEvent,
+  BranchPoint,
   ChatMessage,
   FileItem,
   Session,
@@ -16,6 +17,9 @@ type Options = {
   refreshActiveSession: (sessionId: string) => Promise<void>;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setFiles: Dispatch<SetStateAction<FileItem[]>>;
+  setBranches: Dispatch<SetStateAction<BranchPoint[]>>;
+  /** 选中的分支叶节点；不传表示 pi 的默认分支。 */
+  leaf?: string;
   setStream: Dispatch<SetStateAction<string>>;
   setActivity: Dispatch<SetStateAction<ActivityItem[]>>;
   setActivityOpen: Dispatch<SetStateAction<boolean>>;
@@ -24,8 +28,13 @@ type Options = {
   setSessionStatus: (sessionId: string, status: Session["status"]) => void;
 };
 
+/** 分支选择只是给转录请求加一个查询参数，默认分支不需要。 */
+function leafQuery(leaf?: string) {
+  return leaf ? `?leaf=${encodeURIComponent(leaf)}` : "";
+}
+
 export function useSessionEvents(options: Options) {
-  const { active } = options;
+  const { active, leaf } = options;
   useEffect(() => {
     if (!active) return;
     let disposed = false;
@@ -42,11 +51,12 @@ export function useSessionEvents(options: Options) {
     options.setActivityOpen(false);
 
     const loadState = async (preserveCurrentMessages = false) => {
-      const [messages, files, session, activity] = await Promise.all([
-        api<ChatMessage[]>(`/sessions/${active}/messages`),
+      const [messages, files, session, activity, branches] = await Promise.all([
+        api<ChatMessage[]>(`/sessions/${active}/messages${leafQuery(leaf)}`),
         api<FileItem[]>(`/sessions/${active}/files`),
         api<Session>(`/sessions/${active}`),
         api<AgentEvent[]>(`/sessions/${active}/activity`),
+        api<BranchPoint[]>(`/sessions/${active}/branches`).catch(() => []),
       ]);
       if (disposed) return session;
       let restoredMessages = messages;
@@ -80,6 +90,7 @@ export function useSessionEvents(options: Options) {
         options.setMessages(restoredMessages);
       }
       options.setFiles(files);
+      options.setBranches(branches);
       options.setStream("");
       // Running sessions replay the active turn over WebSocket. Completed sessions
       // restore activity history if the backend has any.
@@ -199,7 +210,7 @@ export function useSessionEvents(options: Options) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [active]);
+  }, [active, leaf]);
 }
 
 /** 心跳间隔：空闲会话也要定期确认链路，但走的是 WebSocket 不是 HTTP。 */

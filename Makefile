@@ -57,7 +57,7 @@ check: ## Run Rust checks and frontend build checks
 
 test: ## Run Rust tests and frontend unit checks
 	cd backend && cargo test
-	cd frontend && rm -rf .tmp-test && ./node_modules/.bin/tsc src/lib/format.ts src/lib/sessionFamily.ts src/lib/preferences.ts src/lib/sessionGroups.ts src/lib/pendingMessages.ts src/lib/patch.ts --outDir .tmp-test --module esnext --target esnext --moduleResolution bundler && node scripts/check-frontend.mjs; status=$$?; rm -rf .tmp-test; exit $$status
+	cd frontend && rm -rf .tmp-test && ./node_modules/.bin/tsc src/lib/format.ts src/lib/sessionFamily.ts src/lib/preferences.ts src/lib/sessionGroups.ts src/lib/pendingMessages.ts src/lib/patch.ts src/lib/turnFiles.ts --outDir .tmp-test --module esnext --target esnext --moduleResolution bundler && node scripts/check-frontend.mjs; status=$$?; rm -rf .tmp-test; exit $$status
 
 fmt: ## Format Rust and frontend code
 	cd backend && cargo fmt
