@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowDownToLine,
   AtSign,
   Bot,
   Check,
@@ -25,9 +26,12 @@ import type {
   UploadedFile,
 } from "../types";
 import { api } from "../lib/api";
-import { formatDuration, groupTranscript } from "../lib/format";
+import {
+  formatDuration,
+  responseSeconds,
+  toolResultsByCall,
+} from "../lib/format";
 import type { Preferences } from "../lib/preferences";
-import { ActivityGroup } from "./ActivitySteps";
 import { AgentActivity } from "./AgentActivity";
 import { MentionPicker } from "./MentionPicker";
 import { ModelSelector } from "./ModelSelector";
@@ -35,7 +39,11 @@ import { ThinkingSelector } from "./ThinkingSelector";
 import { ToolPresetSelector } from "./ToolPresetSelector";
 import { AgentSelector } from "./AgentSelector";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { AssistantParts, CompactionMessage } from "./MessageParts";
+import {
+  AssistantParts,
+  CompactionMessage,
+  ToolResultCard,
+} from "./MessageParts";
 import { SessionExportButton } from "./SessionExportButton";
 import { SessionStats } from "./SessionStats";
 
@@ -173,8 +181,10 @@ export function ChatPanel({
       ? messages.slice(messages.length - messageWindow)
       : messages;
   const hiddenCount = messages.length - visibleMessages.length;
-  // 同一次工具循环的消息合成一段「执行过程」，避免一墙卡片。
-  const entries = groupTranscript(visibleMessages);
+  // 工具结果挂回对应的调用卡片；思考耗时用相邻消息的时间差近似。
+  // visibleMessages 每次渲染都是新数组，memo 不划算，直接算。
+  const toolResults = toolResultsByCall(visibleMessages);
+  const thinkingSeconds = responseSeconds(visibleMessages);
   useEffect(() => {
     if (!preferences.quoteSelection) {
       setQuote(undefined);
@@ -424,19 +434,15 @@ export function ChatPanel({
             {messages.length} 条）
           </button>
         )}
-        {entries.map((entry, index) => {
-          if (entry.kind === "activity")
-            return (
-              <ActivityGroup
-                key={entry.key}
-                rows={entry.rows}
-                sessionId={current?.id}
-                thinkingExpanded={preferences.thinkingExpanded}
-                // 只有最新一段、且最终回答还没出来时才默认展开；回答一到就收起。
-                defaultOpen={index === entries.length - 1 && !stream}
-              />
+        {visibleMessages.map((message) => {
+          // 结果已经挂在对应调用卡片上的就跳过；配不到调用的（调用被分页截断）单独成卡片。
+          if (message.role === "toolResult")
+            return toolResults.get(message.tool_call_id ?? "") ===
+              message ? null : (
+              <div key={message.id} className="orphan-result">
+                <ToolResultCard message={message} sessionId={current?.id} />
+              </div>
             );
-          const message = entry.message;
           if (message.role === "compaction") {
             return (
               <CompactionMessage key={message.id} content={message.content} />
@@ -447,15 +453,11 @@ export function ChatPanel({
               key={message.id}
               className={`message-row ${message.role}${message.stop_reason === "error" ? " failed" : ""}`}
             >
-              <div className="avatar">
-                {message.role === "user" ? (
-                  "U"
-                ) : message.role === "error" ? (
-                  "!"
-                ) : (
-                  <Bot size={15} />
-                )}
-              </div>
+              {message.role !== "user" && (
+                <div className="avatar">
+                  {message.role === "error" ? "!" : <Bot size={15} />}
+                </div>
+              )}
               <div className="message-content">
                 <div className="message-heading">
                   <div className="message-role">
@@ -489,6 +491,9 @@ export function ChatPanel({
                 {message.role === "assistant" ? (
                   <AssistantParts
                     message={message}
+                    sessionId={current?.id}
+                    toolResults={toolResults}
+                    thinkingSeconds={thinkingSeconds.get(message.id)}
                     thinkingExpanded={preferences.thinkingExpanded}
                   />
                 ) : (
@@ -603,29 +608,50 @@ export function ChatPanel({
               }}
               placeholder={
                 active
-                  ? "输入消息，使用 @ 选择文件或文件夹…"
+                  ? running
+                    ? "输入消息，回车排队，当前这轮结束后自动发出…"
+                    : "输入消息，使用 @ 选择文件或文件夹…"
                   : "Create a chat to start"
               }
               disabled={!active || current?.status === "missing"}
               rows={1}
             />
-            <button
-              className="send-button"
-              onClick={running ? onStop : onSend}
-              disabled={
-                !active ||
-                current?.status === "missing" ||
-                (!running && !input.trim())
-              }
-              aria-label={running ? "Stop" : "Send"}
-              title={running ? "Stop agent" : "Send message"}
-            >
-              {running ? (
-                <Square size={14} strokeWidth={2.2} />
-              ) : (
+            {running ? (
+              <>
+                {/* 运行中也能发：排队等这一轮结束再送出去，不必先停下再来一遍（pi-web 同做法）。 */}
+                <button
+                  className="queue-button"
+                  onClick={onSend}
+                  disabled={!input.trim()}
+                  aria-label="排队发送"
+                  title="排队发送：当前这一轮结束后自动发出"
+                >
+                  <ArrowDownToLine size={13} strokeWidth={2.2} />
+                  跟进
+                </button>
+                <button
+                  className="stop-button"
+                  onClick={onStop}
+                  aria-label="停止"
+                  title="停止当前任务"
+                >
+                  <Square size={10} strokeWidth={2.2} />
+                  停止
+                </button>
+              </>
+            ) : (
+              <button
+                className="send-button"
+                onClick={onSend}
+                disabled={
+                  !active || current?.status === "missing" || !input.trim()
+                }
+                aria-label="发送"
+                title="发送消息"
+              >
                 <Send size={16} />
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
         <div className="composer-hint">

@@ -103,7 +103,7 @@ function ActivityRow({
           </details>
         )}
         {detail && output && (
-          <details className="activity-detail">
+          <details className="activity-detail" open={expanded}>
             <summary>查看执行详情</summary>
             <pre>{detail}</pre>
           </details>

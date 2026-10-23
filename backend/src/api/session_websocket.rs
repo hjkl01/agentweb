@@ -33,6 +33,18 @@ async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
             message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Close(_))) | None => return,
+                    // 心跳：协议层的 pong 浏览器 JS 看不到，所以对客户端发来的文本回一个 JSON pong，
+                    // 前端据此判断链路是否还活着，从而重连而不是改用 HTTP 轮询。
+                    Some(Ok(Message::Text(_))) => {
+                        if socket
+                            .send(Message::Text(r#"{"type":"pong"}"#.into()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     Some(Ok(_)) => continue,
                     Some(Err(_)) => return,
                 }

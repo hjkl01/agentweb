@@ -95,181 +95,6 @@ export function diffLines(
   });
 }
 
-/* 转录分组：把「思考 → 工具调用 → 工具结果」合成一段「执行过程」。
- *
- * 这样做的原因：一次真实回答往往有 5~10 次工具调用，逐条渲染就会得到一墙带边框的
- * 卡片、外加每条工具结果一个头像行。分组后每段只占一个标题行 + 若干紧凑步骤行。
- */
-
-export type ActivityRow = {
-  key: string;
-  kind: "thinking" | "tool" | "note";
-  /** 工具名，或留空（思考/说明行）。 */
-  name?: string;
-  /** 工具参数的一行摘要。 */
-  summary?: string;
-  args?: unknown;
-  text?: string;
-  callId?: string;
-  /** 挂回来的工具结果（按 `tool_call_id` 配对）。 */
-  result?: ChatMessage;
-};
-
-export type TranscriptEntry =
-  | { kind: "message"; message: ChatMessage }
-  | { kind: "activity"; key: string; rows: ActivityRow[] };
-
-/** 属于执行过程的消息：工具结果，以及带工具调用的助手轮次。
- *  失败的助手轮次（`stop_reason === "error"`）要单独显示，不能藏进执行过程里。 */
-export function isActivityMessage(message: ChatMessage): boolean {
-  if (message.role === "toolResult") return true;
-  if (message.role !== "assistant" || message.stop_reason === "error")
-    return false;
-  return (message.parts ?? []).some((part) => part.type === "toolCall");
-}
-
-function buildActivityRows(run: ChatMessage[]): ActivityRow[] {
-  const rows: ActivityRow[] = [];
-  const byCall = new Map<string, ActivityRow>();
-  for (const message of run) {
-    if (message.role === "toolResult") {
-      // 结果按 tool_call_id 挂回那次调用；对不上（历史被窗口截断、老转录没有 id）
-      // 就单独成行，输出仍然可见。
-      const row = message.tool_call_id
-        ? byCall.get(message.tool_call_id)
-        : undefined;
-      if (row) row.result = message;
-      else
-        rows.push({
-          key: message.id,
-          kind: "tool",
-          name: message.tool_name || "工具结果",
-          result: message,
-        });
-      continue;
-    }
-    (message.parts ?? []).forEach((part, index) => {
-      if (part.type === "thinking" && part.text?.trim()) {
-        rows.push({
-          key: `${message.id}:${index}`,
-          kind: "thinking",
-          text: part.text,
-        });
-      } else if (part.type === "toolCall") {
-        const row: ActivityRow = {
-          key: `${message.id}:${index}`,
-          kind: "tool",
-          name: part.name || "tool",
-          summary: toolSummary(part.arguments),
-          args: part.arguments,
-          callId: part.tool_call_id,
-        };
-        if (row.callId) byCall.set(row.callId, row);
-        rows.push(row);
-      } else if (part.type === "text" && part.text?.trim()) {
-        // 工具调用之间的过程说明，属于执行过程而不属于最终回答。
-        rows.push({
-          key: `${message.id}:${index}`,
-          kind: "note",
-          text: part.text,
-        });
-      }
-    });
-  }
-  return rows;
-}
-
-/** 把转录切成普通消息与执行过程：连续的工具循环消息合并成一段。 */
-export function groupTranscript(messages: ChatMessage[]): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-  let run: ChatMessage[] = [];
-  const flush = () => {
-    if (!run.length) return;
-    entries.push({
-      kind: "activity",
-      key: run[0].id,
-      rows: buildActivityRows(run),
-    });
-    run = [];
-  };
-  for (const message of messages) {
-    if (isActivityMessage(message)) {
-      run.push(message);
-    } else {
-      flush();
-      entries.push({ kind: "message", message });
-    }
-  }
-  flush();
-  return entries;
-}
-
-/** 工具名 → 中文短标签。查不到就原样显示英文名：宁可露出原名，也不要猜一个错的动词。 */
-const TOOL_LABELS: Record<string, string> = {
-  bash: "运行命令",
-  read: "读取文件",
-  write: "写入文件",
-  edit: "修改文件",
-  patch: "修改文件",
-  grep: "搜索代码",
-  glob: "查找文件",
-  web_search: "联网搜索",
-  fetch_content: "抓取网页",
-  compress: "压缩上下文",
-  decompress: "展开上下文",
-  search_context: "检索上下文",
-  subagent: "委派任务",
-  task: "委派任务",
-  todo: "更新待办",
-  memory_read: "读取记忆",
-  memory_write: "写入记忆",
-  memory_search: "检索记忆",
-  scratchpad: "记录备忘",
-  ask_user_question: "询问用户",
-};
-
-export function toolLabel(name?: string): string {
-  if (!name) return "工具";
-  return TOOL_LABELS[name] ?? name;
-}
-
-/** 执行过程标题行右侧的事实：`运行命令 ×3 · 读取文件 · 12s`，以及出错/截断/运行中的提示。 */
-export function activityFacts(rows: ActivityRow[]): {
-  tools: string;
-  durationMs: number;
-  failed: number;
-  truncated: number;
-  pending: number;
-} {
-  const counts = new Map<string, number>();
-  let durationMs = 0;
-  let failed = 0;
-  let truncated = 0;
-  let pending = 0;
-  for (const row of rows) {
-    if (row.kind === "note") continue;
-    const name = row.kind === "thinking" ? "思考" : toolLabel(row.name);
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-    if (row.kind === "thinking") continue;
-    if (!row.result) {
-      pending += 1;
-      continue;
-    }
-    durationMs += row.result.duration_ms ?? 0;
-    if (row.result.is_error) failed += 1;
-    if (row.result.truncated) truncated += 1;
-  }
-  return {
-    tools: [...counts]
-      .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name))
-      .join(" · "),
-    durationMs,
-    failed,
-    truncated,
-    pending,
-  };
-}
-
 /** 折叠行里的一行摘要：取第一行有意义的内容。 */
 export function firstLine(text?: string): string | undefined {
   const line = (text ?? "")
@@ -277,4 +102,43 @@ export function firstLine(text?: string): string | undefined {
     .map((value) => value.trim())
     .find(Boolean);
   return line ? line.slice(0, 100) : undefined;
+}
+
+/** 工具结果按 `tool_call_id` 挂回调用卡片。只收窗口里确实出现过那次调用的结果：
+ *  调用被分页截断时结果单独成卡片，输出不能被吞掉。 */
+export function toolResultsByCall(
+  messages: ChatMessage[],
+): Map<string, ChatMessage> {
+  const called = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      if (part.type === "toolCall" && part.tool_call_id) {
+        called.add(part.tool_call_id);
+      }
+    }
+  }
+  const byCall = new Map<string, ChatMessage>();
+  for (const message of messages) {
+    if (message.role !== "toolResult" || !message.tool_call_id) continue;
+    if (called.has(message.tool_call_id))
+      byCall.set(message.tool_call_id, message);
+  }
+  return byCall;
+}
+
+/** 每轮回答的耗时（整秒）：本条助手消息与上一条消息的时间差。
+ *  后端只给工具结果写 `duration_ms`，助手消息没有——pi-web 也用相邻消息的时间差近似。 */
+export function responseSeconds(messages: ChatMessage[]): Map<string, number> {
+  const seconds = new Map<string, number>();
+  let previous: number | undefined;
+  for (const message of messages) {
+    const at = message.created_at ? Date.parse(message.created_at) : NaN;
+    if (!Number.isFinite(at)) continue;
+    if (message.role === "assistant" && previous !== undefined) {
+      const elapsed = Math.round((at - previous) / 1000);
+      if (elapsed > 0) seconds.set(message.id, elapsed);
+    }
+    previous = at;
+  }
+  return seconds;
 }
