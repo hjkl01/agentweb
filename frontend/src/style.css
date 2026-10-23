@@ -583,7 +583,7 @@ button:disabled {
   width: min(100%, var(--chat-content-width));
 }
 .message-row.user {
-  flex-direction: row-reverse;
+  /* pi-web style: no avatar, right-aligned bubble */
 }
 .avatar {
   width: 28px;
@@ -598,8 +598,7 @@ button:disabled {
   font-weight: 600;
 }
 .message-row.user .avatar {
-  background: #222;
-  color: #fff;
+  display: none;
 }
 .message-row.error .avatar {
   background: #fee4e2;
@@ -774,6 +773,40 @@ button:disabled {
 }
 .send-button:hover:not(:disabled) {
   background: #292929;
+}
+/* 运行中：发送键让位给「跟进」（排队发给下一轮）和「停止」，这样急用的消息不用先停下再发一遍。 */
+.queue-button,
+.stop-button {
+  height: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.queue-button {
+  border-color: rgb(129 140 248 / 35%);
+  background: rgb(129 140 248 / 12%);
+  color: #6366f1;
+}
+.queue-button:hover:not(:disabled) {
+  border-color: rgb(129 140 248 / 55%);
+  background: rgb(129 140 248 / 20%);
+  color: #4f46e5;
+}
+.queue-button:disabled {
+  border-color: #dedede;
+  background: none;
+  color: var(--ui-text-subtle);
+}
+.stop-button {
+  border-color: rgb(239 68 68 / 30%);
+  background: rgb(239 68 68 / 8%);
+  color: #ef4444;
+}
+.stop-button:hover:not(:disabled) {
+  border-color: rgb(239 68 68 / 45%);
+  background: rgb(239 68 68 / 16%);
+  color: #ef4444;
 }
 .composer-hint {
   text-align: center;
@@ -2108,6 +2141,7 @@ select:focus-visible {
 }
 
 .message-row.user .avatar {
+  display: none;
   background: #33336e;
 }
 
@@ -2609,7 +2643,7 @@ select:focus-visible {
   }
 
   .message-content {
-    max-width: calc(100% - 35px);
+    max-width: none;
   }
 
   .message-action span {

@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowDownToLine,
   AtSign,
   Bot,
   Check,
@@ -452,15 +453,11 @@ export function ChatPanel({
               key={message.id}
               className={`message-row ${message.role}${message.stop_reason === "error" ? " failed" : ""}`}
             >
-              <div className="avatar">
-                {message.role === "user" ? (
-                  "U"
-                ) : message.role === "error" ? (
-                  "!"
-                ) : (
-                  <Bot size={15} />
-                )}
-              </div>
+              {message.role !== "user" && (
+                <div className="avatar">
+                  {message.role === "error" ? "!" : <Bot size={15} />}
+                </div>
+              )}
               <div className="message-content">
                 <div className="message-heading">
                   <div className="message-role">
@@ -611,29 +608,50 @@ export function ChatPanel({
               }}
               placeholder={
                 active
-                  ? "输入消息，使用 @ 选择文件或文件夹…"
+                  ? running
+                    ? "输入消息，回车排队，当前这轮结束后自动发出…"
+                    : "输入消息，使用 @ 选择文件或文件夹…"
                   : "Create a chat to start"
               }
               disabled={!active || current?.status === "missing"}
               rows={1}
             />
-            <button
-              className="send-button"
-              onClick={running ? onStop : onSend}
-              disabled={
-                !active ||
-                current?.status === "missing" ||
-                (!running && !input.trim())
-              }
-              aria-label={running ? "Stop" : "Send"}
-              title={running ? "Stop agent" : "Send message"}
-            >
-              {running ? (
-                <Square size={14} strokeWidth={2.2} />
-              ) : (
+            {running ? (
+              <>
+                {/* 运行中也能发：排队等这一轮结束再送出去，不必先停下再来一遍（pi-web 同做法）。 */}
+                <button
+                  className="queue-button"
+                  onClick={onSend}
+                  disabled={!input.trim()}
+                  aria-label="排队发送"
+                  title="排队发送：当前这一轮结束后自动发出"
+                >
+                  <ArrowDownToLine size={13} strokeWidth={2.2} />
+                  跟进
+                </button>
+                <button
+                  className="stop-button"
+                  onClick={onStop}
+                  aria-label="停止"
+                  title="停止当前任务"
+                >
+                  <Square size={10} strokeWidth={2.2} />
+                  停止
+                </button>
+              </>
+            ) : (
+              <button
+                className="send-button"
+                onClick={onSend}
+                disabled={
+                  !active || current?.status === "missing" || !input.trim()
+                }
+                aria-label="发送"
+                title="发送消息"
+              >
                 <Send size={16} />
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
         <div className="composer-hint">
