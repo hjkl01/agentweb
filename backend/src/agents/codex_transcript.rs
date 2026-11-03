@@ -213,10 +213,10 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("rollout-2026-11-03T10-00-00-test-thread.jsonl");
         fs::write(&path, concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"test-thread\"}}\\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"duplicate source\"}}\\n",
-            "{\"type\":\"response_item\",\"id\":\"u1\",\"timestamp\":\"2026-11-03T10:00:01Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\\n",
-            "{\"type\":\"response_item\",\"id\":\"a1\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"test-thread\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"duplicate source\"}}\n",
+            "{\"type\":\"response_item\",\"id\":\"u1\",\"timestamp\":\"2026-11-03T10:00:01Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
+            "{\"type\":\"response_item\",\"id\":\"a1\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n",
             "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\\n"
         )).unwrap();
         let messages = parse_file(&path);
