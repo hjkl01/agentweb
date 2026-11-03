@@ -108,7 +108,10 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
             .get("timestamp")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let model = message.get("model").and_then(Value::as_str).map(str::to_owned);
+        let model = message
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let usage = message.get("usage").cloned();
         let Some(content) = message.get("content") else {
             continue;
