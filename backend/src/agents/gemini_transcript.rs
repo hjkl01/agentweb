@@ -24,12 +24,12 @@ fn gemini_home() -> PathBuf {
         .unwrap_or_else(super::config::agent_home)
 }
 
-fn temp_root() -> PathBuf {
-    let home = gemini_home().join(".gemini");
-    if std::env::var("SANDBOX").as_deref() == Ok("sandbox-exec") {
-        return gemini_home().join(".cache").join(".gemini").join("tmp");
-    }
-    home.join("tmp")
+fn temp_roots() -> [PathBuf; 2] {
+    let home = gemini_home();
+    [
+        home.join(".gemini").join("tmp"),
+        home.join(".cache").join(".gemini").join("tmp"),
+    ]
 }
 
 fn safe_directory(path: &Path) -> bool {
@@ -148,8 +148,10 @@ pub fn read_messages(session_id: &str, workspace: &str) -> Vec<TranscriptMessage
         "{:x}",
         Sha256::digest(workspace.to_string_lossy().as_bytes())
     );
-    let root = temp_root();
-    let Some(path) = find_session_file(&root, session_id, &project_hash) else {
+    let Some(path) = temp_roots()
+        .into_iter()
+        .find_map(|root| find_session_file(&root, session_id, &project_hash))
+    else {
         return Vec::new();
     };
     let Ok(metadata) = fs::metadata(&path) else {
@@ -465,6 +467,46 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "first");
         assert!(parse_reader(BufReader::new(fixture.as_bytes()), "other").is_empty());
+    }
+
+    #[test]
+    fn finds_session_by_native_id_and_project_hash() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agentweb-gemini-{unique}"));
+        let chats = root.join("project-slug").join("chats");
+        fs::create_dir_all(&chats).unwrap();
+        let session_id = "12345678-abcd";
+        let project_hash = "project-hash";
+        let file = chats.join("session-2026-11-03-12345678.jsonl");
+        fs::write(
+            &file,
+            format!(
+                "{{\"sessionId\":\"{session_id}\",\"projectHash\":\"{project_hash}\"}}\\n"
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_session_file(&root, session_id, project_hash),
+            Some(file)
+        );
+        assert!(find_session_file(&root, session_id, "other-project").is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_legacy_json_with_embedded_messages() {
+        let fixture = r#"{"sessionId":"session-123","projectHash":"hash","messages":[{"id":"u1","type":"user","content":"legacy prompt"},{"id":"a1","type":"gemini","content":"legacy answer"}]}"#;
+        let messages = parse_reader(BufReader::new(fixture.as_bytes()), "session-123");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "legacy prompt");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "legacy answer");
     }
 
     #[test]
