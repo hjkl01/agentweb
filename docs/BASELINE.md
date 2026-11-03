@@ -34,9 +34,11 @@
 
 ## 3. 已确认的可靠性缺口
 
-### 3.1 Cron 时区
+### 3.1 Cron 时区（已实现，待 CI 验证）
 
-`backend/src/scheduler.rs` 的 `next_cron()` 当前只接受 `UTC` 和 `Etc/UTC`。其他时区直接返回 `None`，因此配置 `Asia/Shanghai` 等时区的 Cron 任务无法计算下一次执行时间。当前实现是手写的五段 Cron 字段匹配器，尚未覆盖完整 Cron 语义和时区/DST 规则。
+已引入 `chrono-tz`，`backend/src/scheduler.rs` 的 `next_cron()` 现在按 IANA 时区解析，并在 UTC 时间轴逐分钟扫描、转换成本地时间匹配 Cron。创建/更新 API 已移除原先重复的 UTC-only Cron 计算，改为复用调度器函数；前端 Cron 表单增加 IANA 时区输入框。新增上海时区、纽约夏令时开始/结束和非法时区测试。
+
+DST 策略：春季跳时导致的不存在本地时间会跳过；秋季回拨造成的重复本地时间会分别触发两次。当前五段 Cron 表达式仍使用项目原有字段匹配语义，不在本次范围内扩展为完整 Quartz/Cron 特性。
 
 ### 3.2 实时事件
 
@@ -48,10 +50,9 @@
 
 ## 4. 本轮后续顺序
 
-1. 等待自动 CI 对本次 workflow 改动执行并检查结果。
-2. 先修复 Cron 的 IANA 时区支持，并补充确定性测试。
-3. 再处理 WebSocket 重连后的状态快照和 Transcript 恢复。
-4. 最后补齐六种 Agent 的生命周期验证矩阵。
+1. 等待自动 CI 对 CI 配置和 Cron 时区改动执行并检查结果。
+2. 处理 WebSocket 重连后的状态快照和 Transcript 恢复。
+3. 补齐六种 Agent 的生命周期验证矩阵。
 
 ## 5. 未验证事项
 
