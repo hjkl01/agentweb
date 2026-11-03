@@ -246,6 +246,19 @@ fn parse_v2_message(
         if let Some(text) = data.get("text").and_then(Value::as_str) {
             add_part(&mut parent, text_part(text));
         }
+        // OpenCode user messages may contain file attachments in addition to
+        // text. Keep a safe display placeholder; never copy base64/blob data
+        // into the transcript response.
+        if let Some(files) = data.get("files").and_then(Value::as_array) {
+            for file in files {
+                let label = file
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .or_else(|| file.get("mime").and_then(Value::as_str))
+                    .unwrap_or("attachment");
+                add_part(&mut parent, text_part(&format!("[附件: {label}]")));
+            }
+        }
     }
     if role == "assistant" {
         parent.model = data
@@ -275,7 +288,12 @@ fn parse_v2_message(
             parse_part(&mut parent, part, &mut results);
         }
     }
-    if !parent.content.is_empty() || parent.parts.as_ref().is_some_and(|p| !p.is_empty()) {
+    // Preserve empty assistant turns when OpenCode recorded a provider
+    // error; otherwise the most useful diagnostic silently disappears.
+    let keep_parent = !parent.content.is_empty()
+        || parent.parts.as_ref().is_some_and(|p| !p.is_empty())
+        || parent.error_message.is_some();
+    if keep_parent {
         let mut messages = vec![parent];
         messages.extend(results);
         messages
@@ -458,6 +476,44 @@ mod tests {
         assert_eq!(messages[1].role, "toolResult");
         assert_eq!(messages[1].content, "/workspace");
         assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn keeps_empty_assistant_turn_with_provider_error() {
+        let data = serde_json::json!({
+            "role": "assistant",
+            "error": {
+                "type": "ProviderAuthError",
+                "message": "Authentication expired"
+            },
+            "content": [],
+            "time": {"created": 1793700000000_i64}
+        });
+        let messages = parse_v2_message("msg-error", "assistant", &data, None);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Authentication expired")
+        );
+    }
+
+    #[test]
+    fn preserves_user_file_attachments_without_exposing_file_data() {
+        let data = serde_json::json!({
+            "role": "user",
+            "text": "",
+            "files": [{
+                "name": "design.png",
+                "mime": "image/png",
+                "data": "BASE64_SECRET_MUST_NOT_LEAK",
+                "source": {"type": "inline"}
+            }]
+        });
+        let messages = parse_v2_message("msg-file", "user", &data, None);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "[附件: design.png]");
+        assert!(!messages[0].content.contains("BASE64_SECRET"));
     }
 
     #[test]
