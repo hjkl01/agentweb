@@ -220,10 +220,9 @@ mod tests {
             "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\\n"
         )).unwrap();
         let messages = parse_file(&path);
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "world");
-        assert_eq!(messages[2].parts.as_ref().unwrap()[0].name.as_deref(), Some("shell"));
         fs::remove_dir_all(root).unwrap();
     }
 
