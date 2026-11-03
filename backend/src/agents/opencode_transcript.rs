@@ -150,7 +150,11 @@ fn parse_part(
             }
         }
         "reasoning" => {
-            if let Some(text) = data.get("text").or_else(|| data.get("content")).and_then(Value::as_str) {
+            if let Some(text) = data
+                .get("text")
+                .or_else(|| data.get("content"))
+                .and_then(Value::as_str)
+            {
                 add_part(
                     parent,
                     TranscriptPart {
@@ -530,18 +534,28 @@ mod tests {
     #[tokio::test]
     async fn reads_typed_session_message_database_fixture() {
         let path = temporary_database("typed").await;
-        let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
-        let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let mut conn = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
         sqlx::query("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)")
             .execute(&mut conn).await.unwrap();
         sqlx::query("CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, type TEXT, call_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
             .execute(&mut conn).await.unwrap();
 
         sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)")
-            .bind("msg-user").bind("ses_v2").bind("user").bind(1_i64)
-            .bind(1793700000000_i64).bind(1793700000000_i64)
+            .bind("msg-user")
+            .bind("ses_v2")
+            .bind("user")
+            .bind(1_i64)
+            .bind(1793700000000_i64)
+            .bind(1793700000000_i64)
             .bind(r#"{"text":"hello from OpenCode","time":{"created":1793700000000}}"#)
-            .execute(&mut conn).await.unwrap();
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind("msg-v2").bind("ses_v2").bind("assistant").bind(2_i64)
             .bind(1793700001000_i64).bind(1793700001000_i64)
@@ -549,14 +563,37 @@ mod tests {
             .execute(&mut conn).await.unwrap();
 
         for (ordinal, kind, call_id, data) in [
-            (0_i64, "text", None, r#"{"type":"text","text":"v2 fixture"}"#),
-            (1_i64, "reasoning", None, r#"{"type":"reasoning","text":"thinking"}"#),
-            (2_i64, "tool", Some("call-v2"), r#"{"type":"tool","id":"call-v2","name":"read","state":{"status":"error","input":{"file":"x"},"content":[{"type":"text","text":"not found"}],"error":{"message":"read failed"}},"time":{"created":1793700001001}}"#),
+            (
+                0_i64,
+                "text",
+                None,
+                r#"{"type":"text","text":"v2 fixture"}"#,
+            ),
+            (
+                1_i64,
+                "reasoning",
+                None,
+                r#"{"type":"reasoning","text":"thinking"}"#,
+            ),
+            (
+                2_i64,
+                "tool",
+                Some("call-v2"),
+                r#"{"type":"tool","id":"call-v2","name":"read","state":{"status":"error","input":{"file":"x"},"content":[{"type":"text","text":"not found"}],"error":{"message":"read failed"}},"time":{"created":1793700001001}}"#,
+            ),
         ] {
             sqlx::query("INSERT INTO session_part VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                .bind("msg-v2").bind("ses_v2").bind(ordinal).bind(kind).bind(call_id)
-                .bind(1793700001001_i64).bind(1793700001001_i64).bind(data)
-                .execute(&mut conn).await.unwrap();
+                .bind("msg-v2")
+                .bind("ses_v2")
+                .bind(ordinal)
+                .bind(kind)
+                .bind(call_id)
+                .bind(1793700001001_i64)
+                .bind(1793700001001_i64)
+                .bind(data)
+                .execute(&mut conn)
+                .await
+                .unwrap();
         }
         conn.close().await.unwrap();
 
@@ -565,7 +602,10 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hello from OpenCode");
         assert_eq!(messages[1].content, "v2 fixture");
-        assert_eq!(messages[1].model.as_deref(), Some("anthropic/claude-sonnet-4-5"));
+        assert_eq!(
+            messages[1].model.as_deref(),
+            Some("anthropic/claude-sonnet-4-5")
+        );
         assert_eq!(messages[1].parts.as_ref().unwrap()[1].kind, "thinking");
         assert_eq!(messages[2].role, "toolResult");
         assert_eq!(messages[2].content, "not found");
