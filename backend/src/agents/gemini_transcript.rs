@@ -486,7 +486,7 @@ mod tests {
         fs::write(
             &file,
             format!(
-                "{{\"sessionId\":\"{session_id}\",\"projectHash\":\"{project_hash}\"}}\\n"
+                "{{\"sessionId\":\"{session_id}\",\"projectHash\":\"{project_hash}\"}}\n"
             ),
         )
         .unwrap();
