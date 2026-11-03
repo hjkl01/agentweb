@@ -54,6 +54,14 @@ async fn is_claude_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, 
     Ok(matches!(kind.as_deref(), Some("claude-code" | "claude")))
 }
 
+async fn is_opencode_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(matches!(kind.as_deref(), Some("opencode")))
+}
+
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -97,6 +105,28 @@ pub async fn list_messages(
             tracing::error!(session_id = %id, %error, "Gemini transcript reader task failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+        return Ok(Json(messages));
+    }
+    let is_opencode = is_opencode_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if is_opencode {
+        let Some(native_session_id) = session
+            .native_session_id
+            .as_deref()
+            .or(session.fork_from_native_session_id.as_deref())
+        else {
+            return Ok(Json(Vec::new()));
+        };
+        let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+            tracing::error!(%error, "OpenCode transcript read limiter is unavailable");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+        let _permit = permit;
+        let messages = crate::agents::opencode_transcript::read_messages(native_session_id).await;
         return Ok(Json(messages));
     }
     if !is_pi {
