@@ -94,7 +94,25 @@ fn tool_result(
     if !matches!(status, "completed" | "error") {
         return None;
     }
-    let output = output_text(state.get("output").unwrap_or(&Value::Null));
+    let output = if let Some(content) = state.get("content").and_then(Value::as_array) {
+        content
+            .iter()
+            .map(|item| {
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        item.get("type")
+                            .and_then(Value::as_str)
+                            .map(|kind| format!("[{kind}]"))
+                            .unwrap_or_default()
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        output_text(state.get("output").unwrap_or(&Value::Null))
+    };
     let mut result = message(
         format!("{}-{}", parent_id, call_id.as_deref().unwrap_or("tool")),
         "toolResult",
@@ -105,6 +123,12 @@ fn tool_result(
     result.tool_call_id = call_id;
     result.tool_name = name;
     result.is_error = Some(status == "error");
+    if status == "error" {
+        result.error_message = state
+            .get("error")
+            .and_then(|error| error.get("message").or(Some(error)))
+            .map(output_text);
+    }
     Some(result)
 }
 
@@ -140,7 +164,8 @@ fn parse_part(
         "tool" => {
             let state = data.get("state").unwrap_or(&Value::Null);
             let call_id = data
-                .get("callID")
+                .get("id")
+                .or_else(|| data.get("callID"))
                 .or_else(|| data.get("callId"))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
@@ -193,6 +218,11 @@ fn parse_v2_message(
     let created_at =
         timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
     let mut parent = message(id.to_owned(), role, created_at);
+    if role == "user" {
+        if let Some(text) = data.get("text").and_then(Value::as_str) {
+            add_part(&mut parent, text_part(text));
+        }
+    }
     if role == "assistant" {
         parent.model = data
             .get("modelID")
@@ -261,20 +291,51 @@ async fn read_messages_from(
         .busy_timeout(Duration::from_secs(2));
     let mut conn = sqlx::SqliteConnection::connect_with(&options).await?;
 
-    // Compatibility with OpenCode builds that store typed message rows.
+    // Current OpenCode stores message envelopes in session_message and,
+    // in newer releases, assistant content in the ordered session_part table.
     if table_exists(&mut conn, "session_message").await? {
         let rows = sqlx::query(
-            "SELECT id, type, data FROM session_message WHERE session_id=? ORDER BY time_created, id LIMIT ?",
-        ).bind(session_id).bind(MAX_MESSAGES as i64).fetch_all(&mut conn).await?;
+            "SELECT id, type, time_created, data FROM session_message WHERE session_id=? ORDER BY seq, id LIMIT ?",
+        )
+        .bind(session_id)
+        .bind(MAX_MESSAGES as i64)
+        .fetch_all(&mut conn)
+        .await?;
+        let has_parts = table_exists(&mut conn, "session_part").await?;
         let mut messages = Vec::new();
         for row in rows {
             let id: String = row.try_get("id")?;
             let kind: String = row.try_get("type")?;
+            let created: Option<i64> = row.try_get("time_created").ok();
             let raw: String = row.try_get("data")?;
-            let Ok(data) = serde_json::from_str::<Value>(&raw) else {
+            let Ok(mut data) = serde_json::from_str::<Value>(&raw) else {
                 continue;
             };
-            let created = data.pointer("/time/created").and_then(Value::as_i64);
+            // Recent OpenCode releases move assistant content into ordered
+            // session_part rows. Match OpenCode's history.withParts behavior:
+            // when parts exist, they replace the inline content envelope.
+            if has_parts && kind == "assistant" {
+                let parts = sqlx::query(
+                    "SELECT data FROM session_part WHERE session_id=? AND message_id=? ORDER BY ordinal LIMIT ?",
+                )
+                .bind(session_id)
+                .bind(&id)
+                .bind(MAX_PARTS_PER_MESSAGE as i64)
+                .fetch_all(&mut conn)
+                .await?;
+                if !parts.is_empty() {
+                    let mut content = Vec::with_capacity(parts.len());
+                    for part in parts {
+                        let raw: String = part.try_get("data")?;
+                        if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                            content.push(value);
+                        }
+                    }
+                    if let Some(object) = data.as_object_mut() {
+                        object.insert("content".into(), Value::Array(content));
+                    }
+                }
+            }
             messages.extend(parse_v2_message(&id, &kind, &data, created));
         }
         return Ok(messages);
