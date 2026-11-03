@@ -48,7 +48,9 @@ fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Optio
             return None;
         }
         let Ok(project) = project else { continue };
-        let Ok(project_kind) = project.file_type() else { continue };
+        let Ok(project_kind) = project.file_type() else {
+            continue;
+        };
         if !project_kind.is_dir() || project_kind.is_symlink() {
             continue;
         }
@@ -68,7 +70,9 @@ fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Optio
                     return None;
                 }
                 let Ok(entry) = entry else { continue };
-                let Ok(kind) = entry.file_type() else { continue };
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
                 let path = entry.path();
                 if kind.is_symlink() {
                     continue;
@@ -107,7 +111,9 @@ fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Optio
 }
 
 fn file_has_session_id(path: &Path, session_id: &str, project_hash: &str) -> bool {
-    let Ok(file) = fs::File::open(path) else { return false };
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
     let mut reader = BufReader::new(file);
     let mut first_line = String::new();
     if reader.read_line(&mut first_line).is_err() {
@@ -135,16 +141,23 @@ pub fn read_messages(session_id: &str, workspace: &str) -> Vec<TranscriptMessage
     if !workspace.is_absolute() {
         return Vec::new();
     }
-    let project_hash = format!("{:x}", Sha256::digest(workspace.to_string_lossy().as_bytes()));
+    let project_hash = format!(
+        "{:x}",
+        Sha256::digest(workspace.to_string_lossy().as_bytes())
+    );
     let root = temp_root();
     let Some(path) = find_session_file(&root, session_id, &project_hash) else {
         return Vec::new();
     };
-    let Ok(metadata) = fs::metadata(&path) else { return Vec::new() };
+    let Ok(metadata) = fs::metadata(&path) else {
+        return Vec::new();
+    };
     if metadata.len() > MAX_TRANSCRIPT_BYTES {
         return Vec::new();
     }
-    let Ok(file) = fs::File::open(path) else { return Vec::new() };
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
     parse_reader(BufReader::new(file), session_id)
 }
 
@@ -226,17 +239,36 @@ fn tool_result_text(result: &Value) -> String {
     }
 }
 
-fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, positions: &mut HashMap<String, usize>) {
-    let Some(id) = record.get("id").and_then(Value::as_str) else { return };
-    let Some(kind) = record.get("type").and_then(Value::as_str) else { return };
-    let timestamp = record.get("timestamp").and_then(Value::as_str).map(str::to_owned);
+fn parse_message(
+    record: &Value,
+    messages: &mut Vec<TranscriptMessage>,
+    positions: &mut HashMap<String, usize>,
+) {
+    let Some(id) = record.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(kind) = record.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    let timestamp = record
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let content = record.get("content").unwrap_or(&Value::Null);
 
     let mut message = match kind {
         "user" => {
             let text = text_from_content(content);
-            if text.is_empty() { return; }
-            empty_message(id.to_owned(), "user", text, timestamp, content_parts(content))
+            if text.is_empty() {
+                return;
+            }
+            empty_message(
+                id.to_owned(),
+                "user",
+                text,
+                timestamp,
+                content_parts(content),
+            )
         }
         "gemini" => {
             let text = text_from_content(content);
@@ -244,7 +276,9 @@ fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, position
             let tool_calls = record.get("toolCalls").and_then(Value::as_array);
             if let Some(calls) = tool_calls {
                 for call in calls {
-                    let Some(name) = call.get("name").and_then(Value::as_str) else { continue };
+                    let Some(name) = call.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
                     parts.push(TranscriptPart {
                         kind: "toolCall".into(),
                         name: Some(name.to_owned()),
@@ -254,15 +288,21 @@ fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, position
                     });
                 }
             }
-            if text.is_empty() && parts.is_empty() { return; }
+            if text.is_empty() && parts.is_empty() {
+                return;
+            }
             let mut message = empty_message(id.to_owned(), "assistant", text, timestamp, parts);
-            message.model = record.get("model").and_then(Value::as_str).map(str::to_owned);
+            message.model = record
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             message.usage = record.get("tokens").cloned();
             message
         }
         _ => return,
     };
 
+    let message_created_at = message.created_at.clone();
     if let Some(index) = positions.get(id).copied() {
         messages[index] = message;
     } else {
@@ -273,20 +313,39 @@ fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, position
     if kind == "gemini" {
         if let Some(calls) = record.get("toolCalls").and_then(Value::as_array) {
             for call in calls {
-                let Some(call_id) = call.get("id").and_then(Value::as_str) else { continue };
-                let Some(result) = call.get("result") else { continue };
+                let Some(call_id) = call.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(result) = call.get("result") else {
+                    continue;
+                };
                 let text = tool_result_text(result);
                 let tool_message_id = format!("{id}-tool-{call_id}");
                 let mut tool_message = empty_message(
                     tool_message_id.clone(),
                     "tool",
                     text.clone(),
-                    call.get("timestamp").and_then(Value::as_str).map(str::to_owned).or_else(|| message.created_at.clone()),
-                    if text.is_empty() { Vec::new() } else { vec![TranscriptPart { kind: "text".into(), text: Some(text), ..Default::default() }] },
+                    call.get("timestamp")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| message_created_at.clone()),
+                    if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![TranscriptPart {
+                            kind: "text".into(),
+                            text: Some(text),
+                            ..Default::default()
+                        }]
+                    },
                 );
                 tool_message.tool_call_id = Some(call_id.to_owned());
-                tool_message.tool_name = call.get("name").and_then(Value::as_str).map(str::to_owned);
-                tool_message.is_error = call.get("status").and_then(Value::as_str).map(|status| status == "error");
+                tool_message.tool_name =
+                    call.get("name").and_then(Value::as_str).map(str::to_owned);
+                tool_message.is_error = call
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(|status| status == "error");
                 if let Some(index) = positions.get(&tool_message_id).copied() {
                     messages[index] = tool_message;
                 } else {
@@ -311,7 +370,9 @@ fn parse_reader<R: BufRead>(mut reader: R, expected_session_id: &str) -> Vec<Tra
             Ok(_) => {}
             Err(_) => break,
         }
-        let Ok(record) = serde_json::from_slice::<Value>(&line) else { continue };
+        let Ok(record) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
         if line_number == 0 {
             if record.get("sessionId").and_then(Value::as_str) != Some(expected_session_id) {
                 return Vec::new();
@@ -371,13 +432,17 @@ mod tests {
             r#"{"id":"u1","timestamp":"2026-01-01T00:00:01Z","type":"user","content":[{"text":"hello"}]}"#,
             r#"{"id":"a1","timestamp":"2026-01-01T00:00:02Z","type":"gemini","content":[{"text":"working"}],"model":"gemini-2.5-pro","tokens":{"input":10,"output":5},"toolCalls":[{"id":"call-1","name":"read_file","args":{"path":"a.txt"},"result":[{"text":"file data"}],"status":"success"}]}"#,
             r#"{"$patch":{"id":"a1","content":[{"text":"done"}]}}"#,
-        ].join("\n");
+        ]
+        .join("\n");
         let messages = parse_reader(BufReader::new(fixture.as_bytes()), "session-123");
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[1].content, "done");
         assert_eq!(messages[1].model.as_deref(), Some("gemini-2.5-pro"));
-        assert_eq!(messages[1].usage.as_ref().and_then(|v| v["input"].as_i64()), Some(10));
+        assert_eq!(
+            messages[1].usage.as_ref().and_then(|v| v["input"].as_i64()),
+            Some(10)
+        );
         assert_eq!(messages[1].parts.as_ref().unwrap()[0].kind, "text");
         assert_eq!(messages[2].role, "tool");
         assert_eq!(messages[2].content, "file data");
