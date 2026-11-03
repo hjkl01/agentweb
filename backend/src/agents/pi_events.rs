@@ -92,12 +92,7 @@ async fn handle_message_update(
     }
 }
 
-async fn publish_tool_output(
-    session_id: &str,
-    tool: String,
-    output: String,
-    events: &EventBus,
-) {
+async fn publish_tool_output(session_id: &str, tool: String, output: String, events: &EventBus) {
     events
         .publish(AgentEvent::ToolOutput {
             session_id: session_id.into(),
@@ -125,8 +120,7 @@ fn tool_args(value: &Value) -> Option<String> {
                 None => format!("{key}: {value}"),
             })
             .collect::<Vec<_>>()
-            .join("
-"),
+            .join("\n"),
     )
 }
 
