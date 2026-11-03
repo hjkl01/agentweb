@@ -82,7 +82,8 @@ pub fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
 
 
 fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
-        for (line_number, line) in reader.lines().enumerate() {
+    let mut messages = Vec::new();
+    for (line_number, line) in reader.lines().enumerate() {
             if line_number >= 1_000_000 {
                 break;
             }
