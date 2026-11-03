@@ -86,7 +86,7 @@ impl Drop for ProcessRunGuard {
                 #[cfg(unix)]
                 if let Some(pid) = process_id {
                     let group = format!("-{pid}");
-                    if let Err(error) = Command::new("kill").args(["-KILL", &group]).status().await
+                    if let Err(error) = Command::new("kill").args(["-KILL", "--", &group]).status().await
                     {
                         tracing::warn!(
                             session_id = %session_id,
@@ -119,7 +119,7 @@ impl Drop for ProcessRunGuard {
             if let Some(pid) = self.process_id {
                 let group = format!("-{pid}");
                 let _ = std::process::Command::new("kill")
-                    .args(["-KILL", &group])
+                    .args(["-KILL", "--", &group])
                     .status();
             }
         }
@@ -529,7 +529,7 @@ impl ProcessAdapter {
                 #[cfg(unix)]
                 if let Some(pid) = process_id {
                     let group = format!("-{pid}");
-                    match Command::new("kill").args(["-KILL", &group]).status().await {
+                    match Command::new("kill").args(["-KILL", "--", &group]).status().await {
                         Ok(status) if status.success() => {}
                         Ok(status) => {
                             cleanup_error =
@@ -853,7 +853,7 @@ mod tests {
         timeout(Duration::from_secs(2), async {
             loop {
                 let probe = Command::new("kill")
-                    .args(["-0", &group])
+                    .args(["-0", "--", &group])
                     .status()
                     .await
                     .expect("kill should be available on Unix");
@@ -1303,7 +1303,7 @@ mod tests {
 
         let group = format!("-{pid}");
         let kill_status = Command::new("kill")
-            .args(["-KILL", &group])
+            .args(["-KILL", "--", &group])
             .status()
             .await
             .expect("kill should be available on Linux");
