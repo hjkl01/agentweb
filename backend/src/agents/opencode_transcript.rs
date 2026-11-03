@@ -1,10 +1,11 @@
-//! Read OpenCode's native SQLite transcript without modifying its database.
-//! Supports the legacy session/message/part schema and the current
-//! session_v2/session_message schema. The database format is owned by OpenCode.
+//! Read OpenCode's native SQLite transcript in read-only mode.
+//!
+//! OpenCode owns this database. Agent Web never writes to it and never copies
+//! transcript content into its own SQLite database.
 use super::pi_transcript::{TranscriptMessage, TranscriptPart};
 use serde_json::Value;
 use sqlx::{Connection, Row, sqlite::SqliteConnectOptions};
-use std::{path::PathBuf, time::Duration};
+use std::{path::{Path, PathBuf}, time::Duration};
 
 const MAX_MESSAGES: usize = 20_000;
 const MAX_PARTS_PER_MESSAGE: usize = 5_000;
@@ -30,7 +31,7 @@ fn timestamp(value: Option<i64>) -> Option<String> {
         .map(|v| v.to_rfc3339())
 }
 
-fn empty_message(id: String, role: &str, created_at: Option<String>) -> TranscriptMessage {
+fn message(id: String, role: &str, created_at: Option<String>) -> TranscriptMessage {
     TranscriptMessage {
         id, role: role.to_owned(), content: String::new(), created_at,
         parts: None, tool_call_id: None, is_error: None, usage: None,
@@ -43,166 +44,176 @@ fn text_part(value: &str) -> TranscriptPart {
     TranscriptPart { kind: "text".into(), text: Some(value.to_owned()), ..Default::default() }
 }
 
-fn add_part(message: &mut TranscriptMessage, part: TranscriptPart) {
+fn add_part(target: &mut TranscriptMessage, part: TranscriptPart) {
     if part.kind == "text" {
         if let Some(text) = part.text.as_deref() {
-            message.content.push_str(text);
+            target.content.push_str(text);
         }
     }
-    message.parts.get_or_insert_with(Vec::new).push(part);
+    target.parts.get_or_insert_with(Vec::new).push(part);
 }
 
-fn parse_v1_part(message: &mut TranscriptMessage, data: &Value) {
+fn output_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => serde_json::to_string_pretty(other).unwrap_or_default(),
+    }
+}
+
+fn tool_result(
+    parent_id: &str,
+    call_id: Option<String>,
+    name: Option<String>,
+    state: &Value,
+    created_at: Option<String>,
+) -> Option<TranscriptMessage> {
+    let status = state.get("status").and_then(Value::as_str)?;
+    if !matches!(status, "completed" | "error") {
+        return None;
+    }
+    let output = output_text(state.get("output").unwrap_or(&Value::Null));
+    let mut result = message(
+        format!("{}-{}", parent_id, call_id.as_deref().unwrap_or("tool")),
+        "toolResult",
+        created_at,
+    );
+    result.content = output.clone();
+    result.parts = (!output.is_empty()).then(|| vec![text_part(&output)]);
+    result.tool_call_id = call_id;
+    result.tool_name = name;
+    result.is_error = Some(status == "error");
+    Some(result)
+}
+
+/// Parse one OpenCode part and return a separate result message when a tool
+/// has completed. Tool results use the same role/fields as Pi's transcript API.
+fn parse_part(
+    parent: &mut TranscriptMessage,
+    data: &Value,
+    tool_result_message: &mut Vec<TranscriptMessage>,
+) {
     match data.get("type").and_then(Value::as_str).unwrap_or("") {
         "text" => {
             if let Some(text) = data.get("text").or_else(|| data.get("content")).and_then(Value::as_str) {
-                add_part(message, text_part(text));
+                add_part(parent, text_part(text));
             }
         }
         "reasoning" => {
             if let Some(text) = data.get("text").or_else(|| data.get("content")).and_then(Value::as_str) {
-                add_part(message, TranscriptPart { kind: "thinking".into(), text: Some(text.to_owned()), ..Default::default() });
+                add_part(parent, TranscriptPart { kind: "thinking".into(), text: Some(text.to_owned()), ..Default::default() });
             }
         }
         "tool" => {
             let state = data.get("state").unwrap_or(&Value::Null);
-            let status = state.get("status").and_then(Value::as_str).unwrap_or("");
             let call_id = data.get("callID").or_else(|| data.get("callId")).and_then(Value::as_str).map(str::to_owned);
             let name = data.get("tool").and_then(Value::as_str).map(str::to_owned);
-            let args = state.get("input").cloned().or_else(|| data.get("input").cloned());
-            add_part(message, TranscriptPart {
-                kind: "toolCall".into(), name: name.clone(), arguments: args,
+            let arguments = state.get("input").cloned().or_else(|| data.get("input").cloned());
+            add_part(parent, TranscriptPart {
+                kind: "toolCall".into(), name: name.clone(), arguments,
                 tool_call_id: call_id.clone(), ..Default::default()
             });
-            if matches!(status, "completed" | "error") {
-                let output = state.get("output").and_then(Value::as_str).unwrap_or("").to_owned();
-                let mut result = empty_message(
-                    format!("{}-{}", message.id, call_id.as_deref().unwrap_or("tool")),
-                    "tool", message.created_at.clone(),
-                );
-                result.content = output.clone();
-                result.parts = (!output.is_empty()).then(|| vec![text_part(&output)]);
-                result.tool_call_id = call_id;
-                result.tool_name = name;
-                result.is_error = Some(status == "error");
-                // Tool result is emitted after its parent by the caller.
+            if let Some(result) = tool_result(&parent.id, call_id, name, state, parent.created_at.clone()) {
+                tool_result_message.push(result);
+            }
+        }
+        "file" | "image" => {
+            // Preserve a lightweight placeholder rather than silently dropping
+            // non-text content that this API cannot currently serve.
+            let label = data.get("filename").or_else(|| data.get("url")).and_then(Value::as_str);
+            if let Some(label) = label {
+                add_part(parent, text_part(&format!("[{label}]")));
             }
         }
         _ => {}
     }
 }
 
-fn parse_v2_content(message: &mut TranscriptMessage, content: &Value) {
-    let Some(items) = content.as_array() else { return; };
-    for item in items {
-        match item.get("type").and_then(Value::as_str).unwrap_or("") {
-            "text" => if let Some(text) = item.get("text").and_then(Value::as_str) {
-                add_part(message, text_part(text));
-            },
-            "reasoning" => if let Some(text) = item.get("text").or_else(|| item.get("reasoning")).and_then(Value::as_str) {
-                add_part(message, TranscriptPart { kind: "thinking".into(), text: Some(text.to_owned()), ..Default::default() });
-            },
-            "tool" => {
-                let state = item.get("state").unwrap_or(&Value::Null);
-                let status = state.get("status").and_then(Value::as_str).unwrap_or("");
-                let call_id = item.get("callID").and_then(Value::as_str).map(str::to_owned);
-                let name = item.get("tool").and_then(Value::as_str).map(str::to_owned);
-                add_part(message, TranscriptPart {
-                    kind: "toolCall".into(), name: name.clone(),
-                    arguments: state.get("input").cloned(), tool_call_id: call_id.clone(),
-                    ..Default::default()
-                });
-                if matches!(status, "completed" | "error") {
-                    let output = state.get("output").and_then(Value::as_str).unwrap_or("").to_owned();
-                    let mut result = empty_message(
-                        format!("{}-{}", message.id, call_id.as_deref().unwrap_or("tool")),
-                        "tool", message.created_at.clone(),
-                    );
-                    result.content = output.clone();
-                    result.parts = (!output.is_empty()).then(|| vec![text_part(&output)]);
-                    result.tool_call_id = call_id;
-                    result.tool_name = name;
-                    result.is_error = Some(status == "error");
-                    // Tool results are appended by parse_v2_message.
-                    message.parts.get_or_insert_with(Vec::new).push(TranscriptPart {
-                        kind: "toolResult".into(), text: Some(output),
-                        name: result.tool_name, tool_call_id: result.tool_call_id,
-                        ..Default::default()
-                    });
-                }
-            }
-            _ => {}
+fn parse_v2_message(id: &str, kind: &str, data: &Value, created: Option<i64>) -> Vec<TranscriptMessage> {
+    let role = data.get("role").and_then(Value::as_str).unwrap_or(kind);
+    if !matches!(role, "user" | "assistant") {
+        return Vec::new();
+    }
+    let created_at = timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
+    let mut parent = message(id.to_owned(), role, created_at);
+    if role == "assistant" {
+        parent.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
+        parent.usage = data.get("tokens").cloned();
+        parent.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
+        parent.error_message = data.pointer("/error/message").and_then(Value::as_str)
+            .or_else(|| data.get("error").and_then(Value::as_str)).map(str::to_owned);
+    }
+    let mut results = Vec::new();
+    if let Some(parts) = data.get("content").and_then(Value::as_array) {
+        for part in parts {
+            parse_part(&mut parent, part, &mut results);
         }
     }
-}
-
-fn parse_v2_message(id: &str, kind: &str, data: &Value, created: Option<i64>) -> Option<TranscriptMessage> {
-    let role = match kind {
-        "user" => "user",
-        "assistant" => "assistant",
-        _ => return None,
-    };
-    let mut message = empty_message(id.to_owned(), role, timestamp(created));
-    if role == "assistant" {
-        message.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
-        message.usage = data.get("tokens").cloned();
-        message.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
-        message.error_message = data.get("error").and_then(Value::as_str).map(str::to_owned);
-    }
-    parse_v2_content(&mut message, data.get("content").unwrap_or(&Value::Null));
-    if message.content.is_empty() && message.parts.as_ref().is_none_or(Vec::is_empty) {
-        None
+    if !parent.content.is_empty() || parent.parts.as_ref().is_some_and(|p| !p.is_empty()) {
+        let mut messages = vec![parent];
+        messages.extend(results);
+        messages
     } else {
-        Some(message)
+        results
     }
 }
 
 async fn table_exists(conn: &mut sqlx::SqliteConnection, name: &str) -> Result<bool, sqlx::Error> {
-    let found: Option<String> = sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
-        .bind(name).fetch_optional(&mut *conn).await?;
+    let found: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+    ).bind(name).fetch_optional(&mut *conn).await?;
     Ok(found.is_some())
 }
 
 /// Read one native OpenCode session. Missing databases/sessions return an empty transcript.
 pub async fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
-    if !safe_session_id(session_id) { return Vec::new(); }
-    read_messages_from(&database_path(), session_id).await.unwrap_or_else(|error| {
-        tracing::warn!(%error, "unable to read OpenCode transcript");
-        Vec::new()
-    })
+    if !safe_session_id(session_id) {
+        return Vec::new();
+    }
+    match read_messages_from(&database_path(), session_id).await {
+        Ok(messages) => messages,
+        Err(error) => {
+            tracing::warn!(%error, "unable to read OpenCode transcript");
+            Vec::new()
+        }
+    }
 }
 
-async fn read_messages_from(path: &std::path::Path, session_id: &str) -> anyhow::Result<Vec<TranscriptMessage>> {
-    if !path.is_file() { return Ok(Vec::new()); }
-    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
-        .read_only(true).create_if_missing(false).busy_timeout(Duration::from_secs(2));
+async fn read_messages_from(path: &Path, session_id: &str) -> anyhow::Result<Vec<TranscriptMessage>> {
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_secs(2));
     let mut conn = sqlx::SqliteConnection::connect_with(&options).await?;
 
-    // OpenCode 2.x stores typed message records in session_message.
+    // Compatibility with OpenCode builds that store typed message rows.
     if table_exists(&mut conn, "session_message").await? {
-        let rows = sqlx::query("SELECT id, type, data FROM session_message WHERE session_id=? ORDER BY time_created, id LIMIT ?")
-            .bind(session_id).bind(MAX_MESSAGES as i64).fetch_all(&mut conn).await?;
+        let rows = sqlx::query(
+            "SELECT id, type, data FROM session_message WHERE session_id=? ORDER BY time_created, id LIMIT ?",
+        ).bind(session_id).bind(MAX_MESSAGES as i64).fetch_all(&mut conn).await?;
         let mut messages = Vec::new();
         for row in rows {
             let id: String = row.try_get("id")?;
             let kind: String = row.try_get("type")?;
             let raw: String = row.try_get("data")?;
             let Ok(data) = serde_json::from_str::<Value>(&raw) else { continue; };
-            let role = data.get("role").and_then(Value::as_str).unwrap_or(&kind);
             let created = data.pointer("/time/created").and_then(Value::as_i64);
-            if let Some(message) = parse_v2_message(&id, role, &data, created) {
-                messages.push(message);
-            }
+            messages.extend(parse_v2_message(&id, &kind, &data, created));
         }
         return Ok(messages);
     }
 
-    // OpenCode 1.x / compatibility schema stores message metadata and parts separately.
+    // OpenCode's message/part schema stores message metadata and parts separately.
     if !table_exists(&mut conn, "message").await? || !table_exists(&mut conn, "part").await? {
         return Ok(Vec::new());
     }
-    let rows = sqlx::query("SELECT id, time_created, data FROM message WHERE session_id=? ORDER BY time_created, id LIMIT ?")
-        .bind(session_id).bind(MAX_MESSAGES as i64).fetch_all(&mut conn).await?;
+    let rows = sqlx::query(
+        "SELECT id, time_created, data FROM message WHERE session_id=? ORDER BY time_created, id LIMIT ?",
+    ).bind(session_id).bind(MAX_MESSAGES as i64).fetch_all(&mut conn).await?;
     let mut messages = Vec::new();
     for row in rows {
         let id: String = row.try_get("id")?;
@@ -210,23 +221,31 @@ async fn read_messages_from(path: &std::path::Path, session_id: &str) -> anyhow:
         let raw: String = row.try_get("data")?;
         let Ok(data) = serde_json::from_str::<Value>(&raw) else { continue; };
         let role = data.get("role").and_then(Value::as_str).unwrap_or("");
-        if !matches!(role, "user" | "assistant") { continue; }
-        let mut message = empty_message(id.clone(), role, timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64))));
-        if role == "assistant" {
-            message.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
-            message.usage = data.get("tokens").cloned();
-            message.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
+        if !matches!(role, "user" | "assistant") {
+            continue;
         }
-        let parts = sqlx::query("SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT ?")
-            .bind(session_id).bind(&id).bind(MAX_PARTS_PER_MESSAGE as i64).fetch_all(&mut conn).await?;
+        let created_at = timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
+        let mut parent = message(id.clone(), role, created_at);
+        if role == "assistant" {
+            parent.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
+            parent.usage = data.get("tokens").cloned();
+            parent.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
+            parent.error_message = data.pointer("/error/message").and_then(Value::as_str)
+                .or_else(|| data.get("error").and_then(Value::as_str)).map(str::to_owned);
+        }
+        let parts = sqlx::query(
+            "SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT ?",
+        ).bind(session_id).bind(&id).bind(MAX_PARTS_PER_MESSAGE as i64).fetch_all(&mut conn).await?;
+        let mut results = Vec::new();
         for part in parts {
             let raw: String = part.try_get("data")?;
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-                parse_v1_part(&mut message, &value);
+                parse_part(&mut parent, &value, &mut results);
             }
         }
-        if !message.content.is_empty() || message.parts.as_ref().is_some_and(|p| !p.is_empty()) {
-            messages.push(message);
+        if !parent.content.is_empty() || parent.parts.as_ref().is_some_and(|p| !p.is_empty()) {
+            messages.push(parent);
+            messages.extend(results);
         }
     }
     Ok(messages)
@@ -237,10 +256,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_current_v2_user_and_assistant_records() {
+    fn parses_text_thinking_and_tool_result_as_separate_messages() {
         let data: Value = serde_json::json!({
-            "role":"assistant", "modelID":"claude-sonnet",
-            "tokens":{"input":12,"output":5}, "finish":"stop",
+            "role":"assistant",
+            "modelID":"claude-sonnet",
+            "tokens":{"input":12,"output":5},
+            "finish":"tool-calls",
             "time":{"created":1793700000000},
             "content":[
                 {"type":"text","text":"working"},
@@ -249,14 +270,30 @@ mod tests {
                  "state":{"status":"completed","input":{"command":"pwd"},"output":"/workspace"}}
             ]
         });
-        let message = parse_v2_message("msg-1", "assistant", &data, None).unwrap();
-        assert_eq!(message.content, "working");
-        assert_eq!(message.model.as_deref(), Some("claude-sonnet"));
-        let parts = message.parts.unwrap();
+        let messages = parse_v2_message("msg-1", "assistant", &data, None);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].content, "working");
+        assert_eq!(messages[0].model.as_deref(), Some("claude-sonnet"));
+        let parts = messages[0].parts.as_ref().unwrap();
         assert_eq!(parts[1].kind, "thinking");
         assert_eq!(parts[2].kind, "toolCall");
         assert_eq!(parts[2].name.as_deref(), Some("bash"));
-        assert_eq!(parts[3].kind, "toolResult");
+        assert_eq!(messages[1].role, "toolResult");
+        assert_eq!(messages[1].content, "/workspace");
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn retains_running_tool_call_without_fabricating_result() {
+        let mut parent = message("m1".into(), "assistant", None);
+        let mut results = Vec::new();
+        parse_part(&mut parent, &serde_json::json!({
+            "type":"tool","callID":"c1","tool":"bash",
+            "state":{"status":"running","input":{"command":"pwd"}}
+        }), &mut results);
+        assert_eq!(parent.parts.as_ref().unwrap()[0].kind, "toolCall");
+        assert!(results.is_empty());
     }
 
     #[test]
