@@ -26,8 +26,24 @@ async fn websocket(mut socket: WebSocket, s: AppState, session_id: String) {
         let event = tokio::select! {
             event = events.recv() => match event {
                 Ok(event) => event,
-                // A slow client skipped events; keep streaming the latest state.
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                // The browser reconnects with exponential backoff and reloads an
+                // authoritative HTTP snapshot. Close this stream instead of silently
+                // continuing after a gap that cannot be replayed from SQLite.
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        skipped,
+                        "session websocket fell behind; forcing snapshot resynchronization"
+                    );
+                    let payload = serde_json::json!({
+                        "type": "session.resync_required",
+                        "data": { "skipped": skipped }
+                    });
+                    let _ = socket
+                        .send(Message::Text(payload.to_string().into()))
+                        .await;
+                    return;
+                }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
             message = socket.recv() => {
