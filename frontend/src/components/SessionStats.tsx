@@ -8,13 +8,22 @@ function formatTokens(value: number): string {
   return String(value);
 }
 
-function sumUsage(usage: MessageUsage) {
-  return (
-    (usage.input || 0) +
-    (usage.output || 0) +
-    (usage.cacheRead || 0) +
-    (usage.cacheWrite || 0)
-  );
+function usageNumbers(usage: MessageUsage) {
+  const input = usage.input ?? usage.input_tokens ?? 0;
+  const output = usage.output ?? usage.output_tokens ?? 0;
+  const cacheRead =
+    usage.cacheRead ?? usage.cache?.read ?? usage.cache_read_input_tokens ?? 0;
+  const cacheWrite =
+    usage.cacheWrite ??
+    usage.cache?.write ??
+    usage.cache_creation_input_tokens ??
+    0;
+  const total =
+    input + output + cacheRead + cacheWrite || usage.totalTokens || 0;
+  const rawCost = usage.cost;
+  const cost =
+    typeof rawCost === "number" ? rawCost : (rawCost?.total ?? 0);
+  return { input, output, cacheRead, cacheWrite, total, cost };
 }
 
 /** Compact token/cost summary aggregated from Pi `message.usage` fields. */
@@ -27,13 +36,13 @@ export function SessionStats({ messages }: { messages: ChatMessage[] }) {
     for (const message of messages) {
       const usage = message.usage;
       if (!usage) continue;
-      tokens += sumUsage(usage);
-      cost += usage.cost?.total || 0;
+      const values = usageNumbers(usage);
+      tokens += values.total;
+      cost += values.cost;
       if (message.role === "assistant") {
         turns += 1;
         // The latest assistant prompt size approximates current context load.
-        context =
-          (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+        context = values.input + values.cacheRead + values.cacheWrite;
       }
     }
     return { tokens, cost, turns, context };
