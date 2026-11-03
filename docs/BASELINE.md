@@ -40,13 +40,19 @@
 
 DST 策略：春季跳时导致的不存在本地时间会跳过；秋季回拨造成的重复本地时间会分别触发两次。当前五段 Cron 表达式仍使用项目原有字段匹配语义，不在本次范围内扩展为完整 Quartz/Cron 特性。
 
-### 3.2 实时事件
+### 3.2 实时事件与重连
 
-`backend/src/events.rs` 使用 Tokio broadcast 和有界 mpsc 队列。跨 Worker Relay 明确是 best-effort：队列满、关闭或连接异常时会丢弃实时事件。Session 对话事件不写入 SQLite，只有安装状态等事件会持久化。这符合“不保存完整聊天正文/事件流”的数据原则，但页面重连必须重新读取 Agent 原生 Transcript 和当前执行状态，不能依赖补发历史 WebSocket 事件。
+`backend/src/events.rs` 使用 Tokio broadcast 和有界 mpsc 队列。跨 Worker Relay 明确是 best-effort：队列满、关闭或连接异常时会丢弃实时事件。Session 对话事件不写入 SQLite，只有安装状态等事件会持久化。
+
+前端 `useSessionEvents` 已实现心跳、断线指数退避重连、先订阅再加载 HTTP 快照，并缓冲快照加载期间到达的事件。此前后端收到 broadcast `Lagged` 时只跳过事件继续推送，可能让前端长期保留不完整的当前轮次；现已改为发送 `session.resync_required` 并关闭连接，借助既有重连流程重新拉取状态快照。跨 Worker Relay 队列满时仍然只是记录日志并丢弃事件，尚未实现端到端的 resync 通知。
 
 ### 3.3 Agent 生命周期
 
 `backend/src/agents/process.rs` 已有进程组管理、kill-on-drop、并发执行保护、interrupt 和原生 Session 丢失识别等实现与测试。仍需针对 Codex、Claude、Gemini、OpenCode、Pi、Qwen 六种真实 CLI 建立端到端兼容性矩阵，特别是启动、resume、停止、进程异常退出和服务重启。
+
+### 3.4 原生 Transcript 恢复
+
+`backend/src/api/session_messages.rs` 当前只为 Pi 读取原生 JSONL Transcript；其他 Agent 返回空数组。由于 Agent Web 不持久化聊天正文，其他 Agent 的会话刷新/重新打开后无法通过该 API 恢复历史对话。这是下一项高优先级工作：逐个支持各 Agent 的原生 Session 存储格式或官方只读接口，并为不完整/不存在/无法读取的 Transcript 区分状态。
 
 ## 4. 本轮后续顺序
 
