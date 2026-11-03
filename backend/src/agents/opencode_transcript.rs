@@ -169,7 +169,11 @@ fn parse_part(
                 .or_else(|| data.get("callId"))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            let name = data.get("tool").and_then(Value::as_str).map(str::to_owned);
+            let name = data
+                .get("name")
+                .or_else(|| data.get("tool"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let arguments = state
                 .get("input")
                 .cloned()
@@ -227,7 +231,13 @@ fn parse_v2_message(
         parent.model = data
             .get("modelID")
             .and_then(Value::as_str)
-            .map(str::to_owned);
+            .map(str::to_owned)
+            .or_else(|| {
+                let model = data.get("model")?;
+                let provider = model.get("providerID").and_then(Value::as_str)?;
+                let id = model.get("id").and_then(Value::as_str)?;
+                Some(format!("{provider}/{id}"))
+            });
         parent.usage = data.get("tokens").cloned();
         parent.stop_reason = data
             .get("finish")
@@ -522,19 +532,45 @@ mod tests {
         let path = temporary_database("typed").await;
         let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
         let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::query("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)")
+        sqlx::query("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)")
             .execute(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)")
-            .bind("msg-v2").bind("ses_v2").bind("assistant").bind(1793700000000_i64)
-            .bind(r#"{"role":"assistant","modelID":"fixture-model","content":[{"type":"text","text":"v2 fixture"},{"type":"tool","callID":"call-v2","tool":"read","state":{"status":"error","input":{"file":"x"},"output":"not found"}}]}"#)
+        sqlx::query("CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, type TEXT, call_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
             .execute(&mut conn).await.unwrap();
+
+        sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind("msg-user").bind("ses_v2").bind("user").bind(1_i64)
+            .bind(1793700000000_i64).bind(1793700000000_i64)
+            .bind(r#"{"text":"hello from OpenCode","time":{"created":1793700000000}}"#)
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind("msg-v2").bind("ses_v2").bind("assistant").bind(2_i64)
+            .bind(1793700001000_i64).bind(1793700001000_i64)
+            .bind(r#"{"model":{"providerID":"anthropic","id":"claude-sonnet-4-5"},"tokens":{"input":12,"output":5},"finish":"tool-calls","content":[],"time":{"created":1793700001000}}"#)
+            .execute(&mut conn).await.unwrap();
+
+        for (ordinal, kind, call_id, data) in [
+            (0_i64, "text", None, r#"{"type":"text","text":"v2 fixture"}"#),
+            (1_i64, "reasoning", None, r#"{"type":"reasoning","text":"thinking"}"#),
+            (2_i64, "tool", Some("call-v2"), r#"{"type":"tool","id":"call-v2","name":"read","state":{"status":"error","input":{"file":"x"},"content":[{"type":"text","text":"not found"}],"error":{"message":"read failed"}},"time":{"created":1793700001001}}"#),
+        ] {
+            sqlx::query("INSERT INTO session_part VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind("msg-v2").bind("ses_v2").bind(ordinal).bind(kind).bind(call_id)
+                .bind(1793700001001_i64).bind(1793700001001_i64).bind(data)
+                .execute(&mut conn).await.unwrap();
+        }
         conn.close().await.unwrap();
 
         let messages = read_messages_from(&path, "ses_v2").await.unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].content, "v2 fixture");
-        assert_eq!(messages[1].role, "toolResult");
-        assert_eq!(messages[1].is_error, Some(true));
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "hello from OpenCode");
+        assert_eq!(messages[1].content, "v2 fixture");
+        assert_eq!(messages[1].model.as_deref(), Some("anthropic/claude-sonnet-4-5"));
+        assert_eq!(messages[1].parts.as_ref().unwrap()[1].kind, "thinking");
+        assert_eq!(messages[2].role, "toolResult");
+        assert_eq!(messages[2].content, "not found");
+        assert_eq!(messages[2].is_error, Some(true));
+        assert_eq!(messages[2].error_message.as_deref(), Some("read failed"));
         let _ = std::fs::remove_file(path);
     }
 }
