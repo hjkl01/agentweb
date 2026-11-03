@@ -11,7 +11,7 @@ pub mod gemini_transcript;
 pub mod generic;
 pub mod mcp;
 pub mod models;
-pub mod opencode;
+pub mod opencode;\npub mod opencode_transcript;
 pub mod pi;
 pub mod pi_events;
 pub mod pi_rpc;
