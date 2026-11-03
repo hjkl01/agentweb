@@ -217,7 +217,7 @@ mod tests {
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"duplicate source\"}}\n",
             "{\"type\":\"response_item\",\"id\":\"u1\",\"timestamp\":\"2026-11-03T10:00:01Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
             "{\"type\":\"response_item\",\"id\":\"a1\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n",
-            "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\\n"
+            "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\n"
         )).unwrap();
         let messages = parse_file(&path);
         assert_eq!(messages.len(), 2);
