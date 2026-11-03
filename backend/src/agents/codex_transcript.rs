@@ -77,97 +77,101 @@ pub fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
         Ok(file) => file,
         Err(_) => return Vec::new(),
     };
-    let mut messages = Vec::new();
-    for (line_number, line) in BufReader::new(file).lines().enumerate() {
-        if line_number >= 1_000_000 {
-            break;
-        }
-        let Ok(line) = line else { break };
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        let Some(payload) = record.get("payload") else {
-            continue;
-        };
-        let timestamp = record.get("timestamp").and_then(Value::as_str).map(str::to_owned);
-        match payload.get("type").and_then(Value::as_str) {
-            Some("message") => {
-                let Some(role) = payload.get("role").and_then(Value::as_str) else {
-                    continue;
-                };
-                if role != "user" && role != "assistant" {
-                    continue;
-                }
-                let mut parts = Vec::new();
-                let mut text = String::new();
-                if let Some(items) = payload.get("content").and_then(Value::as_array) {
-                    for item in items {
-                        match item.get("type").and_then(Value::as_str) {
-                            Some("input_text" | "output_text" | "text") => {
-                                if let Some(value) = item.get("text").and_then(Value::as_str) {
-                                    text.push_str(value);
-                                    parts.push(TranscriptPart {
-                                        kind: "text".into(),
-                                        text: Some(value.to_owned()),
-                                        ..Default::default()
-                                    });
+    parse_reader(BufReader::new(file))
+}
+
+
+fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
+        for (line_number, line) in reader.lines().enumerate() {
+            if line_number >= 1_000_000 {
+                break;
+            }
+            let Ok(line) = line else { break };
+            let Ok(record) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            let Some(payload) = record.get("payload") else {
+                continue;
+            };
+            let timestamp = record.get("timestamp").and_then(Value::as_str).map(str::to_owned);
+            match payload.get("type").and_then(Value::as_str) {
+                Some("message") => {
+                    let Some(role) = payload.get("role").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if role != "user" && role != "assistant" {
+                        continue;
+                    }
+                    let mut parts = Vec::new();
+                    let mut text = String::new();
+                    if let Some(items) = payload.get("content").and_then(Value::as_array) {
+                        for item in items {
+                            match item.get("type").and_then(Value::as_str) {
+                                Some("input_text" | "output_text" | "text") => {
+                                    if let Some(value) = item.get("text").and_then(Value::as_str) {
+                                        text.push_str(value);
+                                        parts.push(TranscriptPart {
+                                            kind: "text".into(),
+                                            text: Some(value.to_owned()),
+                                            ..Default::default()
+                                        });
+                                    }
                                 }
-                            }
-                            Some("refusal") => {
-                                if let Some(value) = item.get("text").and_then(Value::as_str) {
-                                    text.push_str(value);
-                                    parts.push(TranscriptPart {
-                                        kind: "text".into(),
-                                        text: Some(value.to_owned()),
-                                        ..Default::default()
-                                    });
+                                Some("refusal") => {
+                                    if let Some(value) = item.get("text").and_then(Value::as_str) {
+                                        text.push_str(value);
+                                        parts.push(TranscriptPart {
+                                            kind: "text".into(),
+                                            text: Some(value.to_owned()),
+                                            ..Default::default()
+                                        });
+                                    }
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
+                    if text.is_empty() && parts.is_empty() {
+                        continue;
+                    }
+                    let id = record.get("id").and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("codex-{line_number}"));
+                    messages.push(empty_message(id, role, text, timestamp, parts));
                 }
-                if text.is_empty() && parts.is_empty() {
-                    continue;
+                Some("function_call") => {
+                    let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
+                    let arguments = payload.get("arguments").cloned();
+                    let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
+                    let part = TranscriptPart {
+                        kind: "toolCall".into(),
+                        name: Some(name.to_owned()),
+                        arguments,
+                        tool_call_id: call_id.clone(),
+                        ..Default::default()
+                    };
+                    let id = record.get("id").and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("codex-tool-{line_number}"));
+                    messages.push(empty_message(id, "assistant", String::new(), timestamp, vec![part]));
                 }
-                let id = record.get("id").and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("codex-{line_number}"));
-                messages.push(empty_message(id, role, text, timestamp, parts));
+                Some("function_call_output") => {
+                    let output = payload.get("output").and_then(Value::as_str).unwrap_or_default().to_owned();
+                    let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
+                    let id = record.get("id").and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("codex-tool-result-{line_number}"));
+                    let mut message = empty_message(id, "tool", output.clone(), timestamp, vec![TranscriptPart {
+                        kind: "text".into(),
+                        text: Some(output),
+                        ..Default::default()
+                    }]);
+                    message.tool_call_id = call_id;
+                    messages.push(message);
+                }
+                _ => {}
             }
-            Some("function_call") => {
-                let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
-                let arguments = payload.get("arguments").cloned();
-                let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
-                let part = TranscriptPart {
-                    kind: "toolCall".into(),
-                    name: Some(name.to_owned()),
-                    arguments,
-                    tool_call_id: call_id.clone(),
-                    ..Default::default()
-                };
-                let id = record.get("id").and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("codex-tool-{line_number}"));
-                messages.push(empty_message(id, "assistant", String::new(), timestamp, vec![part]));
-            }
-            Some("function_call_output") => {
-                let output = payload.get("output").and_then(Value::as_str).unwrap_or_default().to_owned();
-                let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
-                let id = record.get("id").and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("codex-tool-result-{line_number}"));
-                let mut message = empty_message(id, "tool", output.clone(), timestamp, vec![TranscriptPart {
-                    kind: "text".into(),
-                    text: Some(output),
-                    ..Default::default()
-                }]);
-                message.tool_call_id = call_id;
-                messages.push(message);
-            }
-            _ => {}
         }
-    }
     messages
 }
 
@@ -220,32 +224,15 @@ mod tests {
             "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\n"
         )).unwrap();
         let messages = parse_file(&path);
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "world");
+        assert_eq!(messages[2].parts.as_ref().unwrap()[0].name.as_deref(), Some("shell"));
         fs::remove_dir_all(root).unwrap();
     }
 
     fn parse_file(path: &Path) -> Vec<TranscriptMessage> {
         let file = fs::File::open(path).unwrap();
-        let mut messages = Vec::new();
-        for (index, line) in BufReader::new(file).lines().enumerate() {
-            let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
-            let payload = value.get("payload").unwrap();
-            if payload.get("type").and_then(Value::as_str) != Some("message") {
-                continue;
-            }
-            let role = payload.get("role").and_then(Value::as_str).unwrap();
-            let text = payload["content"][0]["text"].as_str().unwrap();
-            messages.push(empty_message(
-                value["id"].as_str().unwrap_or("test").to_owned(),
-                role,
-                text.to_owned(),
-                None,
-                vec![TranscriptPart { kind: "text".into(), text: Some(text.to_owned()), ..Default::default() }],
-            ));
-            let _ = index;
-        }
-        messages
+        parse_reader(BufReader::new(file))
     }
 }
