@@ -38,7 +38,7 @@
 ### 1.2 WebSocket 与状态恢复
 
 - [x] WebSocket 心跳、断线指数退避重连，以及重连后重新获取 Session/Execution HTTP 快照（前端已有实现）。
-- [ ] 从六种 Agent 的原生 Transcript 恢复对话；当前 messages API 仅支持 Pi。
+- [ ] 从六种 Agent 的原生 Transcript 恢复对话；Pi、Codex 已接入读取，Claude、Gemini、OpenCode、Qwen 尚未支持。
 - [ ] 为关键生命周期事件建立轻量元数据或状态快照，不持久化聊天正文。
 - [x] broadcast Lagged 时发送 resync_required 并关闭连接，触发现有重连/快照恢复流程。
 - [ ] 处理跨 Worker Relay 队列丢失事件时的端到端 resync 通知。
