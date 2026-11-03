@@ -1,8 +1,8 @@
 pub mod adapter;
 pub mod codex;
 pub mod codex_events;
-pub mod codex_transcript;
 pub mod claude_transcript;
+pub mod codex_transcript;
 pub mod commands;
 pub mod config;
 pub mod definition;
