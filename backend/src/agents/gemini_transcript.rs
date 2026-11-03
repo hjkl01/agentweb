@@ -459,7 +459,8 @@ mod tests {
             r#"{"id":"u1","type":"user","content":"first"}"#,
             r#"{"id":"a1","type":"gemini","content":"second"}"#,
             r#"{"$rewindTo":"a1"}"#,
-        ].join("\n");
+        ]
+        .join("\n");
         let messages = parse_reader(BufReader::new(fixture.as_bytes()), "session-123");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "first");
