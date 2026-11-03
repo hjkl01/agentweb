@@ -30,6 +30,14 @@ async fn is_pi_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx
     Ok(kind.as_deref() == Some("pi"))
 }
 
+async fn is_codex_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(kind.as_deref() == Some("codex"))
+}
+
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -45,7 +53,37 @@ pub async fn list_messages(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     if !is_pi {
-        return Ok(Json(Vec::new()));
+        let is_codex = is_codex_agent(&s.db, &session.agent_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !is_codex {
+            return Ok(Json(Vec::new()));
+        }
+        let Some(native_session_id) = session
+            .native_session_id
+            .as_deref()
+            .or(session.fork_from_native_session_id.as_deref())
+        else {
+            return Ok(Json(Vec::new()));
+        };
+        let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+            tracing::error!(%error, "Codex transcript read limiter is unavailable");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+        let native_session_id = native_session_id.to_owned();
+        let messages = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            crate::agents::codex_transcript::read_messages(&native_session_id)
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Codex transcript reader task failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        return Ok(Json(messages));
     }
     let is_fork_preview =
         session.native_session_id.is_none() && session.fork_from_native_session_id.is_some();
