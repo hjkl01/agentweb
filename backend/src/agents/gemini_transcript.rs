@@ -24,13 +24,12 @@ fn gemini_home() -> PathBuf {
         .unwrap_or_else(super::config::agent_home)
 }
 
-fn chats_root(workspace: &Path) -> PathBuf {
-    let hash = format!("{:x}", Sha256::digest(workspace.to_string_lossy().as_bytes()));
-    gemini_home()
-        .join(".gemini")
-        .join("tmp")
-        .join(hash)
-        .join("chats")
+fn temp_root() -> PathBuf {
+    let home = gemini_home().join(".gemini");
+    if std::env::var("SANDBOX").as_deref() == Ok("sandbox-exec") {
+        return gemini_home().join(".cache").join(".gemini").join("tmp");
+    }
+    home.join("tmp")
 }
 
 fn safe_directory(path: &Path) -> bool {
@@ -39,60 +38,74 @@ fn safe_directory(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn find_session_file(root: &Path, session_id: &str) -> Option<PathBuf> {
+fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Option<PathBuf> {
     let short_id = session_id.get(..8)?;
-    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let projects = fs::read_dir(root).ok()?;
     let mut scanned = 0usize;
-
-    while let Some((directory, depth)) = pending.pop() {
-        if !safe_directory(&directory) {
+    for project in projects {
+        scanned += 1;
+        if scanned > MAX_PROJECT_ENTRIES {
+            return None;
+        }
+        let Ok(project) = project else { continue };
+        if !project.file_type().ok()?.is_dir() || project.file_type().ok()?.is_symlink() {
             continue;
         }
-        let entries = fs::read_dir(&directory).ok()?;
-        for entry in entries {
-            scanned += 1;
-            if scanned > MAX_PROJECT_ENTRIES {
-                return None;
-            }
-            let Ok(entry) = entry else { continue };
-            let Ok(kind) = entry.file_type() else { continue };
-            let path = entry.path();
-            if kind.is_symlink() {
+        let chats = project.path().join("chats");
+        if !safe_directory(&chats) {
+            continue;
+        }
+        let mut pending = vec![(chats, 0usize)];
+        while let Some((directory, depth)) = pending.pop() {
+            if !safe_directory(&directory) {
                 continue;
             }
-            if kind.is_dir() {
-                if depth < MAX_SCAN_DEPTH {
-                    pending.push((path, depth + 1));
+            let entries = fs::read_dir(&directory).ok()?;
+            for entry in entries {
+                scanned += 1;
+                if scanned > MAX_PROJECT_ENTRIES {
+                    return None;
                 }
-                continue;
-            }
-            if !kind.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            let candidate = (name.ends_with(".jsonl") || name.ends_with(".json"))
-                && (name == format!("{session_id}.jsonl")
-                    || name == format!("{session_id}.json")
-                    || (name.starts_with("session-")
-                        && name.contains(short_id)
-                        && (name.ends_with(".jsonl") || name.ends_with(".json"))));
-            if !candidate {
-                continue;
-            }
-            let metadata = fs::metadata(&path).ok()?;
-            if metadata.len() > MAX_TRANSCRIPT_BYTES {
-                continue;
-            }
-            if file_has_session_id(&path, session_id) {
-                return Some(path);
+                let Ok(entry) = entry else { continue };
+                let Ok(kind) = entry.file_type() else { continue };
+                let path = entry.path();
+                if kind.is_symlink() {
+                    continue;
+                }
+                if kind.is_dir() {
+                    if depth < MAX_SCAN_DEPTH {
+                        pending.push((path, depth + 1));
+                    }
+                    continue;
+                }
+                if !kind.is_file() {
+                    continue;
+                }
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let candidate = (name.ends_with(".jsonl") || name.ends_with(".json"))
+                    && (name == format!("{session_id}.jsonl")
+                        || name == format!("{session_id}.json")
+                        || (name.starts_with("session-")
+                            && name.contains(short_id)
+                            && (name.ends_with(".jsonl") || name.ends_with(".json"))));
+                if !candidate {
+                    continue;
+                }
+                let metadata = fs::metadata(&path).ok()?;
+                if metadata.len() > MAX_TRANSCRIPT_BYTES {
+                    continue;
+                }
+                if file_has_session_id(&path, session_id, project_hash) {
+                    return Some(path);
+                }
             }
         }
     }
     None
 }
 
-fn file_has_session_id(path: &Path, session_id: &str) -> bool {
+fn file_has_session_id(path: &Path, session_id: &str, project_hash: &str) -> bool {
     let Ok(file) = fs::File::open(path) else { return false };
     let mut reader = BufReader::new(file);
     let mut first_line = String::new();
@@ -101,9 +114,10 @@ fn file_has_session_id(path: &Path, session_id: &str) -> bool {
     }
     serde_json::from_str::<Value>(&first_line)
         .ok()
-        .and_then(|value| value.get("sessionId").and_then(Value::as_str).map(str::to_owned))
-        .as_deref()
-        == Some(session_id)
+        .is_some_and(|value| {
+            value.get("sessionId").and_then(Value::as_str) == Some(session_id)
+                && value.get("projectHash").and_then(Value::as_str) == Some(project_hash)
+        })
 }
 
 /// Return an empty list when the native session cannot be located or read.
@@ -120,8 +134,9 @@ pub fn read_messages(session_id: &str, workspace: &str) -> Vec<TranscriptMessage
     if !workspace.is_absolute() {
         return Vec::new();
     }
-    let root = chats_root(workspace);
-    let Some(path) = find_session_file(&root, session_id) else {
+    let project_hash = format!("{:x}", Sha256::digest(workspace.to_string_lossy().as_bytes()));
+    let root = temp_root();
+    let Some(path) = find_session_file(&root, session_id, &project_hash) else {
         return Vec::new();
     };
     let Ok(metadata) = fs::metadata(&path) else { return Vec::new() };
