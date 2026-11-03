@@ -485,9 +485,7 @@ mod tests {
         let file = chats.join("session-2026-11-03-12345678.jsonl");
         fs::write(
             &file,
-            format!(
-                "{{\"sessionId\":\"{session_id}\",\"projectHash\":\"{project_hash}\"}}\n"
-            ),
+            format!("{{\"sessionId\":\"{session_id}\",\"projectHash\":\"{project_hash}\"}}\\n"),
         )
         .unwrap();
 
