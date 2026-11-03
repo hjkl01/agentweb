@@ -164,7 +164,7 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                     let is_error = block.get("is_error").and_then(Value::as_bool);
                     let mut result = empty_message(
                         format!("{id}-tool-{index}"),
-                        "tool",
+                        "toolResult",
                         result_text.clone(),
                         created_at.clone(),
                         if result_text.is_empty() {
@@ -276,7 +276,7 @@ mod tests {
             messages[1].parts.as_ref().unwrap()[1].name.as_deref(),
             Some("Bash")
         );
-        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].role, "toolResult");
         assert_eq!(messages[2].tool_call_id.as_deref(), Some("tool-1"));
         assert_eq!(messages[2].content, "/workspace");
     }
