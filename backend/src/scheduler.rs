@@ -56,24 +56,29 @@ fn cron_field_matches(field: &str, value: u32, min: u32, max: u32) -> bool {
     })
 }
 
-fn next_cron(config: &Value, after: DateTime<Utc>, timezone: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn next_cron(
+    config: &Value,
+    after: DateTime<Utc>,
+    timezone: &str,
+) -> Option<DateTime<Utc>> {
     let expr = config.get("expression")?.as_str()?;
     let fields: Vec<_> = expr.split_whitespace().collect();
     if fields.len() != 5 {
         return None;
     }
-    // Cron expressions are evaluated in UTC unless a timezone-aware expression is added later.
-    // Reject non-UTC zones instead of silently scheduling at the wrong local time.
-    if timezone != "UTC" && timezone != "Etc/UTC" {
-        return None;
-    }
+    let timezone = timezone.parse::<chrono_tz::Tz>().ok()?;
     let mut candidate = after.with_second(0)?.with_nanosecond(0)? + Duration::minutes(1);
+    // Iterate real UTC minutes, then evaluate each instant in the requested IANA
+    // timezone. This naturally skips nonexistent local times during spring-forward.
+    // During fall-back, a repeated local wall-clock time is eligible twice, matching
+    // traditional cron behavior.
     for _ in 0..60 * 24 * 366 {
-        let weekday = candidate.weekday().num_days_from_sunday();
-        if cron_field_matches(fields[0], candidate.minute(), 0, 59)
-            && cron_field_matches(fields[1], candidate.hour(), 0, 23)
-            && cron_field_matches(fields[2], candidate.day(), 1, 31)
-            && cron_field_matches(fields[3], candidate.month(), 1, 12)
+        let local = candidate.with_timezone(&timezone);
+        let weekday = local.weekday().num_days_from_sunday();
+        if cron_field_matches(fields[0], local.minute(), 0, 59)
+            && cron_field_matches(fields[1], local.hour(), 0, 23)
+            && cron_field_matches(fields[2], local.day(), 1, 31)
+            && cron_field_matches(fields[3], local.month(), 1, 12)
             && cron_field_matches(fields[4], weekday, 0, 6)
         {
             return Some(candidate);
@@ -586,6 +591,58 @@ mod tests {
         )
         .unwrap();
         assert_eq!(next.to_rfc3339(), "2026-01-01T00:15:00+00:00");
+    }
+
+    #[test]
+    fn cron_expression_uses_named_timezone() {
+        let after = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let next = next_cron(
+            &serde_json::json!({"expression":"0 9 * * *"}),
+            after,
+            "Asia/Shanghai",
+        )
+        .unwrap();
+        assert_eq!(next.to_rfc3339(), "2026-01-01T01:00:00+00:00");
+    }
+
+    #[test]
+    fn cron_skips_nonexistent_local_time_at_dst_start() {
+        let after = DateTime::parse_from_rfc3339("2026-03-08T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let next = next_cron(
+            &serde_json::json!({"expression":"30 2 * * *"}),
+            after,
+            "America/New_York",
+        )
+        .unwrap();
+        assert_eq!(next.to_rfc3339(), "2026-03-09T06:30:00+00:00");
+    }
+
+    #[test]
+    fn cron_handles_repeated_local_time_at_dst_end() {
+        let after = DateTime::parse_from_rfc3339("2026-11-01T05:45:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let next = next_cron(
+            &serde_json::json!({"expression":"30 1 * * *"}),
+            after,
+            "America/New_York",
+        )
+        .unwrap();
+        assert_eq!(next.to_rfc3339(), "2026-11-01T06:30:00+00:00");
+    }
+
+    #[test]
+    fn unknown_timezone_is_rejected() {
+        assert!(next_cron(
+            &serde_json::json!({"expression":"* * * * *"}),
+            Utc::now(),
+            "Mars/Olympus_Mons",
+        )
+        .is_none());
     }
 
     #[test]
