@@ -628,23 +628,14 @@ impl ProcessAdapter {
         }
     }
     #[cfg(unix)]
-    fn wrap_process_group(command: Command) -> Command {
-        let mut wrapped = Command::new("setsid");
-        let std_command = command.as_std();
-        wrapped.arg(std_command.get_program());
-        wrapped.args(std_command.get_args());
-        if let Some(dir) = std_command.get_current_dir() {
-            wrapped.current_dir(dir);
-        }
-        for (key, value) in std_command.get_envs() {
-            if let Some(value) = value {
-                wrapped.env(key, value);
-            }
-        }
-        wrapped
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        wrapped
+    fn wrap_process_group(mut command: Command) -> Command {
+        use std::os::unix::process::CommandExt;
+
+        // Create a process group whose ID is exactly the spawned child's PID.
+        // Unlike the external setsid utility, this cannot fork behind our
+        // back when the caller is already a process-group leader.
+        command.as_std_mut().process_group(0);
+        command
     }
     #[cfg(not(unix))]
     fn wrap_process_group(command: Command) -> Command {
@@ -1282,12 +1273,16 @@ mod tests {
         use tokio::io::AsyncReadExt;
         use tokio::time::{timeout, Duration};
 
-        let mut child = Command::new("setsid")
-            .args(["sh", "-c", "sleep 30 & exit 0"])
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new("sh");
+        command.as_std_mut().process_group(0);
+        let mut child = command
+            .args(["-c", "sleep 30 & exit 0"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .expect("setsid and sh should be available on Linux");
+            .expect("sh should be available on Linux");
         let pid = child.id().expect("spawned process should have a PID");
         let mut stdout = child.stdout.take().expect("stdout should be piped");
         let mut stderr = child.stderr.take().expect("stderr should be piped");
