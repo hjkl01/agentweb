@@ -38,6 +38,14 @@ async fn is_codex_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, s
     Ok(kind.as_deref() == Some("codex"))
 }
 
+async fn is_gemini_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(matches!(kind.as_deref(), Some("gemini-cli" | "gemini")))
+}
+
 async fn is_claude_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
     let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
         .bind(agent_id)
@@ -60,6 +68,37 @@ pub async fn list_messages(
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    let is_gemini = is_gemini_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    if is_gemini {
+        let Some(native_session_id) = session
+            .native_session_id
+            .as_deref()
+            .or(session.fork_from_native_session_id.as_deref())
+        else {
+            return Ok(Json(Vec::new()));
+        };
+        let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
+            tracing::error!(%error, "native transcript read limiter is unavailable");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+        let native_session_id = native_session_id.to_owned();
+        let workspace = session.workspace.clone();
+        let messages = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            crate::agents::gemini_transcript::read_messages(&native_session_id, &workspace)
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "Gemini transcript reader task failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        return Ok(Json(messages));
+    }
     if !is_pi {
         let is_codex = is_codex_agent(&s.db, &session.agent_id)
             .await
