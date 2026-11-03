@@ -217,7 +217,7 @@ pub struct SendMessage {
 }
 #[cfg(test)]
 mod tests {
-    use super::is_pi_agent;
+    use super::{is_claude_agent, is_pi_agent};
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
@@ -230,11 +230,13 @@ mod tests {
             .execute(&db)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agents (id, kind) VALUES (?, ?), (?, ?)")
+        sqlx::query("INSERT INTO agents (id, kind) VALUES (?, ?), (?, ?), (?, ?)")
             .bind("agent-record-pi")
             .bind("pi")
             .bind("agent-record-codex")
             .bind("codex")
+            .bind("agent-record-claude")
+            .bind("claude-code")
             .execute(&db)
             .await
             .unwrap();
@@ -242,6 +244,8 @@ mod tests {
         assert!(is_pi_agent(&db, "agent-record-pi").await.unwrap());
         assert!(!is_pi_agent(&db, "agent-record-codex").await.unwrap());
         assert!(!is_pi_agent(&db, "missing-agent").await.unwrap());
+        assert!(is_claude_agent(&db, "agent-record-claude").await.unwrap());
+        assert!(!is_claude_agent(&db, "agent-record-pi").await.unwrap());
     }
 }
 
