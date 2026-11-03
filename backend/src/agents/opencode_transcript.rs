@@ -438,7 +438,7 @@ mod tests {
             "modelID":"claude-sonnet",
             "tokens":{"input":12,"output":5},
             "finish":"tool-calls",
-            "time":{"created":1793700000000},
+            "time":{"created":1793700000000_i64},
             "content":[
                 {"type":"text","text":"working"},
                 {"type":"reasoning","text":"plan"},
