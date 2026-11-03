@@ -9,21 +9,35 @@ function formatTokens(value: number): string {
 }
 
 function usageNumbers(usage: MessageUsage) {
-  const input = usage.input ?? usage.input_tokens ?? 0;
-  const output = usage.output ?? usage.output_tokens ?? 0;
+  const isGeminiUsage = usage.promptTokenCount !== undefined;
+  const input =
+    usage.input ?? usage.input_tokens ?? usage.promptTokenCount ?? 0;
+  const output =
+    usage.output ?? usage.output_tokens ?? usage.candidatesTokenCount ?? 0;
   const cacheRead =
-    usage.cacheRead ?? usage.cache?.read ?? usage.cache_read_input_tokens ?? 0;
+    usage.cacheRead ??
+    usage.cache?.read ??
+    usage.cache_read_input_tokens ??
+    usage.cachedContentTokenCount ??
+    0;
   const cacheWrite =
     usage.cacheWrite ??
     usage.cache?.write ??
     usage.cache_creation_input_tokens ??
     0;
+  // Gemini's promptTokenCount already includes cachedContentTokenCount;
+  // Claude reports cache tokens separately from input_tokens.
   const total =
-    input + output + cacheRead + cacheWrite || usage.totalTokens || 0;
+    usage.totalTokens ??
+    usage.totalTokenCount ??
+    (isGeminiUsage
+      ? input + output
+      : input + output + cacheRead + cacheWrite);
+  const context = isGeminiUsage ? input : input + cacheRead + cacheWrite;
   const rawCost = usage.cost;
   const cost =
     typeof rawCost === "number" ? rawCost : (rawCost?.total ?? 0);
-  return { input, output, cacheRead, cacheWrite, total, cost };
+  return { input, output, cacheRead, cacheWrite, total, context, cost };
 }
 
 /** Compact token/cost summary aggregated from Pi `message.usage` fields. */
@@ -42,7 +56,7 @@ export function SessionStats({ messages }: { messages: ChatMessage[] }) {
       if (message.role === "assistant") {
         turns += 1;
         // The latest assistant prompt size approximates current context load.
-        context = values.input + values.cacheRead + values.cacheWrite;
+        context = values.context;
       }
     }
     return { tokens, cost, turns, context };
