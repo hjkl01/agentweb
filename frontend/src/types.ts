@@ -93,7 +93,13 @@ export type MessageUsage = {
   cacheRead?: number;
   cacheWrite?: number;
   totalTokens?: number;
-  cost?: { total?: number };
+  /** Native provider aliases retained by transcript adapters. */
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache?: { read?: number; write?: number };
+  cost?: { total?: number } | number;
 };
 export type ChatMessage = {
   id: string;
