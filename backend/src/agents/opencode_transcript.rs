@@ -4,7 +4,7 @@
 use super::pi_transcript::{TranscriptMessage, TranscriptPart};
 use serde_json::Value;
 use sqlx::{Connection, Row, sqlite::SqliteConnectOptions};
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 const MAX_MESSAGES: usize = 20_000;
 const MAX_PARTS_PER_MESSAGE: usize = 5_000;
