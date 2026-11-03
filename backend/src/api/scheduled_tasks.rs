@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use chrono::{Datelike, Timelike, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -132,7 +132,9 @@ fn validate(v: &TaskInput) -> Result<(), StatusCode> {
                 .get("expression")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            if !cron_expression_valid(expr) || !matches!(v.timezone.as_str(), "UTC" | "Etc/UTC") {
+            if !cron_expression_valid(expr)
+                || v.timezone.trim().parse::<chrono_tz::Tz>().is_err()
+            {
                 return Err(StatusCode::BAD_REQUEST);
             }
         }
@@ -202,59 +204,12 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
                     .ok_or(StatusCode::BAD_REQUEST)?,
             )
         }
-        "cron" => {
-            let fields: Vec<_> = v
-                .schedule_config
-                .get("expression")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .split_whitespace()
-                .collect();
-            let mut t = now
-                .with_second(0)
-                .and_then(|t| t.with_nanosecond(0))
-                .ok_or(StatusCode::BAD_REQUEST)?
-                + chrono::Duration::minutes(1);
-            let mut found = None;
-            for _ in 0..60 * 24 * 366 {
-                let vals = [
-                    t.minute(),
-                    t.hour(),
-                    t.day(),
-                    t.month(),
-                    t.weekday().num_days_from_sunday(),
-                ];
-                let ranges = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 6)];
-                let ok = fields.iter().zip(vals.iter()).zip(ranges.iter()).all(
-                    |((f, val), (lo, hi))| {
-                        f.split(',').any(|part| {
-                            let (base, step) = part
-                                .split_once('/')
-                                .map(|(a, b)| (a, b.parse::<u32>().unwrap_or(0)))
-                                .unwrap_or((part, 1));
-                            if step == 0 {
-                                return false;
-                            }
-                            let (a, b) = if base == "*" {
-                                (*lo, *hi)
-                            } else if let Some((a, b)) = base.split_once('-') {
-                                (a.parse().unwrap_or(u32::MAX), b.parse().unwrap_or(0))
-                            } else {
-                                let x = base.parse().unwrap_or(u32::MAX);
-                                (x, if part.contains('/') { *hi } else { x })
-                            };
-                            *val >= a && *val <= b && (*val - a) % step == 0
-                        })
-                    },
-                );
-                if ok {
-                    found = Some(t);
-                    break;
-                }
-                t += chrono::Duration::minutes(1);
-            }
-            found.ok_or(StatusCode::BAD_REQUEST)?
-        }
+        "cron" => crate::scheduler::next_cron(
+            &v.schedule_config,
+            now,
+            &v.timezone,
+        )
+        .ok_or(StatusCode::BAD_REQUEST)?,
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     if dt <= now {
@@ -295,6 +250,42 @@ mod cron_validation_tests {
                 expression
             );
         }
+    }
+
+    #[test]
+    fn accepts_iana_timezone_for_cron_tasks() {
+        let task = super::TaskInput {
+            name: "test".into(),
+            prompt: "test".into(),
+            agent_id: "codex".into(),
+            working_directory: ".".into(),
+            model: None,
+            schedule_type: "cron".into(),
+            schedule_config: serde_json::json!({"expression":"0 9 * * *"}),
+            timezone: "Asia/Shanghai".into(),
+            session_strategy: "new".into(),
+            reuse_session_id: None,
+            enabled: true,
+        };
+        assert!(super::validate(&task).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_timezone_for_cron_tasks() {
+        let task = super::TaskInput {
+            name: "test".into(),
+            prompt: "test".into(),
+            agent_id: "codex".into(),
+            working_directory: ".".into(),
+            model: None,
+            schedule_type: "cron".into(),
+            schedule_config: serde_json::json!({"expression":"0 9 * * *"}),
+            timezone: "Mars/Olympus_Mons".into(),
+            session_strategy: "new".into(),
+            reuse_session_id: None,
+            enabled: true,
+        };
+        assert!(super::validate(&task).is_err());
     }
 
     #[test]
