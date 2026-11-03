@@ -195,7 +195,7 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                     .unwrap_or_else(|| format!("codex-tool-result-{line_number}"));
                 let mut message = empty_message(
                     id,
-                    "tool",
+                    "toolResult",
                     output.clone(),
                     timestamp,
                     vec![TranscriptPart {
@@ -262,16 +262,20 @@ mod tests {
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"duplicate source\"}}\n",
             "{\"type\":\"response_item\",\"id\":\"u1\",\"timestamp\":\"2026-11-03T10:00:01Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}}\n",
             "{\"type\":\"response_item\",\"id\":\"a1\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"world\"}]}}\n",
-            "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\n"
+            "{\"type\":\"response_item\",\"id\":\"fc1\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"call_id\":\"call-1\",\"arguments\":\"{}\"}}\n",
+            "{\"type\":\"response_item\",\"id\":\"fo1\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-1\",\"output\":\"command output\"}}\n"
         )).unwrap();
         let messages = parse_file(&path);
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "world");
         assert_eq!(
             messages[2].parts.as_ref().unwrap()[0].name.as_deref(),
             Some("shell")
         );
+        assert_eq!(messages[3].role, "toolResult");
+        assert_eq!(messages[3].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(messages[3].content, "command output");
         fs::remove_dir_all(root).unwrap();
     }
 
