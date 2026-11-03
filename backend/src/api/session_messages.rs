@@ -38,6 +38,14 @@ async fn is_codex_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, s
     Ok(kind.as_deref() == Some("codex"))
 }
 
+async fn is_claude_agent(db: &sqlx::SqlitePool, agent_id: &str) -> Result<bool, sqlx::Error> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await?;
+    Ok(matches!(kind.as_deref(), Some("claude-code" | "claude")))
+}
+
 pub async fn list_messages(
     Path(id): Path<String>,
     State(s): State<AppState>,
@@ -59,7 +67,13 @@ pub async fn list_messages(
                 tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-        if !is_codex {
+        let is_claude = is_claude_agent(&s.db, &session.agent_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        if !is_codex && !is_claude {
             return Ok(Json(Vec::new()));
         }
         let Some(native_session_id) = session
@@ -70,17 +84,21 @@ pub async fn list_messages(
             return Ok(Json(Vec::new()));
         };
         let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
-            tracing::error!(%error, "Codex transcript read limiter is unavailable");
+            tracing::error!(%error, "native transcript read limiter is unavailable");
             StatusCode::SERVICE_UNAVAILABLE
         })?;
         let native_session_id = native_session_id.to_owned();
         let messages = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            crate::agents::codex_transcript::read_messages(&native_session_id)
+            if is_codex {
+                crate::agents::codex_transcript::read_messages(&native_session_id)
+            } else {
+                crate::agents::claude_transcript::read_messages(&native_session_id)
+            }
         })
         .await
         .map_err(|error| {
-            tracing::error!(%error, "Codex transcript reader task failed");
+            tracing::error!(%error, "native transcript reader task failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
         return Ok(Json(messages));
