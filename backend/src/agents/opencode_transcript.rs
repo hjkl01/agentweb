@@ -14,13 +14,29 @@ const MAX_MESSAGES: usize = 20_000;
 const MAX_PARTS_PER_MESSAGE: usize = 5_000;
 
 fn database_path() -> PathBuf {
+    let home = super::config::agent_home();
+    let data_dir = if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(path).join("opencode")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/opencode")
+    } else if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Roaming"))
+            .join("opencode")
+    } else {
+        home.join(".local/share/opencode")
+    };
+
     if let Some(path) = std::env::var_os("OPENCODE_DB") {
-        return PathBuf::from(path);
+        let path = PathBuf::from(path);
+        return if path.is_absolute() {
+            path
+        } else {
+            data_dir.join(path)
+        };
     }
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| super::config::agent_home().join(".local/share"));
-    data_home.join("opencode/opencode.db")
+    data_dir.join("opencode.db")
 }
 
 fn safe_session_id(id: &str) -> bool {
