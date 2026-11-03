@@ -7,7 +7,7 @@ use sqlx::{Connection, Row, sqlite::SqliteConnectOptions};
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
 const MAX_MESSAGES: usize = 20_000;
-const MAX_PARTS: usize = 100_000;
+const MAX_PARTS_PER_MESSAGE: usize = 5_000;
 
 fn database_path() -> PathBuf {
     if let Some(path) = std::env::var_os("OPENCODE_DB") {
@@ -26,7 +26,7 @@ fn safe_session_id(id: &str) -> bool {
 }
 
 fn timestamp(value: Option<i64>) -> Option<String> {
-    value.and_then(chrono::DateTime::from_timestamp_millis)
+    value.and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
         .map(|v| v.to_rfc3339())
 }
 
@@ -218,7 +218,7 @@ async fn read_messages_from(path: &std::path::Path, session_id: &str) -> anyhow:
             message.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
         }
         let parts = sqlx::query("SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT ?")
-            .bind(session_id).bind(&id).bind(MAX_PARTS as i64).fetch_all(&mut conn).await?;
+            .bind(session_id).bind(&id).bind(MAX_PARTS_PER_MESSAGE as i64).fetch_all(&mut conn).await?;
         for part in parts {
             let raw: String = part.try_get("data")?;
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
