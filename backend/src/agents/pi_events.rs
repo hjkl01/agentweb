@@ -2,7 +2,7 @@ use crate::events::{AgentEvent, EventBus};
 use serde_json::Value;
 
 pub async fn handle(session_id: &str, value: &Value, events: &EventBus) -> Option<String> {
-    match value.get("type").and_then(Value::as_str).unwrap_or_default() {
+    match value\n        .get("type")\n        .and_then(Value::as_str)\n        .unwrap_or_default()\n    {
         "message_update" => handle_message_update(session_id, value, events).await,
         "tool_execution_start" => {
             let tool = tool_name(value);
