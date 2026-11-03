@@ -132,9 +132,7 @@ fn validate(v: &TaskInput) -> Result<(), StatusCode> {
                 .get("expression")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            if !cron_expression_valid(expr)
-                || v.timezone.trim().parse::<chrono_tz::Tz>().is_err()
-            {
+            if !cron_expression_valid(expr) || v.timezone.trim().parse::<chrono_tz::Tz>().is_err() {
                 return Err(StatusCode::BAD_REQUEST);
             }
         }
@@ -204,12 +202,8 @@ fn initial_next(v: &TaskInput) -> Result<Option<String>, StatusCode> {
                     .ok_or(StatusCode::BAD_REQUEST)?,
             )
         }
-        "cron" => crate::scheduler::next_cron(
-            &v.schedule_config,
-            now,
-            &v.timezone,
-        )
-        .ok_or(StatusCode::BAD_REQUEST)?,
+        "cron" => crate::scheduler::next_cron(&v.schedule_config, now, &v.timezone)
+            .ok_or(StatusCode::BAD_REQUEST)?,
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     if dt <= now {
