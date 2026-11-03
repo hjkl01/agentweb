@@ -355,6 +355,19 @@ export function ScheduledTasksPanel({ open, agents, onClose }: Props) {
                   </label>
                 )}
               </div>
+              {form.schedule_type === "cron" && (
+                <label>
+                  时区（IANA）
+                  <input
+                    value={form.timezone}
+                    onChange={(e) =>
+                      setForm({ ...form, timezone: e.target.value })
+                    }
+                    placeholder="Asia/Shanghai"
+                  />
+                  <small>例如 Asia/Shanghai、Asia/Tokyo、UTC</small>
+                </label>
+              )}
               <label>
                 Session 策略
                 <select
