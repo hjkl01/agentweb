@@ -328,7 +328,7 @@ fn parse_message(
                 let tool_message_id = format!("{id}-tool-{call_id}");
                 let mut tool_message = empty_message(
                     tool_message_id.clone(),
-                    "tool",
+                    "toolResult",
                     text.clone(),
                     call.get("timestamp")
                         .and_then(Value::as_str)
@@ -350,7 +350,7 @@ fn parse_message(
                 tool_message.is_error = call
                     .get("status")
                     .and_then(Value::as_str)
-                    .map(|status| status == "error");
+                    .map(|status| matches!(status, "error" | "failed"));
                 if let Some(index) = positions.get(&tool_message_id).copied() {
                     messages[index] = tool_message;
                 } else {
@@ -449,7 +449,7 @@ mod tests {
             Some(10)
         );
         assert_eq!(messages[1].parts.as_ref().unwrap()[0].kind, "text");
-        assert_eq!(messages[2].role, "tool");
+        assert_eq!(messages[2].role, "toolResult");
         assert_eq!(messages[2].content, "file data");
         assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-1"));
     }
