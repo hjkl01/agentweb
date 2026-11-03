@@ -52,7 +52,7 @@ DST 策略：春季跳时导致的不存在本地时间会跳过；秋季回拨�
 
 ### 3.4 原生 Transcript 恢复
 
-`backend/src/api/session_messages.rs` 当前只为 Pi 读取原生 JSONL Transcript；其他 Agent 返回空数组。由于 Agent Web 不持久化聊天正文，其他 Agent 的会话刷新/重新打开后无法通过该 API 恢复历史对话。这是下一项高优先级工作：逐个支持各 Agent 的原生 Session 存储格式或官方只读接口，并为不完整/不存在/无法读取的 Transcript 区分状态。
+`backend/src/api/session_messages.rs` 已支持 Pi 和 Codex 原生 Transcript。Codex 读取器从 `CODEX_HOME/sessions`（默认 `~/.codex/sessions`）递归查找匹配 thread ID 的 rollout JSONL，只提取 `response_item` 中的 message、function_call 和 function_call_output，不读取重复的 `event_msg`。读取在受限的 blocking worker 中执行，不将聊天正文写入 SQLite。当前限制：尚未支持 Codex 压缩归档 `.jsonl.zst`；目录扫描有深度和条目上限，找不到文件或读取失败时暂时返回空消息列表，尚未像 Pi 一样区分 Missing/Unknown。Claude、Gemini、OpenCode、Qwen 仍返回空数组。
 
 ## 4. 本轮后续顺序
 
