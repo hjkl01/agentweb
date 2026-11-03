@@ -4,8 +4,11 @@
 //! transcript content into its own SQLite database.
 use super::pi_transcript::{TranscriptMessage, TranscriptPart};
 use serde_json::Value;
-use sqlx::{Connection, Row, sqlite::SqliteConnectOptions};
-use std::{path::{Path, PathBuf}, time::Duration};
+use sqlx::{sqlite::SqliteConnectOptions, Connection, Row};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const MAX_MESSAGES: usize = 20_000;
 const MAX_PARTS_PER_MESSAGE: usize = 5_000;
@@ -23,25 +26,44 @@ fn database_path() -> PathBuf {
 fn safe_session_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 fn timestamp(value: Option<i64>) -> Option<String> {
-    value.and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+    value
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
         .map(|v| v.to_rfc3339())
 }
 
 fn message(id: String, role: &str, created_at: Option<String>) -> TranscriptMessage {
     TranscriptMessage {
-        id, role: role.to_owned(), content: String::new(), created_at,
-        parts: None, tool_call_id: None, is_error: None, usage: None,
-        tool_name: None, duration_ms: None, truncated: None, diff: None,
-        patch: None, model: None, stop_reason: None, error_message: None,
+        id,
+        role: role.to_owned(),
+        content: String::new(),
+        created_at,
+        parts: None,
+        tool_call_id: None,
+        is_error: None,
+        usage: None,
+        tool_name: None,
+        duration_ms: None,
+        truncated: None,
+        diff: None,
+        patch: None,
+        model: None,
+        stop_reason: None,
+        error_message: None,
     }
 }
 
 fn text_part(value: &str) -> TranscriptPart {
-    TranscriptPart { kind: "text".into(), text: Some(value.to_owned()), ..Default::default() }
+    TranscriptPart {
+        kind: "text".into(),
+        text: Some(value.to_owned()),
+        ..Default::default()
+    }
 }
 
 fn add_part(target: &mut TranscriptMessage, part: TranscriptPart) {
@@ -95,32 +117,61 @@ fn parse_part(
 ) {
     match data.get("type").and_then(Value::as_str).unwrap_or("") {
         "text" => {
-            if let Some(text) = data.get("text").or_else(|| data.get("content")).and_then(Value::as_str) {
+            if let Some(text) = data
+                .get("text")
+                .or_else(|| data.get("content"))
+                .and_then(Value::as_str)
+            {
                 add_part(parent, text_part(text));
             }
         }
         "reasoning" => {
             if let Some(text) = data.get("text").or_else(|| data.get("content")).and_then(Value::as_str) {
-                add_part(parent, TranscriptPart { kind: "thinking".into(), text: Some(text.to_owned()), ..Default::default() });
+                add_part(
+                    parent,
+                    TranscriptPart {
+                        kind: "thinking".into(),
+                        text: Some(text.to_owned()),
+                        ..Default::default()
+                    },
+                );
             }
         }
         "tool" => {
             let state = data.get("state").unwrap_or(&Value::Null);
-            let call_id = data.get("callID").or_else(|| data.get("callId")).and_then(Value::as_str).map(str::to_owned);
+            let call_id = data
+                .get("callID")
+                .or_else(|| data.get("callId"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let name = data.get("tool").and_then(Value::as_str).map(str::to_owned);
-            let arguments = state.get("input").cloned().or_else(|| data.get("input").cloned());
-            add_part(parent, TranscriptPart {
-                kind: "toolCall".into(), name: name.clone(), arguments,
-                tool_call_id: call_id.clone(), ..Default::default()
-            });
-            if let Some(result) = tool_result(&parent.id, call_id, name, state, parent.created_at.clone()) {
+            let arguments = state
+                .get("input")
+                .cloned()
+                .or_else(|| data.get("input").cloned());
+            add_part(
+                parent,
+                TranscriptPart {
+                    kind: "toolCall".into(),
+                    name: name.clone(),
+                    arguments,
+                    tool_call_id: call_id.clone(),
+                    ..Default::default()
+                },
+            );
+            if let Some(result) =
+                tool_result(&parent.id, call_id, name, state, parent.created_at.clone())
+            {
                 tool_result_message.push(result);
             }
         }
         "file" | "image" => {
             // Preserve a lightweight placeholder rather than silently dropping
             // non-text content that this API cannot currently serve.
-            let label = data.get("filename").or_else(|| data.get("url")).and_then(Value::as_str);
+            let label = data
+                .get("filename")
+                .or_else(|| data.get("url"))
+                .and_then(Value::as_str);
             if let Some(label) = label {
                 add_part(parent, text_part(&format!("[{label}]")));
             }
@@ -129,19 +180,34 @@ fn parse_part(
     }
 }
 
-fn parse_v2_message(id: &str, kind: &str, data: &Value, created: Option<i64>) -> Vec<TranscriptMessage> {
+fn parse_v2_message(
+    id: &str,
+    kind: &str,
+    data: &Value,
+    created: Option<i64>,
+) -> Vec<TranscriptMessage> {
     let role = data.get("role").and_then(Value::as_str).unwrap_or(kind);
     if !matches!(role, "user" | "assistant") {
         return Vec::new();
     }
-    let created_at = timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
+    let created_at =
+        timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
     let mut parent = message(id.to_owned(), role, created_at);
     if role == "assistant" {
-        parent.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
+        parent.model = data
+            .get("modelID")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         parent.usage = data.get("tokens").cloned();
-        parent.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
-        parent.error_message = data.pointer("/error/message").and_then(Value::as_str)
-            .or_else(|| data.get("error").and_then(Value::as_str)).map(str::to_owned);
+        parent.stop_reason = data
+            .get("finish")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        parent.error_message = data
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("error").and_then(Value::as_str))
+            .map(str::to_owned);
     }
     let mut results = Vec::new();
     if let Some(parts) = data.get("content").and_then(Value::as_array) {
@@ -159,9 +225,11 @@ fn parse_v2_message(id: &str, kind: &str, data: &Value, created: Option<i64>) ->
 }
 
 async fn table_exists(conn: &mut sqlx::SqliteConnection, name: &str) -> Result<bool, sqlx::Error> {
-    let found: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-    ).bind(name).fetch_optional(&mut *conn).await?;
+    let found: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+            .bind(name)
+            .fetch_optional(&mut *conn)
+            .await?;
     Ok(found.is_some())
 }
 
@@ -179,7 +247,10 @@ pub async fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
     }
 }
 
-async fn read_messages_from(path: &Path, session_id: &str) -> anyhow::Result<Vec<TranscriptMessage>> {
+async fn read_messages_from(
+    path: &Path,
+    session_id: &str,
+) -> anyhow::Result<Vec<TranscriptMessage>> {
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -200,7 +271,9 @@ async fn read_messages_from(path: &Path, session_id: &str) -> anyhow::Result<Vec
             let id: String = row.try_get("id")?;
             let kind: String = row.try_get("type")?;
             let raw: String = row.try_get("data")?;
-            let Ok(data) = serde_json::from_str::<Value>(&raw) else { continue; };
+            let Ok(data) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
             let created = data.pointer("/time/created").and_then(Value::as_i64);
             messages.extend(parse_v2_message(&id, &kind, &data, created));
         }
@@ -219,19 +292,31 @@ async fn read_messages_from(path: &Path, session_id: &str) -> anyhow::Result<Vec
         let id: String = row.try_get("id")?;
         let created: Option<i64> = row.try_get("time_created").ok();
         let raw: String = row.try_get("data")?;
-        let Ok(data) = serde_json::from_str::<Value>(&raw) else { continue; };
+        let Ok(data) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
         let role = data.get("role").and_then(Value::as_str).unwrap_or("");
         if !matches!(role, "user" | "assistant") {
             continue;
         }
-        let created_at = timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
+        let created_at =
+            timestamp(created.or_else(|| data.pointer("/time/created").and_then(Value::as_i64)));
         let mut parent = message(id.clone(), role, created_at);
         if role == "assistant" {
-            parent.model = data.get("modelID").and_then(Value::as_str).map(str::to_owned);
+            parent.model = data
+                .get("modelID")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             parent.usage = data.get("tokens").cloned();
-            parent.stop_reason = data.get("finish").and_then(Value::as_str).map(str::to_owned);
-            parent.error_message = data.pointer("/error/message").and_then(Value::as_str)
-                .or_else(|| data.get("error").and_then(Value::as_str)).map(str::to_owned);
+            parent.stop_reason = data
+                .get("finish")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            parent.error_message = data
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .or_else(|| data.get("error").and_then(Value::as_str))
+                .map(str::to_owned);
         }
         let parts = sqlx::query(
             "SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT ?",
@@ -288,10 +373,14 @@ mod tests {
     fn retains_running_tool_call_without_fabricating_result() {
         let mut parent = message("m1".into(), "assistant", None);
         let mut results = Vec::new();
-        parse_part(&mut parent, &serde_json::json!({
-            "type":"tool","callID":"c1","tool":"bash",
-            "state":{"status":"running","input":{"command":"pwd"}}
-        }), &mut results);
+        parse_part(
+            &mut parent,
+            &serde_json::json!({
+                "type":"tool","callID":"c1","tool":"bash",
+                "state":{"status":"running","input":{"command":"pwd"}}
+            }),
+            &mut results,
+        );
         assert_eq!(parent.parts.as_ref().unwrap()[0].kind, "toolCall");
         assert!(results.is_empty());
     }
@@ -304,29 +393,54 @@ mod tests {
     }
 
     async fn temporary_database(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("agentweb-opencode-{name}-{}.db", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!(
+            "agentweb-opencode-{name}-{}.db",
+            uuid::Uuid::new_v4()
+        ))
     }
 
     #[tokio::test]
     async fn reads_legacy_message_part_database_fixture() {
         let path = temporary_database("legacy").await;
-        let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
-        let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
-        sqlx::query("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
-            .execute(&mut conn).await.unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let mut conn = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
         sqlx::query("CREATE TABLE part (id TEXT, session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)")
             .execute(&mut conn).await.unwrap();
         sqlx::query("INSERT INTO message VALUES (?, ?, ?, ?)")
-            .bind("msg-user").bind("ses_fixture").bind(1793700000000_i64)
-            .bind(r#"{"role":"user"}"#).execute(&mut conn).await.unwrap();
+            .bind("msg-user")
+            .bind("ses_fixture")
+            .bind(1793700000000_i64)
+            .bind(r#"{"role":"user"}"#)
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO part VALUES (?, ?, ?, ?, ?)")
-            .bind("prt-user").bind("ses_fixture").bind("msg-user").bind(1793700000001_i64)
+            .bind("prt-user")
+            .bind("ses_fixture")
+            .bind("msg-user")
+            .bind(1793700000001_i64)
             .bind(r#"{"type":"text","text":"hello from fixture"}"#)
-            .execute(&mut conn).await.unwrap();
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO message VALUES (?, ?, ?, ?)")
-            .bind("msg-assistant").bind("ses_fixture").bind(1793700000002_i64)
+            .bind("msg-assistant")
+            .bind("ses_fixture")
+            .bind(1793700000002_i64)
             .bind(r#"{"role":"assistant","modelID":"test-model","tokens":{"input":3,"output":2}}"#)
-            .execute(&mut conn).await.unwrap();
+            .execute(&mut conn)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO part VALUES (?, ?, ?, ?, ?)")
             .bind("prt-tool").bind("ses_fixture").bind("msg-assistant").bind(1793700000003_i64)
             .bind(r#"{"type":"tool","callID":"call-fixture","tool":"bash","state":{"status":"completed","input":{"command":"pwd"},"output":"/tmp"}}"#)
