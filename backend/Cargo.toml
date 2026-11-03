@@ -9,6 +9,7 @@ argon2 = { version = "0.5.3", features = ["std"] }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10.4"
 futures = "0.3"
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
