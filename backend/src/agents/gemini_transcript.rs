@@ -1,6 +1,6 @@
 //! Read Gemini CLI's native project-scoped chat recording files.
 //!
-//! Gemini stores append-only JSONL under ~/.gemini/tmp/<project-hash>/chats.
+//! Gemini stores append-only JSONL under ~/.gemini/tmp/<project-id>/chats.
 //! Agent Web reads these files on demand and does not copy chat content to SQLite.
 use super::pi_transcript::{TranscriptMessage, TranscriptPart};
 use serde_json::Value;
@@ -39,6 +39,9 @@ fn safe_directory(path: &Path) -> bool {
 }
 
 fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Option<PathBuf> {
+    if !safe_directory(root) {
+        return None;
+    }
     let short_id = session_id.get(..8)?;
     let projects = fs::read_dir(root).ok()?;
     let mut scanned = 0usize;
@@ -316,7 +319,7 @@ fn parse_message(
                 let Some(call_id) = call.get("id").and_then(Value::as_str) else {
                     continue;
                 };
-                let Some(result) = call.get("result") else {
+                let Some(result) = call.get("result").filter(|result| !result.is_null()) else {
                     continue;
                 };
                 let text = tool_result_text(result);
