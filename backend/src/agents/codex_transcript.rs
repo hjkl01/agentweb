@@ -184,7 +184,10 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_owned();
-                let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
+                let call_id = payload
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
                 let id = record
                     .get("id")
                     .and_then(Value::as_str)
@@ -206,7 +209,7 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
             }
             _ => {}
         }
-        }
+    }
     messages
 }
 
