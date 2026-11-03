@@ -98,6 +98,12 @@ export type MessageUsage = {
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  /** Gemini CLI usageMetadata field names. */
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  cachedContentTokenCount?: number;
+  thoughtsTokenCount?: number;
+  totalTokenCount?: number;
   cache?: { read?: number; write?: number };
   cost?: { total?: number } | number;
 };
