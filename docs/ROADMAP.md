@@ -37,13 +37,14 @@
 
 ### 1.2 WebSocket 与状态恢复
 
-- [ ] WebSocket 重连后重新获取权威 Session/Execution 状态。
-- [ ] 从 Agent 原生 Transcript 恢复可恢复的对话内容，而不是依赖 WebSocket 历史事件。
-- [ ] 为关键生命周期事件建立轻量元数据或状态快照。
-- [ ] 明确处理广播队列 Lagged、Relay 断开和多 Worker 事件转发失败。
+- [x] WebSocket 心跳、断线指数退避重连，以及重连后重新获取 Session/Execution HTTP 快照（前端已有实现）。
+- [ ] 从六种 Agent 的原生 Transcript 恢复对话；当前 messages API 仅支持 Pi。
+- [ ] 为关键生命周期事件建立轻量元数据或状态快照，不持久化聊天正文。
+- [x] broadcast Lagged 时发送 resync_required 并关闭连接，触发现有重连/快照恢复流程。
+- [ ] 处理跨 Worker Relay 队列丢失事件时的端到端 resync 通知。
 - [ ] 增加断线重连、页面刷新、服务重启和慢客户端测试。
 
-约束：不将完整消息正文、Thinking 和 Tool 事件流写入 SQLite。
+约束：不将完整消息正文、Thinking 和 Tool 事件流写入 SQLite。优先读取各 Agent 原生 Session 文件或官方只读接口；不要为恢复历史消息而重新建立 Agent Web 自己的聊天记录库。
 
 ### 1.3 定时任务调度
 
