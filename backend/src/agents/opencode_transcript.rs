@@ -302,4 +302,64 @@ mod tests {
         assert!(!safe_session_id("nested/session"));
         assert!(safe_session_id("ses_123-abc"));
     }
+
+    async fn temporary_database(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("agentweb-opencode-{name}-{}.db", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn reads_legacy_message_part_database_fixture() {
+        let path = temporary_database("legacy").await;
+        let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+        let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)")
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("CREATE TABLE part (id TEXT, session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)")
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO message VALUES (?, ?, ?, ?)")
+            .bind("msg-user").bind("ses_fixture").bind(1793700000000_i64)
+            .bind(r#"{"role":"user"}"#).execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO part VALUES (?, ?, ?, ?, ?)")
+            .bind("prt-user").bind("ses_fixture").bind("msg-user").bind(1793700000001_i64)
+            .bind(r#"{"type":"text","text":"hello from fixture"}"#)
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO message VALUES (?, ?, ?, ?)")
+            .bind("msg-assistant").bind("ses_fixture").bind(1793700000002_i64)
+            .bind(r#"{"role":"assistant","modelID":"test-model","tokens":{"input":3,"output":2}}"#)
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO part VALUES (?, ?, ?, ?, ?)")
+            .bind("prt-tool").bind("ses_fixture").bind("msg-assistant").bind(1793700000003_i64)
+            .bind(r#"{"type":"tool","callID":"call-fixture","tool":"bash","state":{"status":"completed","input":{"command":"pwd"},"output":"/tmp"}}"#)
+            .execute(&mut conn).await.unwrap();
+        conn.close().await.unwrap();
+
+        let messages = read_messages_from(&path, "ses_fixture").await.unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, "hello from fixture");
+        assert_eq!(messages[1].model.as_deref(), Some("test-model"));
+        assert_eq!(messages[2].role, "toolResult");
+        assert_eq!(messages[2].content, "/tmp");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn reads_typed_session_message_database_fixture() {
+        let path = temporary_database("typed").await;
+        let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+        let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)")
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)")
+            .bind("msg-v2").bind("ses_v2").bind("assistant").bind(1793700000000_i64)
+            .bind(r#"{"role":"assistant","modelID":"fixture-model","content":[{"type":"text","text":"v2 fixture"},{"type":"tool","callID":"call-v2","tool":"read","state":{"status":"error","input":{"file":"x"},"output":"not found"}}]}"#)
+            .execute(&mut conn).await.unwrap();
+        conn.close().await.unwrap();
+
+        let messages = read_messages_from(&path, "ses_v2").await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "v2 fixture");
+        assert_eq!(messages[1].role, "toolResult");
+        assert_eq!(messages[1].is_error, Some(true));
+        let _ = std::fs::remove_file(path);
+    }
 }
