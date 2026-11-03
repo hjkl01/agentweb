@@ -28,7 +28,7 @@
 前端测试由 `frontend/scripts/check-frontend.mjs` 实现，Makefile 先用 TypeScript 编译指定的纯逻辑模块，再运行 Node.js 断言。它覆盖 Session 分组、偏好解析、格式化、Diff、工具结果关联和待发送消息处理等逻辑，但不是 React 组件或浏览器端到端测试。
 
 限制：
-- CI 已实际执行：前端构建、名称检查、前端逻辑检查、Rust 格式检查和 `cargo check` 通过；`cargo test` 当前 115 项通过、2 项失败。失败项为 `agents::process::tests::descendant_inherited_pipe_stays_open_until_process_group_is_killed` 和 `agents::process::tests::aborting_run_cleans_up_process_group_and_session_registry`，均涉及进程组清理。Docker 构建因后端测试失败而跳过。需进一步判断这两个测试是运行器时序问题还是进程清理回归，不能将 CI 标记为全绿。
+- CI 已实际执行：前端构建、名称检查、前端逻辑检查、Rust 格式检查、`cargo check` 和 `cargo test` 全部通过；后端测试为 120 项通过、0 项失败。此前两个进程组清理测试失败，最终确认 `kill` 命令将负数 PGID 作为参数传递时缺少 `--`，导致参数被误解析；已在所有进程组清理和测试探测调用中补上选项终止符。修复后的 `main` CI：`41604066427`，后端测试通过。Docker 构建状态以该 run 最终结论为准。
 - 尚未发现覆盖六种真实 Agent CLI 的完整集成测试矩阵。Mock/进程层测试不能替代真实 CLI 的登录、启动、继续会话、停止和异常恢复验证。
 - CI 改动提交后，应以 GitHub Actions 的实际结果作为第一轮动态验证。
 
@@ -58,8 +58,7 @@ DST 策略：春季跳时导致的不存在本地时间会跳过；秋季回拨�
 
 ## 4. 本轮后续顺序
 
-1. 修复或确认 CI 中两个进程组清理测试失败的原因。
-2. 补齐 Gemini、OpenCode、Qwen 的原生 Transcript 读取，并完善各 Agent 文件缺失/读取失败状态。
+1. 补齐 Gemini、OpenCode、Qwen 的原生 Transcript 读取，并完善各 Agent 文件缺失/读取失败状态。
 3. 处理跨 Worker Relay 队列丢失事件的端到端 resync。
 
 ## 5. 未验证事项
