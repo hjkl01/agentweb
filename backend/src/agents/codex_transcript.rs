@@ -49,8 +49,12 @@ fn find_rollout(root: &Path, session_id: &str) -> Option<PathBuf> {
             if file_type.is_dir() {
                 pending.push((path, depth + 1));
             } else if file_type.is_file()
-                && path.extension().is_some_and(|extension| extension == "jsonl")
-                && path.file_name().is_some_and(|name| name.to_string_lossy().contains(session_id))
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl")
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(session_id))
             {
                 return Some(path);
             }
@@ -80,98 +84,128 @@ pub fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
     parse_reader(BufReader::new(file))
 }
 
-
 fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
     let mut messages = Vec::new();
     for (line_number, line) in reader.lines().enumerate() {
-            if line_number >= 1_000_000 {
-                break;
-            }
-            let Ok(line) = line else { break };
-            let Ok(record) = serde_json::from_str::<Value>(&line) else {
-                continue;
-            };
-            let Some(payload) = record.get("payload") else {
-                continue;
-            };
-            let timestamp = record.get("timestamp").and_then(Value::as_str).map(str::to_owned);
-            match payload.get("type").and_then(Value::as_str) {
-                Some("message") => {
-                    let Some(role) = payload.get("role").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if role != "user" && role != "assistant" {
-                        continue;
-                    }
-                    let mut parts = Vec::new();
-                    let mut text = String::new();
-                    if let Some(items) = payload.get("content").and_then(Value::as_array) {
-                        for item in items {
-                            match item.get("type").and_then(Value::as_str) {
-                                Some("input_text" | "output_text" | "text") => {
-                                    if let Some(value) = item.get("text").and_then(Value::as_str) {
-                                        text.push_str(value);
-                                        parts.push(TranscriptPart {
-                                            kind: "text".into(),
-                                            text: Some(value.to_owned()),
-                                            ..Default::default()
-                                        });
-                                    }
+        if line_number >= 1_000_000 {
+            break;
+        }
+        let Ok(line) = line else { break };
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(payload) = record.get("payload") else {
+            continue;
+        };
+        let timestamp = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        match payload.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let Some(role) = payload.get("role").and_then(Value::as_str) else {
+                    continue;
+                };
+                if role != "user" && role != "assistant" {
+                    continue;
+                }
+                let mut parts = Vec::new();
+                let mut text = String::new();
+                if let Some(items) = payload.get("content").and_then(Value::as_array) {
+                    for item in items {
+                        match item.get("type").and_then(Value::as_str) {
+                            Some("input_text" | "output_text" | "text") => {
+                                if let Some(value) = item.get("text").and_then(Value::as_str) {
+                                    text.push_str(value);
+                                    parts.push(TranscriptPart {
+                                        kind: "text".into(),
+                                        text: Some(value.to_owned()),
+                                        ..Default::default()
+                                    });
                                 }
-                                Some("refusal") => {
-                                    if let Some(value) = item.get("text").and_then(Value::as_str) {
-                                        text.push_str(value);
-                                        parts.push(TranscriptPart {
-                                            kind: "text".into(),
-                                            text: Some(value.to_owned()),
-                                            ..Default::default()
-                                        });
-                                    }
-                                }
-                                _ => {}
                             }
+                            Some("refusal") => {
+                                if let Some(value) = item.get("text").and_then(Value::as_str) {
+                                    text.push_str(value);
+                                    parts.push(TranscriptPart {
+                                        kind: "text".into(),
+                                        text: Some(value.to_owned()),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    if text.is_empty() && parts.is_empty() {
-                        continue;
-                    }
-                    let id = record.get("id").and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("codex-{line_number}"));
-                    messages.push(empty_message(id, role, text, timestamp, parts));
                 }
-                Some("function_call") => {
-                    let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
-                    let arguments = payload.get("arguments").cloned();
-                    let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
-                    let part = TranscriptPart {
-                        kind: "toolCall".into(),
-                        name: Some(name.to_owned()),
-                        arguments,
-                        tool_call_id: call_id.clone(),
-                        ..Default::default()
-                    };
-                    let id = record.get("id").and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("codex-tool-{line_number}"));
-                    messages.push(empty_message(id, "assistant", String::new(), timestamp, vec![part]));
+                if text.is_empty() && parts.is_empty() {
+                    continue;
                 }
-                Some("function_call_output") => {
-                    let output = payload.get("output").and_then(Value::as_str).unwrap_or_default().to_owned();
-                    let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
-                    let id = record.get("id").and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("codex-tool-result-{line_number}"));
-                    let mut message = empty_message(id, "tool", output.clone(), timestamp, vec![TranscriptPart {
+                let id = record
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("codex-{line_number}"));
+                messages.push(empty_message(id, role, text, timestamp, parts));
+            }
+            Some("function_call") => {
+                let name = payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool");
+                let arguments = payload.get("arguments").cloned();
+                let call_id = payload
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let part = TranscriptPart {
+                    kind: "toolCall".into(),
+                    name: Some(name.to_owned()),
+                    arguments,
+                    tool_call_id: call_id.clone(),
+                    ..Default::default()
+                };
+                let id = record
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("codex-tool-{line_number}"));
+                messages.push(empty_message(
+                    id,
+                    "assistant",
+                    String::new(),
+                    timestamp,
+                    vec![part],
+                ));
+            }
+            Some("function_call_output") => {
+                let output = payload
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_owned);
+                let id = record
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("codex-tool-result-{line_number}"));
+                let mut message = empty_message(
+                    id,
+                    "tool",
+                    output.clone(),
+                    timestamp,
+                    vec![TranscriptPart {
                         kind: "text".into(),
                         text: Some(output),
                         ..Default::default()
-                    }]);
-                    message.tool_call_id = call_id;
-                    messages.push(message);
-                }
-                _ => {}
+                    }],
+                );
+                message.tool_call_id = call_id;
+                messages.push(message);
             }
+            _ => {}
+        }
         }
     messages
 }
@@ -212,7 +246,10 @@ mod tests {
     fn parses_codex_response_items_without_duplicating_event_messages() {
         let root = std::env::temp_dir().join(format!(
             "agentweb-codex-transcript-{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let directory = root.join("2026/11/03");
         fs::create_dir_all(&directory).unwrap();
@@ -228,7 +265,10 @@ mod tests {
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "world");
-        assert_eq!(messages[2].parts.as_ref().unwrap()[0].name.as_deref(), Some("shell"));
+        assert_eq!(
+            messages[2].parts.as_ref().unwrap()[0].name.as_deref(),
+            Some("shell")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
