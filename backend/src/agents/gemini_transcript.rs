@@ -48,7 +48,8 @@ fn find_session_file(root: &Path, session_id: &str, project_hash: &str) -> Optio
             return None;
         }
         let Ok(project) = project else { continue };
-        if !project.file_type().ok()?.is_dir() || project.file_type().ok()?.is_symlink() {
+        let Ok(project_kind) = project.file_type() else { continue };
+        if !project_kind.is_dir() || project_kind.is_symlink() {
             continue;
         }
         let chats = project.path().join("chats");
@@ -262,14 +263,22 @@ fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, position
         _ => return,
     };
 
+    if let Some(index) = positions.get(id).copied() {
+        messages[index] = message;
+    } else {
+        positions.insert(id.to_owned(), messages.len());
+        messages.push(message);
+    }
+
     if kind == "gemini" {
         if let Some(calls) = record.get("toolCalls").and_then(Value::as_array) {
             for call in calls {
                 let Some(call_id) = call.get("id").and_then(Value::as_str) else { continue };
                 let Some(result) = call.get("result") else { continue };
                 let text = tool_result_text(result);
+                let tool_message_id = format!("{id}-tool-{call_id}");
                 let mut tool_message = empty_message(
-                    format!("{id}-tool-{call_id}"),
+                    tool_message_id.clone(),
                     "tool",
                     text.clone(),
                     call.get("timestamp").and_then(Value::as_str).map(str::to_owned).or_else(|| message.created_at.clone()),
@@ -278,16 +287,14 @@ fn parse_message(record: &Value, messages: &mut Vec<TranscriptMessage>, position
                 tool_message.tool_call_id = Some(call_id.to_owned());
                 tool_message.tool_name = call.get("name").and_then(Value::as_str).map(str::to_owned);
                 tool_message.is_error = call.get("status").and_then(Value::as_str).map(|status| status == "error");
-                messages.push(tool_message);
+                if let Some(index) = positions.get(&tool_message_id).copied() {
+                    messages[index] = tool_message;
+                } else {
+                    positions.insert(tool_message_id, messages.len());
+                    messages.push(tool_message);
+                }
             }
         }
-    }
-
-    if let Some(index) = positions.get(id).copied() {
-        messages[index] = message;
-    } else {
-        positions.insert(id.to_owned(), messages.len());
-        messages.push(message);
     }
 }
 
@@ -308,6 +315,11 @@ fn parse_reader<R: BufRead>(mut reader: R, expected_session_id: &str) -> Vec<Tra
         if line_number == 0 {
             if record.get("sessionId").and_then(Value::as_str) != Some(expected_session_id) {
                 return Vec::new();
+            }
+            if let Some(legacy_messages) = record.get("messages").and_then(Value::as_array) {
+                for item in legacy_messages {
+                    parse_message(item, &mut messages, &mut positions);
+                }
             }
             continue;
         }
