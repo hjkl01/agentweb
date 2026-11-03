@@ -28,7 +28,7 @@
 前端测试由 `frontend/scripts/check-frontend.mjs` 实现，Makefile 先用 TypeScript 编译指定的纯逻辑模块，再运行 Node.js 断言。它覆盖 Session 分组、偏好解析、格式化、Diff、工具结果关联和待发送消息处理等逻辑，但不是 React 组件或浏览器端到端测试。
 
 限制：
-- CI 已实际执行：前端构建、名称检查、前端逻辑检查、Rust 格式检查、`cargo check` 和 `cargo test` 全部通过；后端测试为 120 项通过、0 项失败。此前两个进程组清理测试失败，最终确认 `kill` 命令将负数 PGID 作为参数传递时缺少 `--`，导致参数被误解析；已在所有进程组清理和测试探测调用中补上选项终止符。修复后的 `main` CI：`41604066427`，后端测试通过。Docker 构建状态以该 run 最终结论为准。
+- CI 已实际执行：前端构建、名称检查、前端逻辑检查、Rust 格式检查、`cargo check` 和 `cargo test` 全部通过；后端测试为 120 项通过、0 项失败。此前两个进程组清理测试失败，最终确认 `kill` 命令将负数 PGID 作为参数传递时缺少 `--`，导致参数被误解析；已在所有进程组清理和测试探测调用中补上选项终止符。修复后的 `main` CI：`41604066427`，后端测试通过。Docker 镜像构建也已通过。
 - 尚未发现覆盖六种真实 Agent CLI 的完整集成测试矩阵。Mock/进程层测试不能替代真实 CLI 的登录、启动、继续会话、停止和异常恢复验证。
 - CI 改动提交后，应以 GitHub Actions 的实际结果作为第一轮动态验证。
 
@@ -52,13 +52,13 @@ DST 策略：春季跳时导致的不存在本地时间会跳过；秋季回拨�
 
 ### 3.4 原生 Transcript 恢复
 
-`backend/src/api/session_messages.rs` 已支持 Pi、Codex 和 Claude 原生 Transcript。Codex 读取器从 `CODEX_HOME/sessions`（默认 `~/.codex/sessions`）递归查找匹配 thread ID 的 rollout JSONL，只提取 `response_item` 中的 message、function_call 和 function_call_output，不读取重复的 `event_msg`。Claude 读取器从 `CLAUDE_CONFIG_DIR/projects`（默认 `~/.claude/projects`）按 session ID 查找项目级 JSONL，恢复 user/assistant 文本、thinking、tool_use、tool_result、model 和 usage，并跳过 sidechain 记录。两者均在受限的 blocking worker 中执行，不将聊天正文写入 SQLite。
+`backend/src/api/session_messages.rs` 已支持 Pi、Codex、Claude 和 Gemini 原生 Transcript。Codex 读取器从 `CODEX_HOME/sessions`（默认 `~/.codex/sessions`）递归查找匹配 thread ID 的 rollout JSONL，只提取 `response_item` 中的 message、function_call 和 function_call_output，不读取重复的 `event_msg`。Claude 读取器从 `CLAUDE_CONFIG_DIR/projects`（默认 `~/.claude/projects`）按 session ID 查找项目级 JSONL，恢复 user/assistant 文本、thinking、tool_use、tool_result、model 和 usage，并跳过 sidechain 记录。这些读取器均在受限的 blocking worker 中执行，不将聊天正文写入 SQLite。
 
-当前限制：Codex `.jsonl.zst` 压缩归档尚不支持；Claude transcript 格式属于 CLI 内部格式，需随版本变化维护；两种读取器目前在文件不存在、超限或读取失败时返回空消息，尚未提供 Pi 那样的 Missing/Unknown 状态区分。Gemini、OpenCode、Qwen 仍未接入。
+当前限制：Codex `.jsonl.zst` 压缩归档尚不支持；Claude transcript 格式属于 CLI 内部格式，需随版本变化维护；两种读取器目前在文件不存在、超限或读取失败时返回空消息，尚未提供 Pi 那样的 Missing/Unknown 状态区分。Gemini 读取器已实现，当前提交的 CI 验证仍在进行；OpenCode、Qwen 尚未接入。
 
 ## 4. 本轮后续顺序
 
-1. 补齐 Gemini、OpenCode、Qwen 的原生 Transcript 读取，并完善各 Agent 文件缺失/读取失败状态。
+1. 补齐 OpenCode、Qwen 的原生 Transcript 读取，并完善各 Agent 文件缺失/读取失败状态。
 3. 处理跨 Worker Relay 队列丢失事件的端到端 resync。
 
 ## 5. 未验证事项
