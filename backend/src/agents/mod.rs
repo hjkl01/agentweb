@@ -8,6 +8,7 @@ pub mod config;
 pub mod definition;
 pub mod event_parser;
 pub mod generic;
+pub mod gemini_transcript;
 pub mod mcp;
 pub mod models;
 pub mod opencode;
