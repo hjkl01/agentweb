@@ -43,6 +43,7 @@ import {
   AssistantParts,
   CompactionMessage,
   ToolResultCard,
+  UserParts,
 } from "./MessageParts";
 import { SessionExportButton } from "./SessionExportButton";
 import { SessionStats } from "./SessionStats";
@@ -496,6 +497,8 @@ export function ChatPanel({
                     thinkingSeconds={thinkingSeconds.get(message.id)}
                     thinkingExpanded={preferences.thinkingExpanded}
                   />
+                ) : message.role === "user" ? (
+                  <UserParts message={message} sessionId={current?.id} />
                 ) : (
                   <MarkdownMessage content={message.content} />
                 )}
