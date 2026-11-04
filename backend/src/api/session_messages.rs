@@ -257,7 +257,11 @@ pub async fn session_image(
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    let Some(native_session_id) = session.native_session_id.clone().filter(|_| is_pi || is_claude) else {
+    let Some(native_session_id) = session
+        .native_session_id
+        .clone()
+        .filter(|_| is_pi || is_claude)
+    else {
         return Err(StatusCode::NOT_FOUND);
     };
     let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
