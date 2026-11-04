@@ -260,8 +260,10 @@ pub fn read_image(session_id: &str, entry_id: &str, index: usize) -> Option<(Str
     }
     let file = fs::File::open(path).ok()?;
     for line in BufReader::new(file).lines().take(MAX_TRANSCRIPT_LINES) {
-        let line = line.ok()?;
-        let record: Value = serde_json::from_str(&line).ok()?;
+        let Ok(line) = line else { continue };
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let id = record
             .get("uuid")
             .and_then(Value::as_str)
