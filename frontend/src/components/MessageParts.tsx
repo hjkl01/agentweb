@@ -20,6 +20,35 @@ function turnNotice(message: ChatMessage) {
   return null;
 }
 
+function ImageAttachment({ sessionId, messageId, index, mimeType }: {
+  sessionId?: string;
+  messageId: string;
+  index?: number;
+  mimeType?: string;
+}) {
+  if (!sessionId || index === undefined) return null;
+  const src = `/api/sessions/${encodeURIComponent(sessionId)}/image/${encodeURIComponent(messageId)}/${index}`;
+  return (
+    <a className="transcript-image-link" href={src} target="_blank" rel="noreferrer">
+      <img className="transcript-image" src={src} alt={mimeType || "会话图片附件"} loading="lazy" />
+    </a>
+  );
+}
+
+/** User transcript body, including lazily loaded native image attachments. */
+export function UserParts({ message, sessionId }: { message: ChatMessage; sessionId?: string }) {
+  const images = (message.parts || []).filter((part) => part.type === "image");
+  return (
+    <div className="msg-parts">
+      {message.content && <MarkdownMessage content={message.content} />}
+      {images.map((part, index) => (
+        <ImageAttachment key={`${message.id}:image:${index}`} sessionId={sessionId}
+          messageId={message.id} index={part.image_index} mimeType={part.mime_type} />
+      ))}
+    </div>
+  );
+}
+
 /** Body of an assistant message: structured parts when present, else text.
  *  思考和工具调用按转录顺序内联成卡片，工具结果按 `tool_call_id` 挂回对应的调用卡片。 */
 export function AssistantParts({
@@ -74,6 +103,9 @@ export function AssistantParts({
               sessionId={sessionId}
             />
           );
+        if (part.type === "image")
+          return <ImageAttachment key={key} sessionId={sessionId} messageId={message.id}
+            index={part.image_index} mimeType={part.mime_type} />;
         if (part.type === "text")
           return <MarkdownMessage key={key} content={part.text || ""} />;
         return null;
