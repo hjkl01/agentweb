@@ -251,7 +251,13 @@ pub async fn session_image(
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    let Some(native_session_id) = session.native_session_id.clone().filter(|_| is_pi) else {
+    let is_claude = is_claude_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let Some(native_session_id) = session.native_session_id.clone().filter(|_| is_pi || is_claude) else {
         return Err(StatusCode::NOT_FOUND);
     };
     let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
@@ -260,7 +266,11 @@ pub async fn session_image(
     })?;
     let image = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        read_entry_image(&native_session_id, &entry_id, index)
+        if is_pi {
+            read_entry_image(&native_session_id, &entry_id, index)
+        } else {
+            crate::agents::claude_transcript::read_image(&native_session_id, &entry_id, index)
+        }
     })
     .await
     .map_err(|error| {
