@@ -211,7 +211,10 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
 const MAX_IMAGE_BASE64_BYTES: usize = 12 * 1024 * 1024;
 
 fn allowed_image_mime(mime: &str) -> bool {
-    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif"
+    )
 }
 
 fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -219,7 +222,9 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
     let mut buffer = 0u32;
     let mut bits = 0u32;
     for byte in input.bytes() {
-        if byte == b'=' || byte.is_ascii_whitespace() { continue; }
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
         let value = match byte {
             b'A'..=b'Z' => (byte - b'A') as u32,
             b'a'..=b'z' => (byte - b'a') as u32 + 26,
@@ -241,29 +246,49 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 
 /// Read one base64 image block from Claude's native JSONL transcript.
 pub fn read_image(session_id: &str, entry_id: &str, index: usize) -> Option<(String, Vec<u8>)> {
-    if session_id.is_empty() || !session_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if session_id.is_empty()
+        || !session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return None;
     }
     let path = find_transcript(&projects_root(), session_id)?;
     let metadata = fs::metadata(&path).ok()?;
-    if metadata.len() > MAX_TRANSCRIPT_BYTES { return None; }
+    if metadata.len() > MAX_TRANSCRIPT_BYTES {
+        return None;
+    }
     let file = fs::File::open(path).ok()?;
     for line in BufReader::new(file).lines().take(MAX_TRANSCRIPT_LINES) {
         let line = line.ok()?;
         let record: Value = serde_json::from_str(&line).ok()?;
-        let id = record.get("uuid").and_then(Value::as_str)
+        let id = record
+            .get("uuid")
+            .and_then(Value::as_str)
             .or_else(|| record.pointer("/message/id").and_then(Value::as_str));
-        if id != Some(entry_id) { continue; }
+        if id != Some(entry_id) {
+            continue;
+        }
         let block = record.pointer("/message/content")?.as_array()?.get(index)?;
-        if block.get("type").and_then(Value::as_str) != Some("image") { return None; }
+        if block.get("type").and_then(Value::as_str) != Some("image") {
+            return None;
+        }
         let source = block.get("source")?;
-        if source.get("type").and_then(Value::as_str) != Some("base64") { return None; }
-        let mime = source.get("media_type").and_then(Value::as_str)
+        if source.get("type").and_then(Value::as_str) != Some("base64") {
+            return None;
+        }
+        let mime = source
+            .get("media_type")
+            .and_then(Value::as_str)
             .filter(|mime| allowed_image_mime(mime))?;
         let data = source.get("data").and_then(Value::as_str)?;
-        if data.len() > MAX_IMAGE_BASE64_BYTES { return None; }
+        if data.len() > MAX_IMAGE_BASE64_BYTES {
+            return None;
+        }
         let bytes = decode_base64(data)?;
-        if bytes.len() > MAX_IMAGE_BASE64_BYTES { return None; }
+        if bytes.len() > MAX_IMAGE_BASE64_BYTES {
+            return None;
+        }
         return Some((mime.to_owned(), bytes));
     }
     None
