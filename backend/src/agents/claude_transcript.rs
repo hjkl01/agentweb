@@ -382,6 +382,23 @@ mod tests {
     }
 
     #[test]
+    fn preserves_image_attachment_metadata_without_exposing_base64() {
+        let source = concat!(
+            "{\"type\":\"user\",\"uuid\":\"image-entry\",\"message\":{\"role\":\"user\",\"content\":[",
+            "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"c2VjcmV0\"}}]}}\n"
+        );
+        let messages = parse_reader(BufReader::new(source.as_bytes()));
+        assert_eq!(messages.len(), 1);
+        let parts = messages[0].parts.as_ref().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].kind, "image");
+        assert_eq!(parts[0].mime_type.as_deref(), Some("image/png"));
+        assert_eq!(parts[0].image_index, Some(0));
+        let serialized = serde_json::to_string(&messages).unwrap();
+        assert!(!serialized.contains("c2VjcmV0"));
+    }
+
+    #[test]
     fn rejects_session_ids_that_could_escape_the_project_directory() {
         assert!(read_messages("../outside").is_empty());
         assert!(read_messages("nested/session").is_empty());
