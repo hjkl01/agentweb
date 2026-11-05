@@ -63,7 +63,9 @@ fn attachment_mime(value: &Value) -> Option<String> {
         .or_else(|| value.get("mime_type"))
         .and_then(Value::as_str)
         .or_else(|| {
-            value.get("url").and_then(Value::as_str)
+            value
+                .get("url")
+                .and_then(Value::as_str)
                 .and_then(|url| url.strip_prefix("data:"))
                 .and_then(|url| url.split_once(','))
                 .and_then(|(metadata, _)| metadata.split(';').next())
