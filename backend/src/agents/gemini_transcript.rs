@@ -244,10 +244,22 @@ pub fn read_image(
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if record.get("id").and_then(Value::as_str) != Some(entry_id) {
+        let entry = if record.get("id").and_then(Value::as_str) == Some(entry_id) {
+            Some(&record)
+        } else {
+            record
+                .get("messages")
+                .and_then(Value::as_array)
+                .and_then(|messages| {
+                    messages
+                        .iter()
+                        .find(|message| message.get("id").and_then(Value::as_str) == Some(entry_id))
+                })
+        };
+        let Some(entry) = entry else {
             continue;
-        }
-        let item = content_items(record.get("content")?)?.get(index)?;
+        };
+        let item = content_items(entry.get("content")?)?.get(index)?;
         let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
         let mime = image
             .get("mimeType")
