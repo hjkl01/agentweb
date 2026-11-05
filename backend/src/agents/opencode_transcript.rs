@@ -70,13 +70,15 @@ fn has_embedded_image(value: &Value) -> bool {
         return false;
     }
     let url = value.get("url").and_then(Value::as_str).unwrap_or_default();
-    let data_url = url.strip_prefix("data:")
+    let data_url = url
+        .strip_prefix("data:")
         .and_then(|value| value.split_once(','))
         .is_some_and(|(metadata, _)| metadata.split(';').any(|part| part == "base64"));
     let encoded_data = value.get("encoding").and_then(Value::as_str) == Some("base64")
-        && value.get("data").and_then(Value::as_str).is_some_and(|data| {
-            data.len() <= MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8
-        });
+        && value
+            .get("data")
+            .and_then(Value::as_str)
+            .is_some_and(|data| data.len() <= MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8);
     data_url || encoded_data
 }
 
