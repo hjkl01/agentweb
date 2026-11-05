@@ -15,7 +15,8 @@ use std::{
 const MAX_PROJECT_ENTRIES: usize = 50_000;
 const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TRANSCRIPT_LINES: usize = 1_000_000;
-const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
+// Inline Gemini images are Base64-encoded in the same JSONL record.
+const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SCAN_DEPTH: usize = 3;
 
 fn gemini_home() -> PathBuf {
