@@ -61,7 +61,13 @@ fn attachment_mime(value: &Value) -> Option<String> {
         .get("mime")
         .or_else(|| value.get("mimeType"))
         .or_else(|| value.get("mime_type"))
-        .and_then(Value::as_str)?;
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value.get("url").and_then(Value::as_str)
+                .and_then(|url| url.strip_prefix("data:"))
+                .and_then(|url| url.split_once(','))
+                .and_then(|(metadata, _)| metadata.split(';').next())
+        })?;
     allowed_image_mime(mime).then(|| mime.to_owned())
 }
 
@@ -77,6 +83,7 @@ fn has_embedded_image(value: &Value) -> bool {
     let encoded_data = value.get("encoding").and_then(Value::as_str) == Some("base64")
         && value
             .get("data")
+            .or_else(|| value.get("content"))
             .and_then(Value::as_str)
             .is_some_and(|data| data.len() <= MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8);
     data_url || encoded_data
