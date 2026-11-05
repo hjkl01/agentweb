@@ -347,6 +347,21 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn preserves_input_image_metadata_without_returning_data_url() {
+        let fixture = concat!(
+            "{\"id\":\"user-image\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[",
+            "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,c2VjcmV0\"}]}}\n"
+        );
+        let messages = parse_reader(BufReader::new(fixture.as_bytes()));
+        assert_eq!(messages.len(), 1);
+        let part = &messages[0].parts.as_ref().unwrap()[0];
+        assert_eq!(part.kind, "image");
+        assert_eq!(part.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(part.image_index, Some(0));
+        assert!(!serde_json::to_string(&messages).unwrap().contains("c2VjcmV0"));
+    }
+
+    #[test]
     fn parses_codex_response_items_without_duplicating_event_messages() {
         let root = std::env::temp_dir().join(format!(
             "agentweb-codex-transcript-{}",
