@@ -784,6 +784,7 @@ mod tests {
                 "type":"tool","callID":"c1","tool":"bash",
                 "state":{"status":"running","input":{"command":"pwd"}}
             }),
+            0,
             &mut results,
         );
         assert_eq!(parent.parts.as_ref().unwrap()[0].kind, "toolCall");
