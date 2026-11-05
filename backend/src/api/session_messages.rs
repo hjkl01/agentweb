@@ -251,7 +251,25 @@ pub async fn session_image(
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    let is_codex = is_codex_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let is_claude = is_claude_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let is_gemini = is_gemini_agent(&s.db, &session.agent_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let is_opencode = is_opencode_agent(&s.db, &session.agent_id)
         .await
         .map_err(|error| {
             tracing::error!(session_id = %id, %error, "failed to resolve session agent kind");
@@ -260,27 +278,43 @@ pub async fn session_image(
     let Some(native_session_id) = session
         .native_session_id
         .clone()
-        .filter(|_| is_pi || is_claude)
+        .or(session.fork_from_native_session_id.clone())
+        .filter(|_| is_pi || is_codex || is_claude || is_gemini || is_opencode)
     else {
         return Err(StatusCode::NOT_FOUND);
     };
     let permit = TRANSCRIPT_READ_LIMIT.acquire().await.map_err(|error| {
-        tracing::error!(%error, "Pi transcript read limiter is unavailable");
+        tracing::error!(%error, "native transcript image limiter is unavailable");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
-    let image = tokio::task::spawn_blocking(move || {
+    let image = if is_opencode {
         let _permit = permit;
-        if is_pi {
-            read_entry_image(&native_session_id, &entry_id, index)
-        } else {
-            crate::agents::claude_transcript::read_image(&native_session_id, &entry_id, index)
-        }
-    })
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "Pi transcript image reader task failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+        crate::agents::opencode_transcript::read_image(&native_session_id, &entry_id, index).await
+    } else {
+        let workspace = session.workspace.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            if is_pi {
+                read_entry_image(&native_session_id, &entry_id, index)
+            } else if is_codex {
+                crate::agents::codex_transcript::read_image(&native_session_id, &entry_id, index)
+            } else if is_claude {
+                crate::agents::claude_transcript::read_image(&native_session_id, &entry_id, index)
+            } else {
+                crate::agents::gemini_transcript::read_image(
+                    &native_session_id,
+                    &workspace,
+                    &entry_id,
+                    index,
+                )
+            }
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "native transcript image reader task failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    };
     let Some((mime, bytes)) = image else {
         return Err(StatusCode::NOT_FOUND);
     };
