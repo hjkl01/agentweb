@@ -518,6 +518,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preserves_inline_image_metadata_without_returning_base64() {
+        let fixture = [
+            r#"{"sessionId":"session-image","projectHash":"hash"}"#,
+            r#"{"id":"user-image","type":"user","content":[{"inlineData":{"mimeType":"image/png","data":"c2VjcmV0"}}]}"#
+        ].join("\n");
+        let messages = parse_reader(BufReader::new(fixture.as_bytes()), "session-image");
+        assert_eq!(messages.len(), 1);
+        let part = &messages[0].parts.as_ref().unwrap()[0];
+        assert_eq!(part.kind, "image");
+        assert_eq!(part.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(part.image_index, Some(0));
+        assert!(!serde_json::to_string(&messages).unwrap().contains("c2VjcmV0"));
+    }
+
+    #[test]
     fn parses_gemini_messages_tools_usage_and_updates() {
         let fixture = [
             r#"{"sessionId":"session-123","projectHash":"hash","startTime":"2026-01-01T00:00:00Z"}"#,
