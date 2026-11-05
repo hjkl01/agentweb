@@ -84,6 +84,92 @@ pub fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
     parse_reader(BufReader::new(file))
 }
 
+const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
+
+fn allowed_image_mime(mime: &str) -> bool {
+    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+}
+
+fn data_url_mime(value: &str) -> Option<String> {
+    let (metadata, _) = value.strip_prefix("data:")?.split_once(',')?;
+    if !metadata.split(';').any(|part| part == "base64") {
+        return None;
+    }
+    let mime = metadata.split(';').next()?;
+    allowed_image_mime(mime).then(|| mime.to_owned())
+}
+
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    if input.len() > MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8 {
+        return None;
+    }
+    let mut output = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => (byte - b'A') as u32,
+            b'a'..=b'z' => (byte - b'a') as u32 + 26,
+            b'0'..=b'9' => (byte - b'0') as u32 + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+            if output.len() > MAX_IMAGE_BYTES {
+                return None;
+            }
+        }
+    }
+    Some(output)
+}
+
+/// Read an embedded Codex input_image from its native rollout record.
+pub fn read_image(session_id: &str, entry_id: &str, index: usize) -> Option<(String, Vec<u8>)> {
+    if session_id.is_empty()
+        || session_id.len() > 128
+        || !session_id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    {
+        return None;
+    }
+    let path = find_rollout(&sessions_root(), session_id)?;
+    if fs::metadata(&path).ok()?.len() > MAX_TRANSCRIPT_BYTES {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    for line in BufReader::new(file).lines().take(1_000_000) {
+        let Ok(line) = line else { continue };
+        let Ok(record) = serde_json::from_str::<Value>(&line) else { continue };
+        if record.get("id").and_then(Value::as_str) != Some(entry_id)
+            || record.pointer("/payload/type").and_then(Value::as_str) != Some("message")
+        {
+            continue;
+        }
+        let item = record.pointer("/payload/content")?.as_array()?.get(index)?;
+        if !matches!(item.get("type").and_then(Value::as_str), Some("input_image" | "image")) {
+            return None;
+        }
+        let data_url = item.get("image_url").and_then(Value::as_str)
+            .or_else(|| item.get("url").and_then(Value::as_str))?;
+        let (metadata, encoded) = data_url.strip_prefix("data:")?.split_once(',')?;
+        if !metadata.split(';').any(|part| part == "base64") {
+            return None;
+        }
+        let mime = metadata.split(';').next().filter(|mime| allowed_image_mime(mime))?;
+        let bytes = decode_base64(encoded)?;
+        return Some((mime.to_owned(), bytes));
+    }
+    None
+}
+
 fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
     let mut messages = Vec::new();
     for (line_number, line) in reader.lines().enumerate() {
@@ -112,7 +198,7 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                 let mut parts = Vec::new();
                 let mut text = String::new();
                 if let Some(items) = payload.get("content").and_then(Value::as_array) {
-                    for item in items {
+                    for (part_index, item) in items.iter().enumerate() {
                         match item.get("type").and_then(Value::as_str) {
                             Some("input_text" | "output_text" | "text") => {
                                 if let Some(value) = item.get("text").and_then(Value::as_str) {
@@ -130,6 +216,21 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                                     parts.push(TranscriptPart {
                                         kind: "text".into(),
                                         text: Some(value.to_owned()),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                            Some("input_image" | "image") if role == "user" => {
+                                let image_url = item.get("image_url")
+                                    .and_then(Value::as_str)
+                                    .or_else(|| item.get("url").and_then(Value::as_str));
+                                let mime = image_url.and_then(data_url_mime)
+                                    .or_else(|| item.get("mime_type").and_then(Value::as_str).map(str::to_owned));
+                                if let Some(mime) = mime.filter(|value| allowed_image_mime(value)) {
+                                    parts.push(TranscriptPart {
+                                        kind: "image".into(),
+                                        mime_type: Some(mime),
+                                        image_index: Some(part_index),
                                         ..Default::default()
                                     });
                                 }
