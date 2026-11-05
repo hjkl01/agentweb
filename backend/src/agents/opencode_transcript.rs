@@ -47,6 +47,74 @@ fn safe_session_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
+
+fn allowed_image_mime(mime: &str) -> bool {
+    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+}
+
+fn attachment_mime(value: &Value) -> Option<String> {
+    let mime = value.get("mime").or_else(|| value.get("mimeType"))
+        .or_else(|| value.get("mime_type")).and_then(Value::as_str)?;
+    allowed_image_mime(mime).then(|| mime.to_owned())
+}
+
+fn attachment_data(value: &Value) -> Option<(String, Vec<u8>)> {
+    let mime = attachment_mime(value)?;
+    let data = value.get("url").or_else(|| value.get("data"))
+        .or_else(|| value.get("content")).and_then(Value::as_str)?;
+    let encoded = if let Some((metadata, payload)) = data.strip_prefix("data:").and_then(|v| v.split_once(',')) {
+        if !metadata.split(';').any(|part| part == "base64")
+            || metadata.split(';').next()? != mime
+        {
+            return None;
+        }
+        payload
+    } else {
+        // Only accept explicitly marked base64 payloads. File paths and remote
+        // URLs are intentionally not followed by the server.
+        if value.get("encoding").and_then(Value::as_str) != Some("base64") {
+            return None;
+        }
+        data
+    };
+    let bytes = decode_base64(encoded)?;
+    Some((mime, bytes))
+}
+
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    if input.len() > MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8 {
+        return None;
+    }
+    let mut output = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => (byte - b'A') as u32,
+            b'a'..=b'z' => (byte - b'a') as u32 + 26,
+            b'0'..=b'9' => (byte - b'0') as u32 + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+            if output.len() > MAX_IMAGE_BYTES {
+                return None;
+            }
+        }
+    }
+    Some(output)
+}
+
 fn timestamp(value: Option<i64>) -> Option<String> {
     value
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
@@ -153,6 +221,7 @@ fn tool_result(
 fn parse_part(
     parent: &mut TranscriptMessage,
     data: &Value,
+    part_index: usize,
     tool_result_message: &mut Vec<TranscriptMessage>,
 ) {
     match data.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -215,14 +284,17 @@ fn parse_part(
             }
         }
         "file" | "image" => {
-            // Preserve a lightweight placeholder rather than silently dropping
-            // non-text content that this API cannot currently serve.
-            let label = data
-                .get("filename")
-                .or_else(|| data.get("url"))
-                .and_then(Value::as_str);
-            if let Some(label) = label {
-                add_part(parent, text_part(&format!("[{label}]")));
+            if let Some(mime) = attachment_mime(data) {
+                add_part(parent, TranscriptPart {
+                    kind: "image".into(),
+                    mime_type: Some(mime),
+                    image_index: Some(part_index),
+                    ..Default::default()
+                });
+            } else {
+                let label = data.get("filename").or_else(|| data.get("url"))
+                    .and_then(Value::as_str).unwrap_or("attachment");
+                add_part(parent, text_part(&format!("[附件: {label}]")));
             }
         }
         _ => {}
@@ -250,13 +322,20 @@ fn parse_v2_message(
         // text. Keep a safe display placeholder; never copy base64/blob data
         // into the transcript response.
         if let Some(files) = data.get("files").and_then(Value::as_array) {
-            for file in files {
-                let label = file
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .or_else(|| file.get("mime").and_then(Value::as_str))
-                    .unwrap_or("attachment");
-                add_part(&mut parent, text_part(&format!("[附件: {label}]")));
+            for (index, file) in files.iter().enumerate() {
+                if let Some(mime) = attachment_mime(file) {
+                    add_part(&mut parent, TranscriptPart {
+                        kind: "image".into(),
+                        mime_type: Some(mime),
+                        image_index: Some(index),
+                        ..Default::default()
+                    });
+                } else {
+                    let label = file.get("name").and_then(Value::as_str)
+                        .or_else(|| file.get("mime").and_then(Value::as_str))
+                        .unwrap_or("attachment");
+                    add_part(&mut parent, text_part(&format!("[附件: {label}]")));
+                }
             }
         }
     }
@@ -284,8 +363,8 @@ fn parse_v2_message(
     }
     let mut results = Vec::new();
     if let Some(parts) = data.get("content").and_then(Value::as_array) {
-        for part in parts {
-            parse_part(&mut parent, part, &mut results);
+        for (index, part) in parts.iter().enumerate() {
+            parse_part(&mut parent, part, index, &mut results);
         }
     }
     // Preserve empty assistant turns when OpenCode recorded a provider
@@ -323,6 +402,112 @@ pub async fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
             Vec::new()
         }
     }
+}
+
+/// Read an embedded OpenCode image attachment from its native read-only database.
+pub async fn read_image(
+    session_id: &str,
+    entry_id: &str,
+    index: usize,
+) -> Option<(String, Vec<u8>)> {
+    if !safe_session_id(session_id) || entry_id.is_empty() || entry_id.len() > 256 {
+        return None;
+    }
+    match read_image_from(&database_path(), session_id, entry_id, index).await {
+        Ok(image) => image,
+        Err(error) => {
+            tracing::warn!(%error, "unable to read OpenCode image attachment");
+            None
+        }
+    }
+}
+
+async fn read_image_from(
+    path: &Path,
+    session_id: &str,
+    entry_id: &str,
+    index: usize,
+) -> anyhow::Result<Option<(String, Vec<u8>)>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .create_if_missing(false)
+        .busy_timeout(Duration::from_secs(2));
+    let mut conn = sqlx::SqliteConnection::connect_with(&options).await?;
+
+    if table_exists(&mut conn, "session_message").await? {
+        let raw: Option<String> = sqlx::query_scalar(
+            "SELECT data FROM session_message WHERE session_id=? AND id=? LIMIT 1",
+        )
+        .bind(session_id)
+        .bind(entry_id)
+        .fetch_optional(&mut conn)
+        .await?;
+        if let Some(raw) = raw {
+            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                if let Some(file) = data.get("files").and_then(Value::as_array).and_then(|v| v.get(index)) {
+                    if let Some(image) = attachment_data(file) {
+                        return Ok(Some(image));
+                    }
+                }
+            }
+        }
+        if table_exists(&mut conn, "session_part").await? {
+            let raw: Option<String> = sqlx::query_scalar(
+                "SELECT data FROM session_part WHERE session_id=? AND message_id=? ORDER BY ordinal LIMIT 1 OFFSET ?",
+            )
+            .bind(session_id)
+            .bind(entry_id)
+            .bind(index as i64)
+            .fetch_optional(&mut conn)
+            .await?;
+            if let Some(raw) = raw {
+                if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                    return Ok(attachment_data(&data));
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    if !table_exists(&mut conn, "message").await? {
+        return Ok(None);
+    }
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT data FROM message WHERE session_id=? AND id=? LIMIT 1",
+    )
+    .bind(session_id)
+    .bind(entry_id)
+    .fetch_optional(&mut conn)
+    .await?;
+    if let Some(raw) = raw {
+        if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+            if let Some(file) = data.get("files").and_then(Value::as_array).and_then(|v| v.get(index)) {
+                if let Some(image) = attachment_data(file) {
+                    return Ok(Some(image));
+                }
+            }
+        }
+    }
+    if table_exists(&mut conn, "part").await? {
+        let raw: Option<String> = sqlx::query_scalar(
+            "SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT 1 OFFSET ?",
+        )
+        .bind(session_id)
+        .bind(entry_id)
+        .bind(index as i64)
+        .fetch_optional(&mut conn)
+        .await?;
+        if let Some(raw) = raw {
+            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                return Ok(attachment_data(&data));
+            }
+        }
+    }
+    Ok(None)
 }
 
 async fn read_messages_from(
@@ -431,10 +616,10 @@ async fn read_messages_from(
             "SELECT data FROM part WHERE session_id=? AND message_id=? ORDER BY time_created, id LIMIT ?",
         ).bind(session_id).bind(&id).bind(MAX_PARTS_PER_MESSAGE as i64).fetch_all(&mut conn).await?;
         let mut results = Vec::new();
-        for part in parts {
+        for (index, part) in parts.into_iter().enumerate() {
             let raw: String = part.try_get("data")?;
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-                parse_part(&mut parent, &value, &mut results);
+                parse_part(&mut parent, &value, index, &mut results);
             }
         }
         if !parent.content.is_empty() || parent.parts.as_ref().is_some_and(|p| !p.is_empty()) {
