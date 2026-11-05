@@ -240,11 +240,7 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                                     .get("image_url")
                                     .and_then(Value::as_str)
                                     .or_else(|| item.get("url").and_then(Value::as_str));
-                                let mime = image_url.and_then(data_url_mime).or_else(|| {
-                                    item.get("mime_type")
-                                        .and_then(Value::as_str)
-                                        .map(str::to_owned)
-                                });
+                                let mime = image_url.and_then(data_url_mime);
                                 if let Some(mime) = mime.filter(|value| allowed_image_mime(value)) {
                                     parts.push(TranscriptPart {
                                         kind: "image".into(),
