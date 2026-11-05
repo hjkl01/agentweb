@@ -356,16 +356,11 @@ fn parse_message(
     let mut message = match kind {
         "user" => {
             let text = text_from_content(content);
-            if text.is_empty() {
+            let parts = content_parts(content);
+            if text.is_empty() && parts.is_empty() {
                 return;
             }
-            empty_message(
-                id.to_owned(),
-                "user",
-                text,
-                timestamp,
-                content_parts(content),
-            )
+            empty_message(id.to_owned(), "user", text, timestamp, parts)
         }
         "gemini" => {
             let text = text_from_content(content);
