@@ -50,12 +50,18 @@ fn safe_session_id(id: &str) -> bool {
 const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
 
 fn allowed_image_mime(mime: &str) -> bool {
-    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif"
+    )
 }
 
 fn attachment_mime(value: &Value) -> Option<String> {
-    let mime = value.get("mime").or_else(|| value.get("mimeType"))
-        .or_else(|| value.get("mime_type")).and_then(Value::as_str)?;
+    let mime = value
+        .get("mime")
+        .or_else(|| value.get("mimeType"))
+        .or_else(|| value.get("mime_type"))
+        .and_then(Value::as_str)?;
     allowed_image_mime(mime).then(|| mime.to_owned())
 }
 
@@ -76,11 +82,15 @@ fn has_embedded_image(value: &Value) -> bool {
 
 fn attachment_data(value: &Value) -> Option<(String, Vec<u8>)> {
     let mime = attachment_mime(value)?;
-    let data = value.get("url").or_else(|| value.get("data"))
-        .or_else(|| value.get("content")).and_then(Value::as_str)?;
-    let encoded = if let Some((metadata, payload)) = data.strip_prefix("data:").and_then(|v| v.split_once(',')) {
-        if !metadata.split(';').any(|part| part == "base64")
-            || metadata.split(';').next()? != mime
+    let data = value
+        .get("url")
+        .or_else(|| value.get("data"))
+        .or_else(|| value.get("content"))
+        .and_then(Value::as_str)?;
+    let encoded = if let Some((metadata, payload)) =
+        data.strip_prefix("data:").and_then(|v| v.split_once(','))
+    {
+        if !metadata.split(';').any(|part| part == "base64") || metadata.split(';').next()? != mime
         {
             return None;
         }
@@ -301,15 +311,21 @@ fn parse_part(
         "file" | "image" => {
             if has_embedded_image(data) {
                 let mime = attachment_mime(data).unwrap();
-                add_part(parent, TranscriptPart {
-                    kind: "image".into(),
-                    mime_type: Some(mime),
-                    image_index: Some(part_index),
-                    ..Default::default()
-                });
+                add_part(
+                    parent,
+                    TranscriptPart {
+                        kind: "image".into(),
+                        mime_type: Some(mime),
+                        image_index: Some(part_index),
+                        ..Default::default()
+                    },
+                );
             } else {
-                let label = data.get("filename").or_else(|| data.get("url"))
-                    .and_then(Value::as_str).unwrap_or("attachment");
+                let label = data
+                    .get("filename")
+                    .or_else(|| data.get("url"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("attachment");
                 add_part(parent, text_part(&format!("[附件: {label}]")));
             }
         }
@@ -341,14 +357,19 @@ fn parse_v2_message(
             for (index, file) in files.iter().enumerate() {
                 if has_embedded_image(file) {
                     let mime = attachment_mime(file).unwrap();
-                    add_part(&mut parent, TranscriptPart {
-                        kind: "image".into(),
-                        mime_type: Some(mime),
-                        image_index: Some(index),
-                        ..Default::default()
-                    });
+                    add_part(
+                        &mut parent,
+                        TranscriptPart {
+                            kind: "image".into(),
+                            mime_type: Some(mime),
+                            image_index: Some(index),
+                            ..Default::default()
+                        },
+                    );
                 } else {
-                    let label = file.get("name").and_then(Value::as_str)
+                    let label = file
+                        .get("name")
+                        .and_then(Value::as_str)
                         .or_else(|| file.get("mime").and_then(Value::as_str))
                         .unwrap_or("attachment");
                     add_part(&mut parent, text_part(&format!("[附件: {label}]")));
@@ -465,7 +486,11 @@ async fn read_image_from(
         .await?;
         if let Some(raw) = raw {
             if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(file) = data.get("files").and_then(Value::as_array).and_then(|v| v.get(index)) {
+                if let Some(file) = data
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .and_then(|v| v.get(index))
+                {
                     if let Some(image) = attachment_data(file) {
                         return Ok(Some(image));
                     }
@@ -493,16 +518,19 @@ async fn read_image_from(
     if !table_exists(&mut conn, "message").await? {
         return Ok(None);
     }
-    let raw: Option<String> = sqlx::query_scalar(
-        "SELECT data FROM message WHERE session_id=? AND id=? LIMIT 1",
-    )
-    .bind(session_id)
-    .bind(entry_id)
-    .fetch_optional(&mut conn)
-    .await?;
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT data FROM message WHERE session_id=? AND id=? LIMIT 1")
+            .bind(session_id)
+            .bind(entry_id)
+            .fetch_optional(&mut conn)
+            .await?;
     if let Some(raw) = raw {
         if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-            if let Some(file) = data.get("files").and_then(Value::as_array).and_then(|v| v.get(index)) {
+            if let Some(file) = data
+                .get("files")
+                .and_then(Value::as_array)
+                .and_then(|v| v.get(index))
+            {
                 if let Some(image) = attachment_data(file) {
                     return Ok(Some(image));
                 }
