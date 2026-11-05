@@ -59,6 +59,21 @@ fn attachment_mime(value: &Value) -> Option<String> {
     allowed_image_mime(mime).then(|| mime.to_owned())
 }
 
+fn has_embedded_image(value: &Value) -> bool {
+    if attachment_mime(value).is_none() {
+        return false;
+    }
+    let url = value.get("url").and_then(Value::as_str).unwrap_or_default();
+    let data_url = url.strip_prefix("data:")
+        .and_then(|value| value.split_once(','))
+        .is_some_and(|(metadata, _)| metadata.split(';').any(|part| part == "base64"));
+    let encoded_data = value.get("encoding").and_then(Value::as_str) == Some("base64")
+        && value.get("data").and_then(Value::as_str).is_some_and(|data| {
+            data.len() <= MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8
+        });
+    data_url || encoded_data
+}
+
 fn attachment_data(value: &Value) -> Option<(String, Vec<u8>)> {
     let mime = attachment_mime(value)?;
     let data = value.get("url").or_else(|| value.get("data"))
@@ -284,7 +299,8 @@ fn parse_part(
             }
         }
         "file" | "image" => {
-            if let Some(mime) = attachment_mime(data) {
+            if has_embedded_image(data) {
+                let mime = attachment_mime(data).unwrap();
                 add_part(parent, TranscriptPart {
                     kind: "image".into(),
                     mime_type: Some(mime),
@@ -323,7 +339,8 @@ fn parse_v2_message(
         // into the transcript response.
         if let Some(files) = data.get("files").and_then(Value::as_array) {
             for (index, file) in files.iter().enumerate() {
-                if let Some(mime) = attachment_mime(file) {
+                if has_embedded_image(file) {
+                    let mime = attachment_mime(file).unwrap();
                     add_part(&mut parent, TranscriptPart {
                         kind: "image".into(),
                         mime_type: Some(mime),
@@ -633,6 +650,25 @@ async fn read_messages_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_embedded_image_metadata_without_returning_base64() {
+        let data = serde_json::json!({
+            "role": "user",
+            "files": [{
+                "name": "screen.png",
+                "mime": "image/png",
+                "url": "data:image/png;base64,c2VjcmV0"
+            }]
+        });
+        let messages = parse_v2_message("user-image", "user", &data, None);
+        let parts = messages[0].parts.as_ref().unwrap();
+        assert_eq!(parts[0].kind, "image");
+        assert_eq!(parts[0].mime_type.as_deref(), Some("image/png"));
+        assert_eq!(parts[0].image_index, Some(0));
+        let serialized = serde_json::to_string(&messages).unwrap();
+        assert!(!serialized.contains("c2VjcmV0"));
+    }
 
     #[test]
     fn parses_text_thinking_and_tool_result_as_separate_messages() {
