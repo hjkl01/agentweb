@@ -169,7 +169,10 @@ pub fn read_messages(session_id: &str, workspace: &str) -> Vec<TranscriptMessage
 const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
 
 fn allowed_image_mime(mime: &str) -> bool {
-    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif"
+    )
 }
 
 fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -214,7 +217,9 @@ pub fn read_image(
 ) -> Option<(String, Vec<u8>)> {
     if session_id.is_empty()
         || session_id.len() > 128
-        || !session_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         return None;
     }
@@ -222,21 +227,32 @@ pub fn read_image(
     if !workspace.is_absolute() {
         return None;
     }
-    let project_hash = format!("{:x}", Sha256::digest(workspace.to_string_lossy().as_bytes()));
-    let path = temp_roots().into_iter()
+    let project_hash = format!(
+        "{:x}",
+        Sha256::digest(workspace.to_string_lossy().as_bytes())
+    );
+    let path = temp_roots()
+        .into_iter()
         .find_map(|root| find_session_file(&root, session_id, &project_hash))?;
     let file = fs::File::open(path).ok()?;
     for line in BufReader::new(file).lines().take(MAX_TRANSCRIPT_LINES) {
         let Ok(line) = line else { continue };
-        if line.len() > MAX_LINE_BYTES { continue; }
-        let Ok(record) = serde_json::from_str::<Value>(&line) else { continue };
+        if line.len() > MAX_LINE_BYTES {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if record.get("id").and_then(Value::as_str) != Some(entry_id) {
             continue;
         }
         let item = record.get("content")?.as_array()?.get(index)?;
         let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
-        let mime = image.get("mimeType").or_else(|| image.get("mime_type"))
-            .and_then(Value::as_str).filter(|mime| allowed_image_mime(mime))?;
+        let mime = image
+            .get("mimeType")
+            .or_else(|| image.get("mime_type"))
+            .and_then(Value::as_str)
+            .filter(|mime| allowed_image_mime(mime))?;
         let data = image.get("data").and_then(Value::as_str)?;
         let bytes = decode_base64(data)?;
         return Some((mime.to_owned(), bytes));
@@ -275,7 +291,9 @@ fn content_parts(content: &Value) -> Vec<TranscriptPart> {
                     });
                 }
                 let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
-                let mime = image.get("mimeType").or_else(|| image.get("mime_type"))
+                let mime = image
+                    .get("mimeType")
+                    .or_else(|| image.get("mime_type"))
                     .and_then(Value::as_str)?;
                 if !allowed_image_mime(mime) {
                     return None;
