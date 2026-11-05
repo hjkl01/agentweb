@@ -377,7 +377,9 @@ mod tests {
         assert_eq!(part.kind, "image");
         assert_eq!(part.mime_type.as_deref(), Some("image/png"));
         assert_eq!(part.image_index, Some(0));
-        assert!(!serde_json::to_string(&messages).unwrap().contains("c2VjcmV0"));
+        assert!(!serde_json::to_string(&messages)
+            .unwrap()
+            .contains("c2VjcmV0"));
     }
 
     #[test]
