@@ -247,7 +247,7 @@ pub fn read_image(
         if record.get("id").and_then(Value::as_str) != Some(entry_id) {
             continue;
         }
-        let item = record.get("content")?.as_array()?.get(index)?;
+        let item = content_items(record.get("content")?)?.get(index)?;
         let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
         let mime = image
             .get("mimeType")
@@ -261,15 +261,24 @@ pub fn read_image(
     None
 }
 
+fn content_items(content: &Value) -> Option<&Vec<Value>> {
+    content
+        .as_array()
+        .or_else(|| content.get("parts").and_then(Value::as_array))
+}
+
 fn text_from_content(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join(""),
-        _ => String::new(),
+        _ => content_items(content)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -280,8 +289,9 @@ fn content_parts(content: &Value) -> Vec<TranscriptPart> {
             text: Some(text.clone()),
             ..Default::default()
         }],
-        Value::Array(items) => items
-            .iter()
+        _ => content_items(content)
+            .into_iter()
+            .flatten()
             .enumerate()
             .filter_map(|(index, item)| {
                 if let Some(text) = item.get("text").and_then(Value::as_str) {
@@ -307,7 +317,6 @@ fn content_parts(content: &Value) -> Vec<TranscriptPart> {
                 })
             })
             .collect(),
-        _ => Vec::new(),
     }
 }
 
@@ -551,6 +560,20 @@ mod tests {
         assert!(!serde_json::to_string(&messages)
             .unwrap()
             .contains("c2VjcmV0"));
+    }
+
+    #[test]
+    fn parses_standard_parts_object_for_inline_images() {
+        let fixture = [
+            r#"{"sessionId":"session-parts","projectHash":"hash"}"#,
+            r#"{"id":"user-parts","type":"user","content":{"parts":[{"text":"look"},{"inlineData":{"mimeType":"image/jpeg","data":"c2VjcmV0"}}]}}"#
+        ].join("\n");
+        let messages = parse_reader(BufReader::new(fixture.as_bytes()), "session-parts");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "look");
+        let image = messages[0].parts.as_ref().unwrap().get(1).unwrap();
+        assert_eq!(image.kind, "image");
+        assert_eq!(image.image_index, Some(1));
     }
 
     #[test]
