@@ -87,7 +87,10 @@ pub fn read_messages(session_id: &str) -> Vec<TranscriptMessage> {
 const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
 
 fn allowed_image_mime(mime: &str) -> bool {
-    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif"
+    )
 }
 
 fn data_url_mime(value: &str) -> Option<String> {
@@ -136,7 +139,9 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
 pub fn read_image(session_id: &str, entry_id: &str, index: usize) -> Option<(String, Vec<u8>)> {
     if session_id.is_empty()
         || session_id.len() > 128
-        || !session_id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        || !session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
     {
         return None;
     }
@@ -147,23 +152,33 @@ pub fn read_image(session_id: &str, entry_id: &str, index: usize) -> Option<(Str
     let file = fs::File::open(path).ok()?;
     for line in BufReader::new(file).lines().take(1_000_000) {
         let Ok(line) = line else { continue };
-        let Ok(record) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if record.get("id").and_then(Value::as_str) != Some(entry_id)
             || record.pointer("/payload/type").and_then(Value::as_str) != Some("message")
         {
             continue;
         }
         let item = record.pointer("/payload/content")?.as_array()?.get(index)?;
-        if !matches!(item.get("type").and_then(Value::as_str), Some("input_image" | "image")) {
+        if !matches!(
+            item.get("type").and_then(Value::as_str),
+            Some("input_image" | "image")
+        ) {
             return None;
         }
-        let data_url = item.get("image_url").and_then(Value::as_str)
+        let data_url = item
+            .get("image_url")
+            .and_then(Value::as_str)
             .or_else(|| item.get("url").and_then(Value::as_str))?;
         let (metadata, encoded) = data_url.strip_prefix("data:")?.split_once(',')?;
         if !metadata.split(';').any(|part| part == "base64") {
             return None;
         }
-        let mime = metadata.split(';').next().filter(|mime| allowed_image_mime(mime))?;
+        let mime = metadata
+            .split(';')
+            .next()
+            .filter(|mime| allowed_image_mime(mime))?;
         let bytes = decode_base64(encoded)?;
         return Some((mime.to_owned(), bytes));
     }
@@ -221,11 +236,15 @@ fn parse_reader<R: BufRead>(reader: R) -> Vec<TranscriptMessage> {
                                 }
                             }
                             Some("input_image" | "image") if role == "user" => {
-                                let image_url = item.get("image_url")
+                                let image_url = item
+                                    .get("image_url")
                                     .and_then(Value::as_str)
                                     .or_else(|| item.get("url").and_then(Value::as_str));
-                                let mime = image_url.and_then(data_url_mime)
-                                    .or_else(|| item.get("mime_type").and_then(Value::as_str).map(str::to_owned));
+                                let mime = image_url.and_then(data_url_mime).or_else(|| {
+                                    item.get("mime_type")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_owned)
+                                });
                                 if let Some(mime) = mime.filter(|value| allowed_image_mime(value)) {
                                     parts.push(TranscriptPart {
                                         kind: "image".into(),
