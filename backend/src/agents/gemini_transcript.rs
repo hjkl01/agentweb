@@ -166,6 +166,84 @@ pub fn read_messages(session_id: &str, workspace: &str) -> Vec<TranscriptMessage
     parse_reader(BufReader::new(file), session_id)
 }
 
+const MAX_IMAGE_BYTES: usize = 12 * 1024 * 1024;
+
+fn allowed_image_mime(mime: &str) -> bool {
+    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/avif")
+}
+
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    if input.len() > MAX_IMAGE_BYTES.saturating_mul(4) / 3 + 8 {
+        return None;
+    }
+    let mut output = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => (byte - b'A') as u32,
+            b'a'..=b'z' => (byte - b'a') as u32 + 26,
+            b'0'..=b'9' => (byte - b'0') as u32 + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+            if output.len() > MAX_IMAGE_BYTES {
+                return None;
+            }
+        }
+    }
+    Some(output)
+}
+
+/// Read one inlineData image from the project-scoped Gemini native chat file.
+pub fn read_image(
+    session_id: &str,
+    workspace: &str,
+    entry_id: &str,
+    index: usize,
+) -> Option<(String, Vec<u8>)> {
+    if session_id.is_empty()
+        || session_id.len() > 128
+        || !session_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return None;
+    }
+    let workspace = Path::new(workspace);
+    if !workspace.is_absolute() {
+        return None;
+    }
+    let project_hash = format!("{:x}", Sha256::digest(workspace.to_string_lossy().as_bytes()));
+    let path = temp_roots().into_iter()
+        .find_map(|root| find_session_file(&root, session_id, &project_hash))?;
+    let file = fs::File::open(path).ok()?;
+    for line in BufReader::new(file).lines().take(MAX_TRANSCRIPT_LINES) {
+        let Ok(line) = line else { continue };
+        if line.len() > MAX_LINE_BYTES { continue; }
+        let Ok(record) = serde_json::from_str::<Value>(&line) else { continue };
+        if record.get("id").and_then(Value::as_str) != Some(entry_id) {
+            continue;
+        }
+        let item = record.get("content")?.as_array()?.get(index)?;
+        let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
+        let mime = image.get("mimeType").or_else(|| image.get("mime_type"))
+            .and_then(Value::as_str).filter(|mime| allowed_image_mime(mime))?;
+        let data = image.get("data").and_then(Value::as_str)?;
+        let bytes = decode_base64(data)?;
+        return Some((mime.to_owned(), bytes));
+    }
+    None
+}
+
 fn text_from_content(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
@@ -187,11 +265,25 @@ fn content_parts(content: &Value) -> Vec<TranscriptPart> {
         }],
         Value::Array(items) => items
             .iter()
-            .filter_map(|item| {
-                let text = item.get("text").and_then(Value::as_str)?;
+            .enumerate()
+            .filter_map(|(index, item)| {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    return Some(TranscriptPart {
+                        kind: "text".into(),
+                        text: Some(text.to_owned()),
+                        ..Default::default()
+                    });
+                }
+                let image = item.get("inlineData").or_else(|| item.get("inline_data"))?;
+                let mime = image.get("mimeType").or_else(|| image.get("mime_type"))
+                    .and_then(Value::as_str)?;
+                if !allowed_image_mime(mime) {
+                    return None;
+                }
                 Some(TranscriptPart {
-                    kind: "text".into(),
-                    text: Some(text.to_owned()),
+                    kind: "image".into(),
+                    mime_type: Some(mime.to_owned()),
+                    image_index: Some(index),
                     ..Default::default()
                 })
             })
